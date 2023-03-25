@@ -126,3 +126,72 @@ test "serialize and deserialize record" {
     try std.testing.expectEqualStrings(key, record2.key);
     try std.testing.expectEqualStrings(val, record2.val);
 }
+
+test "write record to disk and read record from disk" {
+    const allocator = std.testing.allocator;
+
+    // create file
+    const cwd = std.fs.cwd();
+    const db_path = "main.db";
+    {
+        const db_file = try cwd.createFile(db_path, .{ .exclusive = true });
+        defer db_file.close();
+    }
+    defer cwd.deleteFile(db_path) catch {};
+
+    // write record to file
+    {
+        var buffer = std.ArrayList(u8).init(allocator);
+        defer buffer.deinit();
+        {
+            const key = "foo";
+            const val = "bar";
+            const header = Header{
+                .checksum = 1,
+                .timestamp = 2,
+                .expiry = 3,
+                .key_size = key.len,
+                .val_size = val.len,
+            };
+            var record = try Record.init(allocator, header);
+            std.mem.copy(u8, record.key, key);
+            std.mem.copy(u8, record.val, val);
+            defer record.deinit();
+
+            try serializeRecord(record, &buffer);
+        }
+
+        const db_file = try cwd.openFile(db_path, .{ .mode = .write_only });
+        defer db_file.close();
+        try db_file.seekFromEnd(0);
+        try db_file.writeAll(buffer.items);
+    }
+
+    // write record to file
+    {
+        var buffer = std.ArrayList(u8).init(allocator);
+        defer buffer.deinit();
+        {
+            const key = "foo!";
+            const val = "bar!";
+            const header = Header{
+                .checksum = 1,
+                .timestamp = 2,
+                .expiry = 3,
+                .key_size = key.len,
+                .val_size = val.len,
+            };
+            var record = try Record.init(allocator, header);
+            std.mem.copy(u8, record.key, key);
+            std.mem.copy(u8, record.val, val);
+            defer record.deinit();
+
+            try serializeRecord(record, &buffer);
+        }
+
+        const db_file = try cwd.openFile(db_path, .{ .mode = .write_only });
+        defer db_file.close();
+        try db_file.seekFromEnd(0);
+        try db_file.writeAll(buffer.items);
+    }
+}
