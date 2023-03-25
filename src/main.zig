@@ -10,8 +10,8 @@ pub const Header = struct {
     checksum: u32,
     timestamp: u32,
     expiry: u32,
-    keySize: u32,
-    valSize: u32,
+    key_size: u32,
+    val_size: u32,
 };
 
 pub const Record = struct {
@@ -24,10 +24,10 @@ pub const Record = struct {
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, header: Header) !Record {
-        const key = try allocator.alloc(u8, header.keySize);
+        const key = try allocator.alloc(u8, header.key_size);
         errdefer allocator.free(key);
 
-        const val = try allocator.alloc(u8, header.valSize);
+        const val = try allocator.alloc(u8, header.val_size);
         errdefer allocator.free(val);
 
         return Record{
@@ -57,8 +57,8 @@ fn serializeRecord(record: Record, buffer: *std.ArrayList(u8)) !void {
         std.mem.asBytes(&std.mem.nativeToBig(u32, record.header.checksum)),
         std.mem.asBytes(&std.mem.nativeToBig(u32, record.header.timestamp)),
         std.mem.asBytes(&std.mem.nativeToBig(u32, record.header.expiry)),
-        std.mem.asBytes(&std.mem.nativeToBig(u32, record.header.keySize)),
-        std.mem.asBytes(&std.mem.nativeToBig(u32, record.header.valSize)),
+        std.mem.asBytes(&std.mem.nativeToBig(u32, record.header.key_size)),
+        std.mem.asBytes(&std.mem.nativeToBig(u32, record.header.val_size)),
         record.key,
         record.val,
     });
@@ -74,20 +74,20 @@ fn deserializeRecord(allocator: std.mem.Allocator, buffer: std.ArrayList(u8)) !R
         .checksum = try reader.readIntBig(u32),
         .timestamp = try reader.readIntBig(u32),
         .expiry = try reader.readIntBig(u32),
-        .keySize = try reader.readIntBig(u32),
-        .valSize = try reader.readIntBig(u32),
+        .key_size = try reader.readIntBig(u32),
+        .val_size = try reader.readIntBig(u32),
     };
 
     var record = try Record.init(allocator, header);
     errdefer record.deinit();
 
-    const keySize = try reader.readAll(record.key);
-    if (header.keySize != @intCast(u32, keySize)) {
+    const key_size = try reader.readAll(record.key);
+    if (header.key_size != @intCast(u32, key_size)) {
         return error.InvalidKey;
     }
 
-    const valSize = try reader.readAll(record.val);
-    if (header.valSize != @intCast(u32, valSize)) {
+    const val_size = try reader.readAll(record.val);
+    if (header.val_size != @intCast(u32, val_size)) {
         return error.InvalidVal;
     }
 
@@ -104,8 +104,8 @@ test "serialize and deserialize record" {
         .checksum = 1,
         .timestamp = 2,
         .expiry = 3,
-        .keySize = key.len,
-        .valSize = val.len,
+        .key_size = key.len,
+        .val_size = val.len,
     };
     var record = try Record.init(allocator, header);
     std.mem.copy(u8, record.key, key);
