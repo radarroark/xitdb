@@ -101,9 +101,9 @@ test "serialize and deserialize record" {
     const key = "foo";
     const val = "bar";
     const header = Header{
-        .checksum = 1,
-        .timestamp = 2,
-        .expiry = 3,
+        .checksum = 0,
+        .timestamp = 0,
+        .expiry = 0,
         .key_size = key.len,
         .val_size = val.len,
     };
@@ -127,71 +127,93 @@ test "serialize and deserialize record" {
     try std.testing.expectEqualStrings(val, record2.val);
 }
 
+pub const Meta = struct {
+    timestamp: u32,
+    record_size: u32,
+    record_pos: u32,
+};
+
+pub const Database = struct {
+    const Self = @This();
+
+    allocator: std.mem.Allocator,
+    key_pairs: std.StringHashMap(Meta),
+    db_file: std.fs.File,
+
+    pub fn init(allocator: std.mem.Allocator, dir: std.fs.Dir, path: []const u8) !Database {
+        const file_or_err = dir.openFile(path, .{ .mode = .read_write });
+        const file = try if (file_or_err == error.FileNotFound)
+            dir.createFile(path, .{})
+        else
+            file_or_err;
+        errdefer file.close();
+
+        return Database{
+            .allocator = allocator,
+            .key_pairs = std.StringHashMap(Meta).init(allocator),
+            .db_file = file,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.key_pairs.deinit();
+        self.db_file.close();
+    }
+
+    pub fn appendRecord(self: *Self, record: Record) !void {
+        var buffer = std.ArrayList(u8).init(self.allocator);
+        defer buffer.deinit();
+        try serializeRecord(record, &buffer);
+        try self.db_file.seekFromEnd(0);
+        try self.db_file.writeAll(buffer.items);
+    }
+};
+
 test "write record to disk and read record from disk" {
     const allocator = std.testing.allocator;
-
-    // create file
     const cwd = std.fs.cwd();
     const db_path = "main.db";
-    {
-        const db_file = try cwd.createFile(db_path, .{ .exclusive = true });
-        defer db_file.close();
-    }
     defer cwd.deleteFile(db_path) catch {};
 
     // write record to file
     {
-        var buffer = std.ArrayList(u8).init(allocator);
-        defer buffer.deinit();
-        {
-            const key = "foo";
-            const val = "bar";
-            const header = Header{
-                .checksum = 1,
-                .timestamp = 2,
-                .expiry = 3,
-                .key_size = key.len,
-                .val_size = val.len,
-            };
-            var record = try Record.init(allocator, header);
-            std.mem.copy(u8, record.key, key);
-            std.mem.copy(u8, record.val, val);
-            defer record.deinit();
+        const key = "foo";
+        const val = "bar";
+        const header = Header{
+            .checksum = 0,
+            .timestamp = 0,
+            .expiry = 0,
+            .key_size = key.len,
+            .val_size = val.len,
+        };
+        var record = try Record.init(allocator, header);
+        std.mem.copy(u8, record.key, key);
+        std.mem.copy(u8, record.val, val);
+        defer record.deinit();
 
-            try serializeRecord(record, &buffer);
-        }
-
-        const db_file = try cwd.openFile(db_path, .{ .mode = .write_only });
-        defer db_file.close();
-        try db_file.seekFromEnd(0);
-        try db_file.writeAll(buffer.items);
+        var db = try Database.init(allocator, cwd, db_path);
+        defer db.deinit();
+        try db.appendRecord(record);
     }
 
     // write record to file
     {
-        var buffer = std.ArrayList(u8).init(allocator);
-        defer buffer.deinit();
-        {
-            const key = "foo!";
-            const val = "bar!";
-            const header = Header{
-                .checksum = 1,
-                .timestamp = 2,
-                .expiry = 3,
-                .key_size = key.len,
-                .val_size = val.len,
-            };
-            var record = try Record.init(allocator, header);
-            std.mem.copy(u8, record.key, key);
-            std.mem.copy(u8, record.val, val);
-            defer record.deinit();
+        const key = "foo";
+        const val = "baz";
+        const header = Header{
+            .checksum = 0,
+            .timestamp = 0,
+            .expiry = 0,
+            .key_size = key.len,
+            .val_size = val.len,
+        };
+        var record = try Record.init(allocator, header);
+        std.mem.copy(u8, record.key, key);
+        std.mem.copy(u8, record.val, val);
+        defer record.deinit();
 
-            try serializeRecord(record, &buffer);
-        }
-
-        const db_file = try cwd.openFile(db_path, .{ .mode = .write_only });
-        defer db_file.close();
-        try db_file.seekFromEnd(0);
-        try db_file.writeAll(buffer.items);
+        var db = try Database.init(allocator, cwd, db_path);
+        defer db.deinit();
+        try db.appendRecord(record);
     }
 }
