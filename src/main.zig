@@ -66,10 +66,7 @@ fn serializeRecord(record: Record, buffer: *std.ArrayList(u8)) !void {
 
 /// deserializes the data. if the key or val isn't the encoded size,
 /// an error will be returned.
-fn deserializeRecord(allocator: std.mem.Allocator, buffer: std.ArrayList(u8)) !Record {
-    var fis = std.io.fixedBufferStream(buffer.items);
-    const reader = fis.reader();
-
+fn deserializeRecord(allocator: std.mem.Allocator, reader: anytype) !Record {
     const header = Header{
         .checksum = try reader.readIntBig(u32),
         .timestamp = try reader.readIntBig(u32),
@@ -113,12 +110,13 @@ test "serialize and deserialize record" {
     defer record.deinit();
 
     // serialize the record
-    var entry_buffer = std.ArrayList(u8).init(allocator);
-    defer entry_buffer.deinit();
-    try serializeRecord(record, &entry_buffer);
+    var buffer = std.ArrayList(u8).init(allocator);
+    defer buffer.deinit();
+    try serializeRecord(record, &buffer);
 
     // deserialize the record
-    var record2 = try deserializeRecord(allocator, entry_buffer);
+    var fis = std.io.fixedBufferStream(buffer.items);
+    var record2 = try deserializeRecord(allocator, fis.reader());
     defer record2.deinit();
 
     // check that the records are equal
@@ -127,17 +125,11 @@ test "serialize and deserialize record" {
     try std.testing.expectEqualStrings(val, record2.val);
 }
 
-pub const Meta = struct {
-    timestamp: u32,
-    record_size: u32,
-    record_pos: u32,
-};
-
 pub const Database = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    key_pairs: std.StringHashMap(Meta),
+    key_pairs: std.StringHashMap(Record),
     db_file: std.fs.File,
 
     pub fn init(allocator: std.mem.Allocator, dir: std.fs.Dir, path: []const u8) !Database {
@@ -148,14 +140,29 @@ pub const Database = struct {
             file_or_err;
         errdefer file.close();
 
-        return Database{
+        var db = Database{
             .allocator = allocator,
-            .key_pairs = std.StringHashMap(Meta).init(allocator),
+            .key_pairs = std.StringHashMap(Record).init(allocator),
             .db_file = file,
         };
+
+        const meta = try file.metadata();
+        const size = meta.size();
+        const reader = file.reader();
+        while (try reader.context.getPos() < size) {
+            var record = try deserializeRecord(allocator, reader);
+            errdefer record.deinit();
+            try db.putRecord(record);
+        }
+
+        return db;
     }
 
     pub fn deinit(self: *Self) void {
+        var iter = self.key_pairs.valueIterator();
+        while (iter.next()) |value| {
+            value.deinit();
+        }
         self.key_pairs.deinit();
         self.db_file.close();
     }
@@ -166,54 +173,97 @@ pub const Database = struct {
         try serializeRecord(record, &buffer);
         try self.db_file.seekFromEnd(0);
         try self.db_file.writeAll(buffer.items);
+        try self.putRecord(record);
+    }
+
+    pub fn putRecord(self: *Self, record: Record) !void {
+        var key_pair_maybe = self.key_pairs.fetchRemove(record.key);
+        if (key_pair_maybe) |*key_pair| {
+            key_pair.value.deinit();
+        }
+        try self.key_pairs.put(record.key, record);
     }
 };
 
-test "write record to disk and read record from disk" {
+pub fn expectEqual(expected: anytype, actual: anytype) !void {
+    try std.testing.expectEqual(@as(@TypeOf(actual), expected), actual);
+}
+
+test "append records to a database" {
     const allocator = std.testing.allocator;
     const cwd = std.fs.cwd();
     const db_path = "main.db";
     defer cwd.deleteFile(db_path) catch {};
 
-    // write record to file
     {
-        const key = "foo";
-        const val = "bar";
-        const header = Header{
-            .checksum = 0,
-            .timestamp = 0,
-            .expiry = 0,
-            .key_size = key.len,
-            .val_size = val.len,
-        };
-        var record = try Record.init(allocator, header);
-        std.mem.copy(u8, record.key, key);
-        std.mem.copy(u8, record.val, val);
-        defer record.deinit();
-
-        var db = try Database.init(allocator, cwd, db_path);
+        var record: Record = undefined;
+        var db: Database = undefined;
+        {
+            const key = "foo";
+            const val = "bar";
+            const header = Header{
+                .checksum = 0,
+                .timestamp = 0,
+                .expiry = 0,
+                .key_size = key.len,
+                .val_size = val.len,
+            };
+            record = try Record.init(allocator, header);
+            std.mem.copy(u8, record.key, key);
+            std.mem.copy(u8, record.val, val);
+            errdefer record.deinit();
+            db = try Database.init(allocator, cwd, db_path);
+        }
         defer db.deinit();
         try db.appendRecord(record);
+        try expectEqual(1, db.key_pairs.count());
     }
 
-    // write record to file
     {
-        const key = "foo";
-        const val = "baz";
-        const header = Header{
-            .checksum = 0,
-            .timestamp = 0,
-            .expiry = 0,
-            .key_size = key.len,
-            .val_size = val.len,
-        };
-        var record = try Record.init(allocator, header);
-        std.mem.copy(u8, record.key, key);
-        std.mem.copy(u8, record.val, val);
-        defer record.deinit();
-
-        var db = try Database.init(allocator, cwd, db_path);
+        var record: Record = undefined;
+        var db: Database = undefined;
+        {
+            const key = "hello";
+            const val = "world";
+            const header = Header{
+                .checksum = 0,
+                .timestamp = 0,
+                .expiry = 0,
+                .key_size = key.len,
+                .val_size = val.len,
+            };
+            record = try Record.init(allocator, header);
+            std.mem.copy(u8, record.key, key);
+            std.mem.copy(u8, record.val, val);
+            errdefer record.deinit();
+            db = try Database.init(allocator, cwd, db_path);
+        }
         defer db.deinit();
         try db.appendRecord(record);
+        try expectEqual(2, db.key_pairs.count());
+    }
+
+    {
+        var record: Record = undefined;
+        var db: Database = undefined;
+        {
+            const key = "foo";
+            const val = "baz";
+            const header = Header{
+                .checksum = 0,
+                .timestamp = 0,
+                .expiry = 0,
+                .key_size = key.len,
+                .val_size = val.len,
+            };
+            record = try Record.init(allocator, header);
+            std.mem.copy(u8, record.key, key);
+            std.mem.copy(u8, record.val, val);
+            errdefer record.deinit();
+            db = try Database.init(allocator, cwd, db_path);
+        }
+        defer db.deinit();
+        try db.appendRecord(record);
+        try expectEqual(2, db.key_pairs.count());
     }
 }
