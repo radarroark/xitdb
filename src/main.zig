@@ -127,6 +127,7 @@ pub const Database = struct {
     db_file: std.fs.File,
 
     pub fn init(allocator: std.mem.Allocator, dir: std.fs.Dir, path: []const u8) !Database {
+        // create or open file
         const file_or_err = dir.openFile(path, .{ .mode = .read_write });
         const file = try if (file_or_err == error.FileNotFound)
             dir.createFile(path, .{})
@@ -140,6 +141,7 @@ pub const Database = struct {
             .db_file = file,
         };
 
+        // read kv pairs
         const meta = try file.metadata();
         const size = meta.size();
         const reader = file.reader();
@@ -169,22 +171,15 @@ pub const Database = struct {
         self.db_file.close();
     }
 
-    pub fn write(self: *Self, record: Record) !void {
-        var buffer = std.ArrayList(u8).init(self.allocator);
-        defer buffer.deinit();
-        try serializeRecord(record, &buffer);
-        try self.db_file.seekFromEnd(0);
-        try self.db_file.writeAll(buffer.items);
-        try self.put(record);
-    }
-
-    pub fn put(self: *Self, record: Record) !void {
+    fn put(self: *Self, record: Record) !void {
+        // if key exists, remove it
         var key_pair_maybe = self.key_pairs.fetchRemove(record.key);
         if (key_pair_maybe) |*key_pair| {
             key_pair.value.deinit();
         }
         try self.key_pairs.put(record.key, record);
-        // if it's a tombstone record, immediately delete it
+
+        // if it's a tombstone record, immediately remove it
         if (record.header.val_size == 0) {
             var pair_maybe = self.key_pairs.fetchRemove(record.key);
             if (pair_maybe) |*key_pair| {
@@ -193,14 +188,24 @@ pub const Database = struct {
         }
     }
 
-    pub fn delete(self: *Self, key: []const u8) !void {
+    pub fn add(self: *Self, record: Record) !void {
+        var buffer = std.ArrayList(u8).init(self.allocator);
+        defer buffer.deinit();
+        try serializeRecord(record, &buffer);
+        try self.db_file.seekFromEnd(0);
+        try self.db_file.writeAll(buffer.items);
+        try self.put(record);
+    }
+
+    pub fn remove(self: *Self, key: []const u8) !void {
         const header = Header{
+            .padding = 0,
             .key_size = key.len,
             .val_size = 0,
         };
         var record = try Record.init(self.allocator, header);
         std.mem.copy(u8, record.key, key);
-        try self.write(record);
+        try self.add(record);
     }
 };
 
@@ -208,7 +213,7 @@ pub fn expectEqual(expected: anytype, actual: anytype) !void {
     try std.testing.expectEqual(@as(@TypeOf(actual), expected), actual);
 }
 
-test "write records to a database" {
+test "add records to a database" {
     const allocator = std.testing.allocator;
     const cwd = std.fs.cwd();
     const db_path = "main.db";
@@ -222,6 +227,7 @@ test "write records to a database" {
             const key = "foo";
             const val = "bar";
             const header = Header{
+                .padding = 0,
                 .key_size = key.len,
                 .val_size = val.len,
             };
@@ -232,7 +238,7 @@ test "write records to a database" {
             db = try Database.init(allocator, cwd, db_path);
         }
         defer db.deinit();
-        try db.write(record);
+        try db.add(record);
         try expectEqual(1, db.key_pairs.count());
     }
 
@@ -244,6 +250,7 @@ test "write records to a database" {
             const key = "hello";
             const val = "world";
             const header = Header{
+                .padding = 0,
                 .key_size = key.len,
                 .val_size = val.len,
             };
@@ -254,7 +261,7 @@ test "write records to a database" {
             db = try Database.init(allocator, cwd, db_path);
         }
         defer db.deinit();
-        try db.write(record);
+        try db.add(record);
         try expectEqual(2, db.key_pairs.count());
     }
 
@@ -266,6 +273,7 @@ test "write records to a database" {
             const key = "foo";
             const val = "baz";
             const header = Header{
+                .padding = 0,
                 .key_size = key.len,
                 .val_size = val.len,
             };
@@ -276,19 +284,19 @@ test "write records to a database" {
             db = try Database.init(allocator, cwd, db_path);
         }
         defer db.deinit();
-        try db.write(record);
+        try db.add(record);
         try expectEqual(2, db.key_pairs.count());
     }
 
-    // delete a record
+    // remove a record
     {
         var db = try Database.init(allocator, cwd, db_path);
         defer db.deinit();
-        try db.delete("foo");
+        try db.remove("foo");
         try expectEqual(1, db.key_pairs.count());
     }
 
-    // the record is still deleted after init
+    // the record is still removed after init
     {
         var db = try Database.init(allocator, cwd, db_path);
         defer db.deinit();
