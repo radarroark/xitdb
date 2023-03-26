@@ -182,6 +182,26 @@ pub const Database = struct {
             key_pair.value.deinit();
         }
         try self.key_pairs.put(record.key, record);
+        // if it's a tombstone record, immediately delete it
+        if (record.header.val_size == 0) {
+            var pair_maybe = self.key_pairs.fetchRemove(record.key);
+            if (pair_maybe) |*key_pair| {
+                key_pair.value.deinit();
+            }
+        }
+    }
+
+    pub fn delete(self: *Self, key: []const u8) !void {
+        const header = Header{
+            .checksum = 0,
+            .timestamp = 0,
+            .expiry = 0,
+            .key_size = @truncate(u32, key.len),
+            .val_size = 0,
+        };
+        var record = try Record.init(self.allocator, header);
+        std.mem.copy(u8, record.key, key);
+        try self.write(record);
     }
 };
 
@@ -195,6 +215,7 @@ test "write records to a database" {
     const db_path = "main.db";
     defer cwd.deleteFile(db_path) catch {};
 
+    // add a record
     {
         var record: Record = undefined;
         var db: Database = undefined;
@@ -219,6 +240,7 @@ test "write records to a database" {
         try expectEqual(1, db.key_pairs.count());
     }
 
+    // add another record
     {
         var record: Record = undefined;
         var db: Database = undefined;
@@ -243,6 +265,7 @@ test "write records to a database" {
         try expectEqual(2, db.key_pairs.count());
     }
 
+    // replace a record
     {
         var record: Record = undefined;
         var db: Database = undefined;
@@ -265,5 +288,20 @@ test "write records to a database" {
         defer db.deinit();
         try db.write(record);
         try expectEqual(2, db.key_pairs.count());
+    }
+
+    // delete a record
+    {
+        var db = try Database.init(allocator, cwd, db_path);
+        defer db.deinit();
+        try db.delete("foo");
+        try expectEqual(1, db.key_pairs.count());
+    }
+
+    // the record is still deleted after init
+    {
+        var db = try Database.init(allocator, cwd, db_path);
+        defer db.deinit();
+        try expectEqual(1, db.key_pairs.count());
     }
 }
