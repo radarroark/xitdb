@@ -152,7 +152,7 @@ pub const Database = struct {
         while (try reader.context.getPos() < size) {
             var record = try deserializeRecord(allocator, reader);
             errdefer record.deinit();
-            try db.putRecord(record);
+            try db.put(record);
         }
 
         return db;
@@ -167,16 +167,16 @@ pub const Database = struct {
         self.db_file.close();
     }
 
-    pub fn appendRecord(self: *Self, record: Record) !void {
+    pub fn write(self: *Self, record: Record) !void {
         var buffer = std.ArrayList(u8).init(self.allocator);
         defer buffer.deinit();
         try serializeRecord(record, &buffer);
         try self.db_file.seekFromEnd(0);
         try self.db_file.writeAll(buffer.items);
-        try self.putRecord(record);
+        try self.put(record);
     }
 
-    pub fn putRecord(self: *Self, record: Record) !void {
+    pub fn put(self: *Self, record: Record) !void {
         var key_pair_maybe = self.key_pairs.fetchRemove(record.key);
         if (key_pair_maybe) |*key_pair| {
             key_pair.value.deinit();
@@ -189,7 +189,7 @@ pub fn expectEqual(expected: anytype, actual: anytype) !void {
     try std.testing.expectEqual(@as(@TypeOf(actual), expected), actual);
 }
 
-test "append records to a database" {
+test "write records to a database" {
     const allocator = std.testing.allocator;
     const cwd = std.fs.cwd();
     const db_path = "main.db";
@@ -215,7 +215,7 @@ test "append records to a database" {
             db = try Database.init(allocator, cwd, db_path);
         }
         defer db.deinit();
-        try db.appendRecord(record);
+        try db.write(record);
         try expectEqual(1, db.key_pairs.count());
     }
 
@@ -239,7 +239,7 @@ test "append records to a database" {
             db = try Database.init(allocator, cwd, db_path);
         }
         defer db.deinit();
-        try db.appendRecord(record);
+        try db.write(record);
         try expectEqual(2, db.key_pairs.count());
     }
 
@@ -263,7 +263,7 @@ test "append records to a database" {
             db = try Database.init(allocator, cwd, db_path);
         }
         defer db.deinit();
-        try db.appendRecord(record);
+        try db.write(record);
         try expectEqual(2, db.key_pairs.count());
     }
 }
