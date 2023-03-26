@@ -44,7 +44,7 @@ pub const Record = struct {
     }
 };
 
-pub const DeserializeError = error{
+pub const DatabaseError = error{
     InvalidKey,
     InvalidVal,
 };
@@ -125,6 +125,7 @@ pub const Database = struct {
     allocator: std.mem.Allocator,
     key_pairs: std.StringHashMap(Record),
     db_file: std.fs.File,
+    entry_count: u32,
 
     pub fn init(allocator: std.mem.Allocator, dir: std.fs.Dir, path: []const u8) !Database {
         // create or open file
@@ -139,6 +140,7 @@ pub const Database = struct {
             .allocator = allocator,
             .key_pairs = std.StringHashMap(Record).init(allocator),
             .db_file = file,
+            .entry_count = 0,
         };
 
         // read kv pairs
@@ -146,12 +148,12 @@ pub const Database = struct {
         const size = meta.size();
         const reader = file.reader();
         while (true) {
-            const pos = try reader.context.getPos();
-            if (pos >= size) {
+            const position = try reader.context.getPos();
+            if (position >= size) {
                 break;
             }
             var record = try deserializeRecord(allocator, reader);
-            record.position = pos;
+            record.position = position;
             errdefer record.deinit();
             if (record.header.padding > 0) {
                 try reader.skipBytes(record.header.padding, .{});
@@ -177,6 +179,7 @@ pub const Database = struct {
         if (key_pair_maybe) |*key_pair| {
             key_pair.value.deinit();
         }
+
         try self.key_pairs.put(record.key, record);
 
         // if it's a tombstone record, immediately remove it
@@ -186,6 +189,8 @@ pub const Database = struct {
                 key_pair.value.deinit();
             }
         }
+
+        self.entry_count += 1;
     }
 
     pub fn add(self: *Self, record: Record) !void {
@@ -206,6 +211,66 @@ pub const Database = struct {
         var record = try Record.init(self.allocator, header);
         std.mem.copy(u8, record.key, key);
         try self.add(record);
+    }
+
+    pub fn merge(self: *Self) !void {
+        try self.db_file.seekTo(0);
+        const meta = try self.db_file.metadata();
+        const size = meta.size();
+        const reader = self.db_file.reader();
+        var last_position: u64 = 0;
+        var last_padding: u64 = 0;
+        self.entry_count = 0;
+
+        while (true) {
+            // read record and save start/end positions
+            const start_position = try reader.context.getPos();
+            if (start_position >= size) {
+                break;
+            }
+            var record = try deserializeRecord(self.allocator, reader);
+            defer record.deinit();
+            if (record.header.padding > 0) {
+                try reader.skipBytes(record.header.padding, .{});
+            }
+            const end_position = try reader.context.getPos();
+
+            // if entry is valid, continue
+            const existing_record_maybe = self.key_pairs.get(record.key);
+            if (existing_record_maybe) |existing_record| {
+                if (existing_record.position == start_position) {
+                    last_position = start_position;
+                    last_padding = record.header.padding;
+                    self.entry_count += 1;
+                    continue;
+                }
+            }
+
+            // if invalid entry is not in beginning, merge with the last entry
+            if (start_position > 0) {
+                try self.db_file.seekTo(last_position);
+                last_padding += @sizeOf(Header) + record.header.key_size + record.header.val_size + record.header.padding;
+                try self.db_file.writeAll(std.mem.asBytes(&std.mem.nativeToBig(u64, last_padding)));
+                try self.db_file.seekTo(end_position);
+            }
+            // otherwise overwrite its header so it is skipped
+            else {
+                const empty_header = Header{
+                    .padding = record.header.key_size + record.header.val_size,
+                    .key_size = 0,
+                    .val_size = 0,
+                };
+                var empty_record = try Record.init(self.allocator, empty_header);
+                defer empty_record.deinit();
+                var buffer = std.ArrayList(u8).init(self.allocator);
+                defer buffer.deinit();
+                try serializeRecord(empty_record, &buffer);
+                try self.db_file.seekTo(0);
+                try self.db_file.writeAll(buffer.items);
+                try self.db_file.seekTo(end_position);
+                self.entry_count += 1;
+            }
+        }
     }
 };
 
@@ -240,6 +305,7 @@ test "add records to a database" {
         defer db.deinit();
         try db.add(record);
         try expectEqual(1, db.key_pairs.count());
+        try expectEqual(1, db.entry_count);
     }
 
     // add another record
@@ -263,6 +329,7 @@ test "add records to a database" {
         defer db.deinit();
         try db.add(record);
         try expectEqual(2, db.key_pairs.count());
+        try expectEqual(2, db.entry_count);
     }
 
     // replace a record
@@ -286,6 +353,7 @@ test "add records to a database" {
         defer db.deinit();
         try db.add(record);
         try expectEqual(2, db.key_pairs.count());
+        try expectEqual(3, db.entry_count);
     }
 
     // remove a record
@@ -294,6 +362,7 @@ test "add records to a database" {
         defer db.deinit();
         try db.remove("foo");
         try expectEqual(1, db.key_pairs.count());
+        try expectEqual(4, db.entry_count);
     }
 
     // the record is still removed after init
@@ -301,5 +370,23 @@ test "add records to a database" {
         var db = try Database.init(allocator, cwd, db_path);
         defer db.deinit();
         try expectEqual(1, db.key_pairs.count());
+        try expectEqual(4, db.entry_count);
+    }
+
+    // merge
+    {
+        var db = try Database.init(allocator, cwd, db_path);
+        defer db.deinit();
+        try db.merge();
+        try expectEqual(1, db.key_pairs.count());
+        try expectEqual(2, db.entry_count);
+    }
+
+    // the db is still merged after init
+    {
+        var db = try Database.init(allocator, cwd, db_path);
+        defer db.deinit();
+        try expectEqual(1, db.key_pairs.count());
+        try expectEqual(2, db.entry_count);
     }
 }
