@@ -7,8 +7,8 @@
 const std = @import("std");
 
 pub const Header = struct {
-    key_size: u32,
-    val_size: u32,
+    key_size: u64,
+    val_size: u64,
 };
 
 pub const Record = struct {
@@ -53,8 +53,8 @@ pub const DeserializeError = error{
 /// formats. i might change my mind later though.
 fn serializeRecord(record: Record, buffer: *std.ArrayList(u8)) !void {
     try buffer.writer().print("{s}{s}{s}{s}", .{
-        std.mem.asBytes(&std.mem.nativeToBig(u32, record.header.key_size)),
-        std.mem.asBytes(&std.mem.nativeToBig(u32, record.header.val_size)),
+        std.mem.asBytes(&std.mem.nativeToBig(u64, record.header.key_size)),
+        std.mem.asBytes(&std.mem.nativeToBig(u64, record.header.val_size)),
         record.key,
         record.val,
     });
@@ -64,20 +64,20 @@ fn serializeRecord(record: Record, buffer: *std.ArrayList(u8)) !void {
 /// an error will be returned.
 fn deserializeRecord(allocator: std.mem.Allocator, reader: anytype) !Record {
     const header = Header{
-        .key_size = try reader.readIntBig(u32),
-        .val_size = try reader.readIntBig(u32),
+        .key_size = try reader.readIntBig(u64),
+        .val_size = try reader.readIntBig(u64),
     };
 
     var record = try Record.init(allocator, header);
     errdefer record.deinit();
 
     const key_size = try reader.readAll(record.key);
-    if (header.key_size != @intCast(u32, key_size)) {
+    if (header.key_size != key_size) {
         return error.InvalidKey;
     }
 
     const val_size = try reader.readAll(record.val);
-    if (header.val_size != @intCast(u32, val_size)) {
+    if (header.val_size != val_size) {
         return error.InvalidVal;
     }
 
@@ -188,7 +188,7 @@ pub const Database = struct {
 
     pub fn delete(self: *Self, key: []const u8) !void {
         const header = Header{
-            .key_size = @truncate(u32, key.len),
+            .key_size = key.len,
             .val_size = 0,
         };
         var record = try Record.init(self.allocator, header);
