@@ -7,6 +7,7 @@
 const std = @import("std");
 
 pub const Header = struct {
+    padding: u64,
     key_size: u64,
     val_size: u64,
 };
@@ -14,7 +15,7 @@ pub const Header = struct {
 pub const Record = struct {
     const Self = @This();
 
-    pos: u64,
+    position: u64,
     header: Header,
     key: []u8,
     val: []u8,
@@ -29,7 +30,7 @@ pub const Record = struct {
         errdefer allocator.free(val);
 
         return Record{
-            .pos = 0,
+            .position = 0,
             .header = header,
             .key = key,
             .val = val,
@@ -52,7 +53,8 @@ pub const DeserializeError = error{
 /// mostly because it's common for on-disk and over-the-wire
 /// formats. i might change my mind later though.
 fn serializeRecord(record: Record, buffer: *std.ArrayList(u8)) !void {
-    try buffer.writer().print("{s}{s}{s}{s}", .{
+    try buffer.writer().print("{s}{s}{s}{s}{s}", .{
+        std.mem.asBytes(&std.mem.nativeToBig(u64, record.header.padding)),
         std.mem.asBytes(&std.mem.nativeToBig(u64, record.header.key_size)),
         std.mem.asBytes(&std.mem.nativeToBig(u64, record.header.val_size)),
         record.key,
@@ -64,6 +66,7 @@ fn serializeRecord(record: Record, buffer: *std.ArrayList(u8)) !void {
 /// an error will be returned.
 fn deserializeRecord(allocator: std.mem.Allocator, reader: anytype) !Record {
     const header = Header{
+        .padding = try reader.readIntBig(u64),
         .key_size = try reader.readIntBig(u64),
         .val_size = try reader.readIntBig(u64),
     };
@@ -91,6 +94,7 @@ test "serialize and deserialize record" {
     const key = "foo";
     const val = "bar";
     const header = Header{
+        .padding = 0,
         .key_size = key.len,
         .val_size = val.len,
     };
@@ -145,8 +149,11 @@ pub const Database = struct {
                 break;
             }
             var record = try deserializeRecord(allocator, reader);
-            record.pos = pos;
+            record.position = pos;
             errdefer record.deinit();
+            if (record.header.padding > 0) {
+                try reader.skipBytes(record.header.padding, .{});
+            }
             try db.put(record);
         }
 
