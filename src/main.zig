@@ -14,6 +14,7 @@ pub const Header = struct {
 pub const Record = struct {
     const Self = @This();
 
+    pos: u64,
     header: Header,
     key: []u8,
     val: []u8,
@@ -28,6 +29,7 @@ pub const Record = struct {
         errdefer allocator.free(val);
 
         return Record{
+            .pos = 0,
             .header = header,
             .key = key,
             .val = val,
@@ -137,8 +139,13 @@ pub const Database = struct {
         const meta = try file.metadata();
         const size = meta.size();
         const reader = file.reader();
-        while (try reader.context.getPos() < size) {
+        while (true) {
+            const pos = try reader.context.getPos();
+            if (pos >= size) {
+                break;
+            }
             var record = try deserializeRecord(allocator, reader);
+            record.pos = pos;
             errdefer record.deinit();
             try db.put(record);
         }
