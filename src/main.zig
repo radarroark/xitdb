@@ -85,60 +85,101 @@ pub const Database = struct {
         self.db_file.close();
     }
 
-    pub fn write(self: *Database, key: [HASH_SIZE]u8, value: []const u8, key_offset: u32, index_position: u64) !void {
+    pub fn write(self: *Database, key: [HASH_SIZE]u8, value: []const u8, key_offset: u32, index_pos: u64) !void {
         if (key_offset >= HASH_SIZE) {
             return error.KeyOffsetExceeded;
         }
 
-        const digit = key[key_offset];
-        const ptr_pos = index_position + (POINTER_SIZE * digit);
-        try self.db_file.seekTo(ptr_pos);
-
         const reader = self.db_file.reader();
-        const ptr = try reader.readIntNative(u64);
-
         const writer = self.db_file.writer();
 
-        if (ptr == 0) {
+        const digit = @as(u64, key[key_offset]);
+        const slot_pos = index_pos + (POINTER_SIZE * digit);
+        try self.db_file.seekTo(slot_pos);
+        const slot = try reader.readIntNative(u64);
+
+        if (slot == 0) {
             try self.db_file.seekFromEnd(0);
             const value_pos = try self.db_file.getPos();
             try writer.writeAll(&key);
             try writer.writeIntNative(u64, value.len);
             try writer.writeAll(value);
-            try self.db_file.seekTo(ptr_pos);
+            try self.db_file.seekTo(slot_pos);
             try writer.writeIntNative(u64, setPointerType(value_pos, PointerType.plain));
             return;
         }
 
-        return error.NotImplemented;
-    }
-
-    pub fn read(self: *Database, key: [HASH_SIZE]u8, key_offset: u32, index_position: u64) ![]u8 {
-        const digit = @as(u64, key[key_offset]);
-        const ptr_pos = index_position + (POINTER_SIZE * digit);
-        try self.db_file.seekTo(ptr_pos);
-
-        const reader = self.db_file.reader();
-        const ptr_and_type = try reader.readIntNative(u64);
-
-        if (ptr_and_type == 0) {
-            return error.KeyNotFound;
-        }
-
-        const ptr_type = getPointerType(ptr_and_type);
-        const ptr = getPointerValue(ptr_and_type);
+        const ptr_type = getPointerType(slot);
+        const ptr = getPointerValue(slot);
 
         switch (ptr_type) {
             .plain => {
                 try self.db_file.seekTo(ptr);
-                var hash = [_]u8{0} ** HASH_SIZE;
-                try reader.readNoEof(&hash);
-                if (std.mem.eql(u8, &hash, &key)) {
-                    const value_len = try reader.readIntNative(u64);
-                    return try reader.readAllAlloc(self.allocator, value_len);
-                } else {
+                var existing_key = [_]u8{0} ** HASH_SIZE;
+                try reader.readNoEof(&existing_key);
+                if (std.mem.eql(u8, &existing_key, &key)) {
                     return error.NotImplemented;
                 }
+
+                // append new index block
+                if (key_offset + 1 >= HASH_SIZE) {
+                    return error.KeyOffsetExceeded;
+                }
+                const next_digit = @as(u64, existing_key[key_offset + 1]);
+                try self.db_file.seekFromEnd(0);
+                const new_index_pos = try self.db_file.getPos();
+                var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                try writer.writeAll(&index_block);
+                try self.db_file.seekTo(new_index_pos + (POINTER_SIZE * next_digit));
+                try writer.writeIntNative(u64, slot);
+                try self.db_file.seekTo(slot_pos);
+                try writer.writeIntNative(u64, setPointerType(new_index_pos, .index));
+                try self.write(key, value, key_offset + 1, new_index_pos);
+
+                return;
+            },
+            else => {
+                return error.NotImplemented;
+            },
+        }
+    }
+
+    pub fn read(self: *Database, key: [HASH_SIZE]u8, key_offset: u32, index_pos: u64) ![]u8 {
+        if (key_offset >= HASH_SIZE) {
+            return error.KeyOffsetExceeded;
+        }
+
+        const reader = self.db_file.reader();
+
+        const digit = @as(u64, key[key_offset]);
+        const slot_pos = index_pos + (POINTER_SIZE * digit);
+        try self.db_file.seekTo(slot_pos);
+        const slot = try reader.readIntNative(u64);
+
+        if (slot == 0) {
+            return error.KeyNotFound;
+        }
+
+        const ptr_type = getPointerType(slot);
+        const ptr = getPointerValue(slot);
+
+        switch (ptr_type) {
+            .plain => {
+                try self.db_file.seekTo(ptr);
+                var existing_key = [_]u8{0} ** HASH_SIZE;
+                try reader.readNoEof(&existing_key);
+                if (std.mem.eql(u8, &existing_key, &key)) {
+                    const value_len = try reader.readIntNative(u64);
+                    var value = try self.allocator.alloc(u8, value_len);
+                    errdefer self.allocator.free(value);
+                    try reader.readNoEof(value);
+                    return value;
+                } else {
+                    return error.KeyNotFound;
+                }
+            },
+            .index => {
+                return self.read(key, key_offset + 1, ptr);
             },
             else => {
                 return error.NotImplemented;
@@ -162,7 +203,7 @@ test "get/set pointer type" {
     try expectEqual(PointerType.chain, getPointerType(ptr_chain));
 }
 
-test "add records to a database" {
+test "read and write" {
     const allocator = std.testing.allocator;
     const cwd = std.fs.cwd();
     const db_path = "main.db";
@@ -171,24 +212,34 @@ test "add records to a database" {
     var db = try Database.init(allocator, cwd, db_path);
     defer db.deinit();
 
-    // write foo
+    // read foo
     var foo_key = [_]u8{0} ** HASH_SIZE;
     try hash_buffer("foo", &foo_key);
     try db.write(foo_key, "bar", 0, HEADER_BLOCK_SIZE);
 
-    // read foo
-    const value = try db.read(foo_key, 0, HEADER_BLOCK_SIZE);
-    defer allocator.free(value);
-    try std.testing.expectEqualStrings("bar", value);
+    // write foo
+    const bar_value = try db.read(foo_key, 0, HEADER_BLOCK_SIZE);
+    defer allocator.free(bar_value);
+    try std.testing.expectEqualStrings("bar", bar_value);
 
     // key not found
     var not_key = [_]u8{0} ** HASH_SIZE;
     try hash_buffer("this doesn't exist", &not_key);
     try expectEqual(error.KeyNotFound, db.read(not_key, 0, HEADER_BLOCK_SIZE));
 
-    // key conflicts with foo at first byte
+    // write key that conflicts with foo at first byte
     var conflict_key = [_]u8{0} ** HASH_SIZE;
-    conflict_key[0] = foo_key[0];
-    try expectEqual(error.NotImplemented, db.write(conflict_key, "bar", 0, HEADER_BLOCK_SIZE));
-    try expectEqual(error.NotImplemented, db.read(conflict_key, 0, HEADER_BLOCK_SIZE));
+    try hash_buffer("conflict", &conflict_key);
+    conflict_key[0] = foo_key[0]; // intentionally make it conflict
+    try db.write(conflict_key, "hello", 0, HEADER_BLOCK_SIZE);
+
+    // read conflicting key
+    const hello_value = try db.read(conflict_key, 0, HEADER_BLOCK_SIZE);
+    defer allocator.free(hello_value);
+    try std.testing.expectEqualStrings("hello", hello_value);
+
+    // we can still read foo
+    const bar_value2 = try db.read(foo_key, 0, HEADER_BLOCK_SIZE);
+    defer allocator.free(bar_value2);
+    try std.testing.expectEqualStrings("bar", bar_value2);
 }
