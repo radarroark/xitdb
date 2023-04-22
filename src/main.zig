@@ -8,8 +8,8 @@ const std = @import("std");
 
 // using sha1 to hash the keys for now, but this will eventually be
 // configurable. for many uses it will be overkill...
-pub const HASH_BYTES_LEN = std.crypto.hash.Sha1.digest_length;
-pub fn hash_buffer(buffer: []const u8, out: *[HASH_BYTES_LEN]u8) !void {
+pub const HASH_SIZE = std.crypto.hash.Sha1.digest_length;
+pub fn hash_buffer(buffer: []const u8, out: *[HASH_SIZE]u8) !void {
     var h = std.crypto.hash.Sha1.init(.{});
     h.update(buffer);
     h.final(out);
@@ -85,8 +85,8 @@ pub const Database = struct {
         self.db_file.close();
     }
 
-    pub fn write(self: *Database, key: [HASH_BYTES_LEN]u8, value: []const u8, key_offset: u32, index_position: u64) !void {
-        if (key_offset >= HASH_BYTES_LEN) {
+    pub fn write(self: *Database, key: [HASH_SIZE]u8, value: []const u8, key_offset: u32, index_position: u64) !void {
+        if (key_offset >= HASH_SIZE) {
             return error.KeyOffsetExceeded;
         }
 
@@ -102,6 +102,7 @@ pub const Database = struct {
         if (ptr == 0) {
             try self.db_file.seekFromEnd(0);
             const value_pos = try self.db_file.getPos();
+            try writer.writeAll(&key);
             try writer.writeIntNative(u64, value.len);
             try writer.writeAll(value);
             try self.db_file.seekTo(ptr_pos);
@@ -112,7 +113,7 @@ pub const Database = struct {
         return error.NotImplemented;
     }
 
-    pub fn read(self: *Database, key: [HASH_BYTES_LEN]u8, key_offset: u32, index_position: u64) ![]u8 {
+    pub fn read(self: *Database, key: [HASH_SIZE]u8, key_offset: u32, index_position: u64) ![]u8 {
         const digit = @as(u64, key[key_offset]);
         const ptr_pos = index_position + (POINTER_SIZE * digit);
         try self.db_file.seekTo(ptr_pos);
@@ -130,8 +131,14 @@ pub const Database = struct {
         switch (ptr_type) {
             .plain => {
                 try self.db_file.seekTo(ptr);
-                const value_len = try reader.readIntNative(u64);
-                return try reader.readAllAlloc(self.allocator, value_len);
+                var hash = [_]u8{0} ** HASH_SIZE;
+                try reader.readNoEof(&hash);
+                if (std.mem.eql(u8, &hash, &key)) {
+                    const value_len = try reader.readIntNative(u64);
+                    return try reader.readAllAlloc(self.allocator, value_len);
+                } else {
+                    return error.NotImplemented;
+                }
             },
             else => {
                 return error.NotImplemented;
@@ -165,7 +172,7 @@ test "add records to a database" {
     defer db.deinit();
 
     // write foo
-    var foo_key = [_]u8{0} ** HASH_BYTES_LEN;
+    var foo_key = [_]u8{0} ** HASH_SIZE;
     try hash_buffer("foo", &foo_key);
     try db.write(foo_key, "bar", 0, HEADER_BLOCK_SIZE);
 
@@ -175,12 +182,13 @@ test "add records to a database" {
     try std.testing.expectEqualStrings("bar", value);
 
     // key not found
-    var not_key = [_]u8{0} ** HASH_BYTES_LEN;
+    var not_key = [_]u8{0} ** HASH_SIZE;
     try hash_buffer("this doesn't exist", &not_key);
     try expectEqual(error.KeyNotFound, db.read(not_key, 0, HEADER_BLOCK_SIZE));
 
     // key conflicts with foo at first byte
-    var conflict_key = [_]u8{0} ** HASH_BYTES_LEN;
+    var conflict_key = [_]u8{0} ** HASH_SIZE;
     conflict_key[0] = foo_key[0];
     try expectEqual(error.NotImplemented, db.write(conflict_key, "bar", 0, HEADER_BLOCK_SIZE));
+    try expectEqual(error.NotImplemented, db.read(conflict_key, 0, HEADER_BLOCK_SIZE));
 }
