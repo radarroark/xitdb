@@ -142,6 +142,13 @@ pub const Database = struct {
             .db_file = file,
             .entry_count = 0,
         };
+        errdefer {
+            var iter = db.key_pairs.valueIterator();
+            while (iter.next()) |value| {
+                value.deinit();
+            }
+            db.key_pairs.deinit();
+        }
 
         // read kv pairs
         const meta = try file.metadata();
