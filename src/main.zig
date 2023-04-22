@@ -6,277 +6,136 @@
 
 const std = @import("std");
 
-pub const Header = struct {
-    padding: u64,
-    key_size: u64,
-    val_size: u64,
+// using sha1 to hash the keys for now, but this will eventually be
+// configurable. for many uses it will be overkill...
+pub const HASH_BYTES_LEN = std.crypto.hash.Sha1.digest_length;
+pub fn hash_buffer(buffer: []const u8, out: *[HASH_BYTES_LEN]u8) !void {
+    var h = std.crypto.hash.Sha1.init(.{});
+    h.update(buffer);
+    h.final(out);
+}
+
+const POINTER_SIZE: comptime_int = @sizeOf(u64);
+const HEADER_BLOCK_SIZE: comptime_int = 2;
+const INDEX_BLOCK_SIZE: comptime_int = POINTER_SIZE * 256;
+
+const PointerType = enum(u64) {
+    plain = (0b00 << 62),
+    index = (0b01 << 62),
+    start = (0b10 << 62),
+    chain = (0b11 << 62),
 };
 
-pub const Record = struct {
-    const Self = @This();
+const TYPE_MASK: u64 = (0b11 << 62);
 
-    position: u64,
-    header: Header,
-    key: []u8,
-    val: []u8,
+pub fn setPointerType(ptr: u64, ptr_type: PointerType) u64 {
+    return ptr | @enumToInt(ptr_type);
+}
 
-    allocator: std.mem.Allocator,
+pub fn getPointerType(ptr: u64) PointerType {
+    return @intToEnum(PointerType, ptr & TYPE_MASK);
+}
 
-    pub fn init(allocator: std.mem.Allocator, header: Header) !Record {
-        const key = try allocator.alloc(u8, header.key_size);
-        errdefer allocator.free(key);
-
-        const val = try allocator.alloc(u8, header.val_size);
-        errdefer allocator.free(val);
-
-        return Record{
-            .position = 0,
-            .header = header,
-            .key = key,
-            .val = val,
-            .allocator = allocator,
-        };
-    }
-
-    pub fn deinit(self: *Self) void {
-        self.allocator.free(self.key);
-        self.allocator.free(self.val);
-    }
-};
+pub fn getPointerValue(ptr: u64) u64 {
+    return ptr & (~TYPE_MASK);
+}
 
 pub const DatabaseError = error{
-    InvalidKey,
-    InvalidVal,
+    NotImplemented,
+    KeyOffsetExceeded,
+    KeyNotFound,
 };
 
-/// serializes the data in big endian format. why big endian?
-/// mostly because it's common for on-disk and over-the-wire
-/// formats. i might change my mind later though.
-fn serializeRecord(record: Record, buffer: *std.ArrayList(u8)) !void {
-    try buffer.writer().print("{s}{s}{s}{s}{s}", .{
-        std.mem.asBytes(&std.mem.nativeToBig(u64, record.header.padding)),
-        std.mem.asBytes(&std.mem.nativeToBig(u64, record.header.key_size)),
-        std.mem.asBytes(&std.mem.nativeToBig(u64, record.header.val_size)),
-        record.key,
-        record.val,
-    });
-}
-
-/// deserializes the data. if the key or val isn't the encoded size,
-/// an error will be returned.
-fn deserializeRecord(allocator: std.mem.Allocator, reader: anytype) !Record {
-    const header = Header{
-        .padding = try reader.readIntBig(u64),
-        .key_size = try reader.readIntBig(u64),
-        .val_size = try reader.readIntBig(u64),
-    };
-
-    var record = try Record.init(allocator, header);
-    errdefer record.deinit();
-
-    const key_size = try reader.readAll(record.key);
-    if (header.key_size != key_size) {
-        return error.InvalidKey;
-    }
-
-    const val_size = try reader.readAll(record.val);
-    if (header.val_size != val_size) {
-        return error.InvalidVal;
-    }
-
-    return record;
-}
-
-test "serialize and deserialize record" {
-    const allocator = std.testing.allocator;
-
-    // create the record
-    const key = "foo";
-    const val = "bar";
-    const header = Header{
-        .padding = 0,
-        .key_size = key.len,
-        .val_size = val.len,
-    };
-    var record = try Record.init(allocator, header);
-    std.mem.copy(u8, record.key, key);
-    std.mem.copy(u8, record.val, val);
-    defer record.deinit();
-
-    // serialize the record
-    var buffer = std.ArrayList(u8).init(allocator);
-    defer buffer.deinit();
-    try serializeRecord(record, &buffer);
-
-    // deserialize the record
-    var fis = std.io.fixedBufferStream(buffer.items);
-    var record2 = try deserializeRecord(allocator, fis.reader());
-    defer record2.deinit();
-
-    // check that the records are equal
-    try std.testing.expectEqual(record.header, record2.header);
-    try std.testing.expectEqualStrings(key, record2.key);
-    try std.testing.expectEqualStrings(val, record2.val);
-}
-
 pub const Database = struct {
-    const Self = @This();
-
     allocator: std.mem.Allocator,
-    key_pairs: std.StringHashMap(Record),
     db_file: std.fs.File,
-    entry_count: u32,
 
     pub fn init(allocator: std.mem.Allocator, dir: std.fs.Dir, path: []const u8) !Database {
         // create or open file
         const file_or_err = dir.openFile(path, .{ .mode = .read_write });
         const file = try if (file_or_err == error.FileNotFound)
-            dir.createFile(path, .{})
+            dir.createFile(path, .{ .read = true })
         else
             file_or_err;
         errdefer file.close();
 
-        var db = Database{
-            .allocator = allocator,
-            .key_pairs = std.StringHashMap(Record).init(allocator),
-            .db_file = file,
-            .entry_count = 0,
-        };
-        errdefer {
-            var iter = db.key_pairs.valueIterator();
-            while (iter.next()) |value| {
-                value.deinit();
-            }
-            db.key_pairs.deinit();
-        }
-
-        // read kv pairs
         const meta = try file.metadata();
         const size = meta.size();
         const reader = file.reader();
-        while (true) {
-            const position = try reader.context.getPos();
-            if (position >= size) {
-                break;
-            }
-            var record = try deserializeRecord(allocator, reader);
-            record.position = position;
-            errdefer record.deinit();
-            if (record.header.padding > 0) {
-                try reader.skipBytes(record.header.padding, .{});
-            }
-            try db.put(record);
+        const writer = file.writer();
+
+        var header_block = [_]u8{0} ** HEADER_BLOCK_SIZE;
+        var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+
+        if (size == 0) {
+            try writer.writeAll(&header_block);
+            try writer.writeAll(&index_block);
+        } else {
+            try reader.readNoEof(&header_block);
+            try reader.readNoEof(&index_block);
         }
 
-        return db;
+        return Database{
+            .allocator = allocator,
+            .db_file = file,
+        };
     }
 
-    pub fn deinit(self: *Self) void {
-        var iter = self.key_pairs.valueIterator();
-        while (iter.next()) |value| {
-            value.deinit();
-        }
-        self.key_pairs.deinit();
+    pub fn deinit(self: *Database) void {
         self.db_file.close();
     }
 
-    fn put(self: *Self, record: Record) !void {
-        // if key exists, remove it
-        var key_pair_maybe = self.key_pairs.fetchRemove(record.key);
-        if (key_pair_maybe) |*key_pair| {
-            key_pair.value.deinit();
+    pub fn write(self: *Database, key: [HASH_BYTES_LEN]u8, value: []const u8, key_offset: u32, index_position: u64) !void {
+        if (key_offset >= HASH_BYTES_LEN) {
+            return error.KeyOffsetExceeded;
         }
 
-        try self.key_pairs.put(record.key, record);
+        const digit = key[key_offset];
+        const ptr_pos = index_position + (POINTER_SIZE * digit);
+        try self.db_file.seekTo(ptr_pos);
 
-        // if it's a tombstone record, immediately remove it
-        if (record.header.val_size == 0) {
-            var pair_maybe = self.key_pairs.fetchRemove(record.key);
-            if (pair_maybe) |*key_pair| {
-                key_pair.value.deinit();
-            }
-        }
-
-        self.entry_count += 1;
-    }
-
-    pub fn add(self: *Self, record: Record) !void {
-        var buffer = std.ArrayList(u8).init(self.allocator);
-        defer buffer.deinit();
-        try serializeRecord(record, &buffer);
-        try self.db_file.seekFromEnd(0);
-        try self.db_file.writeAll(buffer.items);
-        try self.put(record);
-    }
-
-    pub fn remove(self: *Self, key: []const u8) !void {
-        const header = Header{
-            .padding = 0,
-            .key_size = key.len,
-            .val_size = 0,
-        };
-        var record = try Record.init(self.allocator, header);
-        std.mem.copy(u8, record.key, key);
-        try self.add(record);
-    }
-
-    pub fn merge(self: *Self) !void {
-        try self.db_file.seekTo(0);
-        const meta = try self.db_file.metadata();
-        const size = meta.size();
         const reader = self.db_file.reader();
-        var last_position: u64 = 0;
-        var last_padding: u64 = 0;
-        self.entry_count = 0;
+        const ptr = try reader.readIntNative(u64);
 
-        while (true) {
-            // read record and save start/end positions
-            const start_position = try reader.context.getPos();
-            if (start_position >= size) {
-                break;
-            }
-            var record = try deserializeRecord(self.allocator, reader);
-            defer record.deinit();
-            if (record.header.padding > 0) {
-                try reader.skipBytes(record.header.padding, .{});
-            }
-            const end_position = try reader.context.getPos();
+        const writer = self.db_file.writer();
 
-            // if entry is valid, continue
-            const existing_record_maybe = self.key_pairs.get(record.key);
-            if (existing_record_maybe) |existing_record| {
-                if (existing_record.position == start_position) {
-                    last_position = start_position;
-                    last_padding = record.header.padding;
-                    self.entry_count += 1;
-                    continue;
-                }
-            }
+        if (ptr == 0) {
+            try self.db_file.seekFromEnd(0);
+            const value_pos = try self.db_file.getPos();
+            try writer.writeIntNative(u64, value.len);
+            try writer.writeAll(value);
+            try self.db_file.seekTo(ptr_pos);
+            try writer.writeIntNative(u64, setPointerType(value_pos, PointerType.plain));
+            return;
+        }
 
-            // if invalid entry is not in beginning, merge with the last entry
-            if (start_position > 0) {
-                try self.db_file.seekTo(last_position);
-                last_padding += @sizeOf(Header) + record.header.key_size + record.header.val_size + record.header.padding;
-                try self.db_file.writeAll(std.mem.asBytes(&std.mem.nativeToBig(u64, last_padding)));
-                try self.db_file.seekTo(end_position);
-            }
-            // otherwise overwrite its header so it is skipped
-            else {
-                const empty_header = Header{
-                    .padding = record.header.key_size + record.header.val_size,
-                    .key_size = 0,
-                    .val_size = 0,
-                };
-                var empty_record = try Record.init(self.allocator, empty_header);
-                defer empty_record.deinit();
-                var buffer = std.ArrayList(u8).init(self.allocator);
-                defer buffer.deinit();
-                try serializeRecord(empty_record, &buffer);
-                try self.db_file.seekTo(0);
-                try self.db_file.writeAll(buffer.items);
-                try self.db_file.seekTo(end_position);
-                self.entry_count += 1;
-            }
+        return error.NotImplemented;
+    }
+
+    pub fn read(self: *Database, key: [HASH_BYTES_LEN]u8, key_offset: u32, index_position: u64) ![]u8 {
+        const digit = @as(u64, key[key_offset]);
+        const ptr_pos = index_position + (POINTER_SIZE * digit);
+        try self.db_file.seekTo(ptr_pos);
+
+        const reader = self.db_file.reader();
+        const ptr_and_type = try reader.readIntNative(u64);
+
+        if (ptr_and_type == 0) {
+            return error.KeyNotFound;
+        }
+
+        const ptr_type = getPointerType(ptr_and_type);
+        const ptr = getPointerValue(ptr_and_type);
+
+        switch (ptr_type) {
+            .plain => {
+                try self.db_file.seekTo(ptr);
+                const value_len = try reader.readIntNative(u64);
+                return try reader.readAllAlloc(self.allocator, value_len);
+            },
+            else => {
+                return error.NotImplemented;
+            },
         }
     }
 };
@@ -285,115 +144,43 @@ pub fn expectEqual(expected: anytype, actual: anytype) !void {
     try std.testing.expectEqual(@as(@TypeOf(actual), expected), actual);
 }
 
+test "get/set pointer type" {
+    const ptr_plain = setPointerType(42, .plain);
+    try expectEqual(PointerType.plain, getPointerType(ptr_plain));
+    const ptr_index = setPointerType(42, .index);
+    try expectEqual(PointerType.index, getPointerType(ptr_index));
+    const ptr_start = setPointerType(42, .start);
+    try expectEqual(PointerType.start, getPointerType(ptr_start));
+    const ptr_chain = setPointerType(42, .chain);
+    try expectEqual(PointerType.chain, getPointerType(ptr_chain));
+}
+
 test "add records to a database" {
     const allocator = std.testing.allocator;
     const cwd = std.fs.cwd();
     const db_path = "main.db";
     defer cwd.deleteFile(db_path) catch {};
 
-    // add a record
-    {
-        var record: Record = undefined;
-        var db: Database = undefined;
-        {
-            const key = "foo";
-            const val = "bar";
-            const header = Header{
-                .padding = 0,
-                .key_size = key.len,
-                .val_size = val.len,
-            };
-            record = try Record.init(allocator, header);
-            std.mem.copy(u8, record.key, key);
-            std.mem.copy(u8, record.val, val);
-            errdefer record.deinit();
-            db = try Database.init(allocator, cwd, db_path);
-        }
-        defer db.deinit();
-        try db.add(record);
-        try expectEqual(1, db.key_pairs.count());
-        try expectEqual(1, db.entry_count);
-    }
+    var db = try Database.init(allocator, cwd, db_path);
+    defer db.deinit();
 
-    // add another record
-    {
-        var record: Record = undefined;
-        var db: Database = undefined;
-        {
-            const key = "hello";
-            const val = "world";
-            const header = Header{
-                .padding = 0,
-                .key_size = key.len,
-                .val_size = val.len,
-            };
-            record = try Record.init(allocator, header);
-            std.mem.copy(u8, record.key, key);
-            std.mem.copy(u8, record.val, val);
-            errdefer record.deinit();
-            db = try Database.init(allocator, cwd, db_path);
-        }
-        defer db.deinit();
-        try db.add(record);
-        try expectEqual(2, db.key_pairs.count());
-        try expectEqual(2, db.entry_count);
-    }
+    // write foo
+    var foo_key = [_]u8{0} ** HASH_BYTES_LEN;
+    try hash_buffer("foo", &foo_key);
+    try db.write(foo_key, "bar", 0, HEADER_BLOCK_SIZE);
 
-    // replace a record
-    {
-        var record: Record = undefined;
-        var db: Database = undefined;
-        {
-            const key = "foo";
-            const val = "baz";
-            const header = Header{
-                .padding = 0,
-                .key_size = key.len,
-                .val_size = val.len,
-            };
-            record = try Record.init(allocator, header);
-            std.mem.copy(u8, record.key, key);
-            std.mem.copy(u8, record.val, val);
-            errdefer record.deinit();
-            db = try Database.init(allocator, cwd, db_path);
-        }
-        defer db.deinit();
-        try db.add(record);
-        try expectEqual(2, db.key_pairs.count());
-        try expectEqual(3, db.entry_count);
-    }
+    // read foo
+    const value = try db.read(foo_key, 0, HEADER_BLOCK_SIZE);
+    defer allocator.free(value);
+    try std.testing.expectEqualStrings("bar", value);
 
-    // remove a record
-    {
-        var db = try Database.init(allocator, cwd, db_path);
-        defer db.deinit();
-        try db.remove("foo");
-        try expectEqual(1, db.key_pairs.count());
-        try expectEqual(4, db.entry_count);
-    }
+    // key not found
+    var not_key = [_]u8{0} ** HASH_BYTES_LEN;
+    try hash_buffer("this doesn't exist", &not_key);
+    try expectEqual(error.KeyNotFound, db.read(not_key, 0, HEADER_BLOCK_SIZE));
 
-    // the record is still removed after init
-    {
-        var db = try Database.init(allocator, cwd, db_path);
-        defer db.deinit();
-        try expectEqual(1, db.key_pairs.count());
-        try expectEqual(4, db.entry_count);
-    }
-
-    // merge
-    {
-        var db = try Database.init(allocator, cwd, db_path);
-        defer db.deinit();
-        try db.merge();
-        try expectEqual(1, db.key_pairs.count());
-        try expectEqual(2, db.entry_count);
-    }
-
-    // the db is still merged after init
-    {
-        var db = try Database.init(allocator, cwd, db_path);
-        defer db.deinit();
-        try expectEqual(1, db.key_pairs.count());
-        try expectEqual(2, db.entry_count);
-    }
+    // key conflicts with foo at first byte
+    var conflict_key = [_]u8{0} ** HASH_BYTES_LEN;
+    conflict_key[0] = foo_key[0];
+    try expectEqual(error.NotImplemented, db.write(conflict_key, "bar", 0, HEADER_BLOCK_SIZE));
 }
