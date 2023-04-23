@@ -212,12 +212,12 @@ test "read and write" {
     var db = try Database.init(allocator, cwd, db_path);
     defer db.deinit();
 
-    // read foo
+    // write foo
     var foo_key = [_]u8{0} ** HASH_SIZE;
     try hash_buffer("foo", &foo_key);
     try db.write(foo_key, "bar", 0, HEADER_BLOCK_SIZE);
 
-    // write foo
+    // read foo
     const bar_value = try db.read(foo_key, 0, HEADER_BLOCK_SIZE);
     defer allocator.free(bar_value);
     try std.testing.expectEqualStrings("bar", bar_value);
