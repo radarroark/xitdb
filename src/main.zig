@@ -99,7 +99,7 @@ pub const Database = struct {
         _ = try self.writeInt(key_hash, value_pos, null, 0, HEADER_BLOCK_SIZE);
     }
 
-    fn writeInt(self: *Database, key: [HASH_SIZE]u8, value: u64, blob_maybe: ?[]const u8, key_offset: u32, index_pos: u64) !u64 {
+    fn writeInt(self: *Database, key_hash: [HASH_SIZE]u8, value: u64, blob_maybe: ?[]const u8, key_offset: u32, index_pos: u64) !u64 {
         if (key_offset >= HASH_SIZE) {
             return error.KeyOffsetExceeded;
         }
@@ -107,7 +107,7 @@ pub const Database = struct {
         const reader = self.db_file.reader();
         const writer = self.db_file.writer();
 
-        const digit = @as(u64, key[key_offset]);
+        const digit = @as(u64, key_hash[key_offset]);
         const slot_pos = index_pos + (POINTER_SIZE * digit);
         try self.db_file.seekTo(slot_pos);
         const slot = try reader.readIntLittle(u64);
@@ -115,7 +115,7 @@ pub const Database = struct {
         if (slot == 0) {
             try self.db_file.seekFromEnd(0);
             const value_pos = try self.db_file.getPos();
-            try writer.writeAll(&key);
+            try writer.writeAll(&key_hash);
             try writer.writeIntLittle(u64, value);
             if (blob_maybe) |blob| {
                 try writer.writeAll(blob);
@@ -131,9 +131,9 @@ pub const Database = struct {
         switch (ptr_type) {
             .value => {
                 try self.db_file.seekTo(ptr);
-                var existing_key = [_]u8{0} ** HASH_SIZE;
-                try reader.readNoEof(&existing_key);
-                if (std.mem.eql(u8, &existing_key, &key)) {
+                var existing_key_hash = [_]u8{0} ** HASH_SIZE;
+                try reader.readNoEof(&existing_key_hash);
+                if (std.mem.eql(u8, &existing_key_hash, &key_hash)) {
                     if (blob_maybe) |_| {
                         return ptr;
                     } else {
@@ -145,7 +145,7 @@ pub const Database = struct {
                 if (key_offset + 1 >= HASH_SIZE) {
                     return error.KeyOffsetExceeded;
                 }
-                const next_digit = @as(u64, existing_key[key_offset + 1]);
+                const next_digit = @as(u64, existing_key_hash[key_offset + 1]);
                 try self.db_file.seekFromEnd(0);
                 const new_index_pos = try self.db_file.getPos();
                 var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
@@ -154,7 +154,7 @@ pub const Database = struct {
                 try writer.writeIntLittle(u64, slot);
                 try self.db_file.seekTo(slot_pos);
                 try writer.writeIntLittle(u64, setPointerType(new_index_pos, .index));
-                return try self.writeInt(key, value, blob_maybe, key_offset + 1, new_index_pos);
+                return try self.writeInt(key_hash, value, blob_maybe, key_offset + 1, new_index_pos);
             },
             .index => {
                 return error.NotImplemented;
