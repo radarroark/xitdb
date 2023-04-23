@@ -22,8 +22,6 @@ const INDEX_BLOCK_SIZE: comptime_int = POINTER_SIZE * 256;
 const PointerType = enum(u64) {
     plain = (0b00 << 62),
     index = (0b01 << 62),
-    start = (0b10 << 62),
-    chain = (0b11 << 62),
 };
 
 const TYPE_MASK: u64 = (0b11 << 62);
@@ -138,7 +136,7 @@ pub const Database = struct {
 
                 return;
             },
-            else => {
+            .index => {
                 return error.NotImplemented;
             },
         }
@@ -181,9 +179,6 @@ pub const Database = struct {
             .index => {
                 return self.read(key, key_offset + 1, ptr);
             },
-            else => {
-                return error.NotImplemented;
-            },
         }
     }
 };
@@ -197,10 +192,6 @@ test "get/set pointer type" {
     try expectEqual(PointerType.plain, getPointerType(ptr_plain));
     const ptr_index = setPointerType(42, .index);
     try expectEqual(PointerType.index, getPointerType(ptr_index));
-    const ptr_start = setPointerType(42, .start);
-    try expectEqual(PointerType.start, getPointerType(ptr_start));
-    const ptr_chain = setPointerType(42, .chain);
-    try expectEqual(PointerType.chain, getPointerType(ptr_chain));
 }
 
 test "read and write" {
