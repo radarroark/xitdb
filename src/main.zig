@@ -99,7 +99,7 @@ pub const Database = struct {
         _ = try self.writeInt(key_hash, value_pos, null, 0, HEADER_BLOCK_SIZE);
     }
 
-    fn writeInt(self: *Database, key: [HASH_SIZE]u8, value: u64, value_after_maybe: ?[]const u8, key_offset: u32, index_pos: u64) !u64 {
+    fn writeInt(self: *Database, key: [HASH_SIZE]u8, value: u64, blob_maybe: ?[]const u8, key_offset: u32, index_pos: u64) !u64 {
         if (key_offset >= HASH_SIZE) {
             return error.KeyOffsetExceeded;
         }
@@ -117,8 +117,8 @@ pub const Database = struct {
             const value_pos = try self.db_file.getPos();
             try writer.writeAll(&key);
             try writer.writeIntLittle(u64, value);
-            if (value_after_maybe) |value_after| {
-                try writer.writeAll(value_after);
+            if (blob_maybe) |blob| {
+                try writer.writeAll(blob);
             }
             try self.db_file.seekTo(slot_pos);
             try writer.writeIntLittle(u64, setPointerType(value_pos, .value));
@@ -134,7 +134,11 @@ pub const Database = struct {
                 var existing_key = [_]u8{0} ** HASH_SIZE;
                 try reader.readNoEof(&existing_key);
                 if (std.mem.eql(u8, &existing_key, &key)) {
-                    return error.NotImplemented;
+                    if (blob_maybe) |_| {
+                        return ptr;
+                    } else {
+                        return error.NotImplemented;
+                    }
                 }
 
                 // append new index block
@@ -150,7 +154,7 @@ pub const Database = struct {
                 try writer.writeIntLittle(u64, slot);
                 try self.db_file.seekTo(slot_pos);
                 try writer.writeIntLittle(u64, setPointerType(new_index_pos, .index));
-                return try self.writeInt(key, value, value_after_maybe, key_offset + 1, new_index_pos);
+                return try self.writeInt(key, value, blob_maybe, key_offset + 1, new_index_pos);
             },
             .index => {
                 return error.NotImplemented;
