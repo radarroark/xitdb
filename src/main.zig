@@ -154,9 +154,10 @@ pub const Database = struct {
                 try writer.writeAll(&index_block);
                 try self.db_file.seekTo(next_index_pos + (POINTER_SIZE * next_digit));
                 try writer.writeIntLittle(u64, slot);
+                const next_pos = try self.writeInt(key_hash, value, blob_maybe, key_offset + 1, next_index_pos);
                 try self.db_file.seekTo(slot_pos);
                 try writer.writeIntLittle(u64, setPointerType(next_index_pos, .index));
-                return try self.writeInt(key_hash, value, blob_maybe, key_offset + 1, next_index_pos);
+                return next_pos;
             },
             .index => {
                 return error.NotImplemented;
