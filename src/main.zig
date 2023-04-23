@@ -92,7 +92,7 @@ pub const Database = struct {
         try self.writeHash(key_hash, value);
     }
 
-    fn writeHash(self: *Database, key_hash: [HASH_SIZE]u8, value: []const u8) !void {
+    pub fn writeHash(self: *Database, key_hash: [HASH_SIZE]u8, value: []const u8) !void {
         var value_hash = [_]u8{0} ** HASH_SIZE;
         try hash_buffer(value, &value_hash);
         const value_pos = try self.writeInt(value_hash, value.len, value, 0, HEADER_BLOCK_SIZE + INDEX_BLOCK_SIZE);
@@ -158,8 +158,14 @@ pub const Database = struct {
         }
     }
 
-    pub fn read(self: *Database, key: [HASH_SIZE]u8) ![]u8 {
-        const value_pos = try self.readInt(key, 0, HEADER_BLOCK_SIZE);
+    pub fn read(self: *Database, key: []const u8) ![]u8 {
+        var key_hash = [_]u8{0} ** HASH_SIZE;
+        try hash_buffer(key, &key_hash);
+        return self.readHash(key_hash);
+    }
+
+    pub fn readHash(self: *Database, key_hash: [HASH_SIZE]u8) ![]u8 {
+        const value_pos = try self.readInt(key_hash, 0, HEADER_BLOCK_SIZE);
         try self.db_file.seekTo(value_pos + HASH_SIZE);
 
         const reader = self.db_file.reader();
@@ -171,14 +177,14 @@ pub const Database = struct {
         return value;
     }
 
-    fn readInt(self: *Database, key: [HASH_SIZE]u8, key_offset: u32, index_pos: u64) !u64 {
+    fn readInt(self: *Database, key_hash: [HASH_SIZE]u8, key_offset: u32, index_pos: u64) !u64 {
         if (key_offset >= HASH_SIZE) {
             return error.KeyOffsetExceeded;
         }
 
         const reader = self.db_file.reader();
 
-        const digit = @as(u64, key[key_offset]);
+        const digit = @as(u64, key_hash[key_offset]);
         const slot_pos = index_pos + (POINTER_SIZE * digit);
         try self.db_file.seekTo(slot_pos);
         const slot = try reader.readIntLittle(u64);
@@ -193,16 +199,16 @@ pub const Database = struct {
         switch (ptr_type) {
             .plain => {
                 try self.db_file.seekTo(ptr);
-                var existing_key = [_]u8{0} ** HASH_SIZE;
-                try reader.readNoEof(&existing_key);
-                if (std.mem.eql(u8, &existing_key, &key)) {
+                var existing_key_hash = [_]u8{0} ** HASH_SIZE;
+                try reader.readNoEof(&existing_key_hash);
+                if (std.mem.eql(u8, &existing_key_hash, &key_hash)) {
                     return try reader.readIntLittle(u64);
                 } else {
                     return error.KeyNotFound;
                 }
             },
             .index => {
-                return self.readInt(key, key_offset + 1, ptr);
+                return self.readInt(key_hash, key_offset + 1, ptr);
             },
         }
     }
@@ -234,14 +240,12 @@ test "read and write" {
     try db.writeHash(foo_key, "bar");
 
     // read foo
-    const bar_value = try db.read(foo_key);
+    const bar_value = try db.readHash(foo_key);
     defer allocator.free(bar_value);
     try std.testing.expectEqualStrings("bar", bar_value);
 
     // key not found
-    var not_key = [_]u8{0} ** HASH_SIZE;
-    try hash_buffer("this doesn't exist", &not_key);
-    try expectEqual(error.KeyNotFound, db.read(not_key));
+    try expectEqual(error.KeyNotFound, db.read("this doesn't exist"));
 
     // write key that conflicts with foo at first byte
     var conflict_key = [_]u8{0} ** HASH_SIZE;
@@ -250,12 +254,12 @@ test "read and write" {
     try db.writeHash(conflict_key, "hello");
 
     // read conflicting key
-    const hello_value = try db.read(conflict_key);
+    const hello_value = try db.readHash(conflict_key);
     defer allocator.free(hello_value);
     try std.testing.expectEqualStrings("hello", hello_value);
 
     // we can still read foo
-    const bar_value2 = try db.read(foo_key);
+    const bar_value2 = try db.read("foo");
     defer allocator.free(bar_value2);
     try std.testing.expectEqualStrings("bar", bar_value2);
 }
