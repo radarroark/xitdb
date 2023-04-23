@@ -20,7 +20,7 @@ const HEADER_BLOCK_SIZE: comptime_int = 2;
 const INDEX_BLOCK_SIZE: comptime_int = POINTER_SIZE * 256;
 
 const PointerType = enum(u64) {
-    plain = (0b00 << 62),
+    value = (0b00 << 62),
     index = (0b01 << 62),
 };
 
@@ -121,7 +121,7 @@ pub const Database = struct {
                 try writer.writeAll(value_after);
             }
             try self.db_file.seekTo(slot_pos);
-            try writer.writeIntLittle(u64, setPointerType(value_pos, .plain));
+            try writer.writeIntLittle(u64, setPointerType(value_pos, .value));
             return value_pos;
         }
 
@@ -129,7 +129,7 @@ pub const Database = struct {
         const ptr = getPointerValue(slot);
 
         switch (ptr_type) {
-            .plain => {
+            .value => {
                 try self.db_file.seekTo(ptr);
                 var existing_key = [_]u8{0} ** HASH_SIZE;
                 try reader.readNoEof(&existing_key);
@@ -197,7 +197,7 @@ pub const Database = struct {
         const ptr = getPointerValue(slot);
 
         switch (ptr_type) {
-            .plain => {
+            .value => {
                 try self.db_file.seekTo(ptr);
                 var existing_key_hash = [_]u8{0} ** HASH_SIZE;
                 try reader.readNoEof(&existing_key_hash);
@@ -219,8 +219,8 @@ pub fn expectEqual(expected: anytype, actual: anytype) !void {
 }
 
 test "get/set pointer type" {
-    const ptr_plain = setPointerType(42, .plain);
-    try expectEqual(PointerType.plain, getPointerType(ptr_plain));
+    const ptr_value = setPointerType(42, .value);
+    try expectEqual(PointerType.value, getPointerType(ptr_value));
     const ptr_index = setPointerType(42, .index);
     try expectEqual(PointerType.index, getPointerType(ptr_index));
 }
