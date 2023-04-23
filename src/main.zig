@@ -15,9 +15,11 @@ pub fn hash_buffer(buffer: []const u8, out: *[HASH_SIZE]u8) !void {
     h.final(out);
 }
 
-const POINTER_SIZE: comptime_int = @sizeOf(u64);
-const HEADER_BLOCK_SIZE: comptime_int = 2;
-const INDEX_BLOCK_SIZE: comptime_int = POINTER_SIZE * 256;
+const POINTER_SIZE = @sizeOf(u64);
+const HEADER_BLOCK_SIZE = 2;
+const INDEX_BLOCK_SIZE = POINTER_SIZE * 256;
+const KEY_INDEX_START = HEADER_BLOCK_SIZE;
+const VALUE_INDEX_START = HEADER_BLOCK_SIZE + INDEX_BLOCK_SIZE;
 
 const PointerType = enum(u64) {
     value = (0b00 << 62),
@@ -95,8 +97,8 @@ pub const Database = struct {
     pub fn writeHash(self: *Database, key_hash: [HASH_SIZE]u8, value: []const u8) !void {
         var value_hash = [_]u8{0} ** HASH_SIZE;
         try hash_buffer(value, &value_hash);
-        const value_pos = try self.writeInt(value_hash, value.len, value, 0, HEADER_BLOCK_SIZE + INDEX_BLOCK_SIZE);
-        _ = try self.writeInt(key_hash, value_pos, null, 0, HEADER_BLOCK_SIZE);
+        const value_pos = try self.writeInt(value_hash, value.len, value, 0, VALUE_INDEX_START);
+        _ = try self.writeInt(key_hash, value_pos, null, 0, KEY_INDEX_START);
     }
 
     fn writeInt(self: *Database, key_hash: [HASH_SIZE]u8, value: u64, blob_maybe: ?[]const u8, key_offset: u32, index_pos: u64) !u64 {
@@ -169,7 +171,7 @@ pub const Database = struct {
     }
 
     pub fn readHash(self: *Database, key_hash: [HASH_SIZE]u8) ![]u8 {
-        const value_pos = try self.readInt(key_hash, 0, HEADER_BLOCK_SIZE);
+        const value_pos = try self.readInt(key_hash, 0, KEY_INDEX_START);
         try self.db_file.seekTo(value_pos + HASH_SIZE);
 
         const reader = self.db_file.reader();
