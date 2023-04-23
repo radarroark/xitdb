@@ -149,14 +149,14 @@ pub const Database = struct {
                 }
                 const next_digit = @as(u64, existing_key_hash[key_offset + 1]);
                 try self.db_file.seekFromEnd(0);
-                const new_index_pos = try self.db_file.getPos();
+                const next_index_pos = try self.db_file.getPos();
                 var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                 try writer.writeAll(&index_block);
-                try self.db_file.seekTo(new_index_pos + (POINTER_SIZE * next_digit));
+                try self.db_file.seekTo(next_index_pos + (POINTER_SIZE * next_digit));
                 try writer.writeIntLittle(u64, slot);
                 try self.db_file.seekTo(slot_pos);
-                try writer.writeIntLittle(u64, setPointerType(new_index_pos, .index));
-                return try self.writeInt(key_hash, value, blob_maybe, key_offset + 1, new_index_pos);
+                try writer.writeIntLittle(u64, setPointerType(next_index_pos, .index));
+                return try self.writeInt(key_hash, value, blob_maybe, key_offset + 1, next_index_pos);
             },
             .index => {
                 return error.NotImplemented;
