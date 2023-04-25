@@ -18,6 +18,8 @@ pub fn hash_buffer(buffer: []const u8, out: *[HASH_SIZE]u8) !void {
 const POINTER_SIZE = @sizeOf(u64);
 const HEADER_BLOCK_SIZE = 2;
 const SLOT_COUNT = 256;
+const BIT_COUNT = 8;
+const MASK = SLOT_COUNT - 1;
 const INDEX_BLOCK_SIZE = POINTER_SIZE * SLOT_COUNT;
 const KEY_INDEX_START = HEADER_BLOCK_SIZE;
 const VALUE_INDEX_START = KEY_INDEX_START + INDEX_BLOCK_SIZE;
@@ -237,7 +239,7 @@ pub const Database = struct {
         const reader = self.db_file.reader();
         try self.db_file.seekTo(LIST_INDEX_START);
         const key = try reader.readIntLittle(u64);
-        const shift = if (key == 0) 0 else std.math.log(u64, SLOT_COUNT, key);
+        const shift = @truncate(u6, if (key == 0) 0 else std.math.log(u64, SLOT_COUNT, key));
         const index_pos = try self.db_file.getPos();
         const next_pos = try self.writeListOuter(value, blob_maybe, index_pos, key, shift);
         try self.db_file.seekTo(LIST_INDEX_START);
@@ -246,7 +248,7 @@ pub const Database = struct {
         return next_pos;
     }
 
-    fn writeListOuter(self: *Database, value: u64, blob_maybe: ?[]const u8, index_pos: u64, key: u64, shift: u64) !u64 {
+    fn writeListOuter(self: *Database, value: u64, blob_maybe: ?[]const u8, index_pos: u64, key: u64, shift: u6) !u64 {
         if (key == std.math.pow(u64, SLOT_COUNT, (shift + 1))) {
             return error.NotImplemented;
             //const writer = self.db_file.writer();
@@ -256,22 +258,23 @@ pub const Database = struct {
             //try writer.writeAll(&index_block);
             //try self.db_file.seekTo(next_index_pos);
             //try writer.writeIntLittle(u64, setPointerType(index_pos, .index));
-            //const next_pos = try self.writeListInner(value, blob_maybe, next_index_pos, key);
+            //const next_pos = try self.writeListInner(value, blob_maybe, next_index_pos, key, shift);
             //try self.db_file.seekTo(index_pos);
             //try writer.writeIntLittle(u64, key + 1);
             //try writer.writeIntLittle(u64, shift + 1);
             //return next_pos;
         } else {
-            const next_pos = try self.writeListInner(value, blob_maybe, index_pos, key);
+            const next_pos = try self.writeListInner(value, blob_maybe, index_pos, key, shift);
             try self.db_file.seekTo(index_pos);
             return next_pos;
         }
     }
 
-    fn writeListInner(self: *Database, value: u64, blob_maybe: ?[]const u8, index_pos: u64, key: u64) !u64 {
+    fn writeListInner(self: *Database, value: u64, blob_maybe: ?[]const u8, index_pos: u64, key: u64, shift: u6) !u64 {
         const writer = self.db_file.writer();
 
-        const slot_pos = index_pos + (POINTER_SIZE * key);
+        const i = (key >> (shift * BIT_COUNT)) & MASK;
+        const slot_pos = index_pos + (POINTER_SIZE * i);
         try self.db_file.seekTo(slot_pos);
 
         try self.db_file.seekFromEnd(0);
@@ -295,8 +298,9 @@ pub const Database = struct {
             return error.KeyNotFound;
         }
 
+        const shift = @truncate(u6, if (key == 0) 0 else std.math.log(u64, SLOT_COUNT, key));
         const index_pos = try self.db_file.getPos();
-        const value_size = try self.readListOuter(index_pos, key);
+        const value_size = try self.readListOuter(index_pos, key, shift);
 
         var value = try self.allocator.alloc(u8, value_size);
         errdefer self.allocator.free(value);
@@ -305,10 +309,11 @@ pub const Database = struct {
         return value;
     }
 
-    fn readListOuter(self: *Database, index_pos: u64, key: u64) !u64 {
+    fn readListOuter(self: *Database, index_pos: u64, key: u64, shift: u6) !u64 {
         const reader = self.db_file.reader();
 
-        const slot_pos = index_pos + (POINTER_SIZE * key);
+        const i = (key >> (shift * BIT_COUNT)) & MASK;
+        const slot_pos = index_pos + (POINTER_SIZE * i);
         try self.db_file.seekTo(slot_pos);
         const slot = try reader.readIntLittle(u64);
 
