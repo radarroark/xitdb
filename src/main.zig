@@ -237,7 +237,7 @@ pub const Database = struct {
         const reader = self.db_file.reader();
         try self.db_file.seekTo(LIST_INDEX_START);
         const key = try reader.readIntLittle(u64);
-        const shift = 0;
+        const shift = if (key == 0) 0 else std.math.log(u64, SLOT_COUNT, key);
         const index_pos = try self.db_file.getPos();
         const next_pos = try self.writeListOuter(value, blob_maybe, index_pos, key, shift);
         try self.db_file.seekTo(LIST_INDEX_START);
@@ -249,6 +249,7 @@ pub const Database = struct {
     fn writeListOuter(self: *Database, value: u64, blob_maybe: ?[]const u8, index_pos: u64, key: u64, shift: u64) !u64 {
         if (key == std.math.pow(u64, SLOT_COUNT, (shift + 1))) {
             return error.NotImplemented;
+            //const writer = self.db_file.writer();
             //try self.db_file.seekFromEnd(0);
             //const next_index_pos = try self.db_file.getPos();
             //var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
