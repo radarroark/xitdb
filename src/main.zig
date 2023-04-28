@@ -111,7 +111,15 @@ pub const Database = struct {
         try self.writeMap(key_hash, value);
     }
 
-    pub fn writeMap(self: *Database, key_hash: [HASH_SIZE]u8, value: []const u8) !void {
+    pub fn read(self: *Database, key: []const u8) ![]u8 {
+        var key_hash = [_]u8{0} ** HASH_SIZE;
+        try hash_buffer(key, &key_hash);
+        return self.readMap(key_hash);
+    }
+
+    // maps
+
+    fn writeMap(self: *Database, key_hash: [HASH_SIZE]u8, value: []const u8) !void {
         var value_hash = [_]u8{0} ** HASH_SIZE;
         try hash_buffer(value, &value_hash);
         const value_pos = try self.writeMapInner(value_hash, value.len, value, VALUE_INDEX_START, 0);
@@ -182,13 +190,7 @@ pub const Database = struct {
         }
     }
 
-    pub fn read(self: *Database, key: []const u8) ![]u8 {
-        var key_hash = [_]u8{0} ** HASH_SIZE;
-        try hash_buffer(key, &key_hash);
-        return self.readMap(key_hash);
-    }
-
-    pub fn readMap(self: *Database, key_hash: [HASH_SIZE]u8) ![]u8 {
+    fn readMap(self: *Database, key_hash: [HASH_SIZE]u8) ![]u8 {
         const value_pos = try self.readMapInner(key_hash, KEY_INDEX_START, 0);
         try self.db_file.seekTo(value_pos + HASH_SIZE);
 
@@ -237,8 +239,7 @@ pub const Database = struct {
         }
     }
 
-    // list related functions
-    // this is incomplete and the names are horrible
+    // lists
 
     fn writeList(self: *Database, value: u64, blob_maybe: ?[]const u8) !u64 {
         const reader = self.db_file.reader();
