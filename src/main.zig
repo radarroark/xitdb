@@ -26,11 +26,11 @@ const VALUE_INDEX_START = KEY_INDEX_START + INDEX_BLOCK_SIZE;
 const LIST_INDEX_START = VALUE_INDEX_START + INDEX_BLOCK_SIZE;
 
 const PointerType = enum(u64) {
-    value = (0b00 << 62),
-    index = (0b01 << 62),
+    value = 0 << 63,
+    index = 1 << 63,
 };
 
-const TYPE_MASK: u64 = (0b11 << 62);
+const TYPE_MASK: u64 = 1 << 63;
 
 pub fn setPointerType(ptr: u64, ptr_type: PointerType) u64 {
     return ptr | @enumToInt(ptr_type);
