@@ -122,79 +122,52 @@ pub const Database = struct {
     fn writeMap(self: *Database, key_hash: [HASH_SIZE]u8, value: []const u8) !void {
         var value_hash = [_]u8{0} ** HASH_SIZE;
         try hash_buffer(value, &value_hash);
-        const value_pos = try self.writeMapInner(value_hash, value.len, value, VALUE_INDEX_START, 0);
-        _ = try self.writeMapInner(key_hash, value_pos, null, KEY_INDEX_START, 0);
-    }
 
-    fn writeMapInner(self: *Database, key_hash: [HASH_SIZE]u8, value: u64, blob_maybe: ?[]const u8, index_pos: u64, key_offset: u32) !u64 {
-        if (key_offset >= HASH_SIZE) {
-            return error.KeyOffsetExceeded;
-        }
+        var value_pos: u64 = 0;
 
-        const reader = self.db_file.reader();
-        const writer = self.db_file.writer();
+        var empty = false;
+        var slot_pos = try self.readMapSlot(value_hash, VALUE_INDEX_START, 0, &empty);
 
-        const digit = @as(u64, key_hash[key_offset]);
-        const slot_pos = index_pos + (POINTER_SIZE * digit);
-        try self.db_file.seekTo(slot_pos);
-        const slot = try reader.readIntLittle(u64);
-
-        if (slot == 0) {
+        if (empty) {
+            // if slot was empty, insert the new value
+            const writer = self.db_file.writer();
             try self.db_file.seekFromEnd(0);
-            const value_pos = try self.db_file.getPos();
-            try writer.writeAll(&key_hash);
-            try writer.writeIntLittle(u64, value);
-            if (blob_maybe) |blob| {
-                try writer.writeAll(blob);
-            }
+            value_pos = try self.db_file.getPos();
+            try writer.writeAll(&value_hash);
+            try writer.writeIntLittle(u64, value.len);
+            try writer.writeAll(value);
             try self.db_file.seekTo(slot_pos);
             try writer.writeIntLittle(u64, setPointerType(value_pos, .value));
-            return value_pos;
+        } else {
+            // get the existing value
+            const reader = self.db_file.reader();
+            try self.db_file.seekTo(slot_pos);
+            const slot = try reader.readIntLittle(u64);
+            value_pos = getPointerValue(slot);
         }
 
-        const ptr_type = getPointerType(slot);
-        const ptr = getPointerValue(slot);
+        empty = false;
+        slot_pos = try self.readMapSlot(key_hash, KEY_INDEX_START, 0, &empty);
 
-        switch (ptr_type) {
-            .value => {
-                try self.db_file.seekTo(ptr);
-                var existing_key_hash = [_]u8{0} ** HASH_SIZE;
-                try reader.readNoEof(&existing_key_hash);
-                if (std.mem.eql(u8, &existing_key_hash, &key_hash)) {
-                    if (blob_maybe) |_| {
-                        return ptr;
-                    } else {
-                        return error.NotImplemented;
-                    }
-                }
-
-                // append new index block
-                if (key_offset + 1 >= HASH_SIZE) {
-                    return error.KeyOffsetExceeded;
-                }
-                const next_digit = @as(u64, existing_key_hash[key_offset + 1]);
-                try self.db_file.seekFromEnd(0);
-                const next_index_pos = try self.db_file.getPos();
-                var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                try writer.writeAll(&index_block);
-                try self.db_file.seekTo(next_index_pos + (POINTER_SIZE * next_digit));
-                try writer.writeIntLittle(u64, slot);
-                const next_pos = try self.writeMapInner(key_hash, value, blob_maybe, next_index_pos, key_offset + 1);
-                try self.db_file.seekTo(slot_pos);
-                try writer.writeIntLittle(u64, setPointerType(next_index_pos, .index));
-                return next_pos;
-            },
-            .index => {
-                return error.NotImplemented;
-            },
-        }
+        // always write the new key entry
+        // TODO: skip this if the value isn't changing
+        const writer = self.db_file.writer();
+        try self.db_file.seekFromEnd(0);
+        const pos = try self.db_file.getPos();
+        try writer.writeAll(&key_hash);
+        try writer.writeIntLittle(u64, value_pos);
+        try self.db_file.seekTo(slot_pos);
+        try writer.writeIntLittle(u64, setPointerType(pos, .value));
     }
 
     fn readMap(self: *Database, key_hash: [HASH_SIZE]u8) ![]u8 {
-        const value_pos = try self.readMapInner(key_hash, KEY_INDEX_START, 0);
+        const reader = self.db_file.reader();
+
+        _ = try self.readMapSlot(key_hash, KEY_INDEX_START, 0, null);
+        const value_pos = try reader.readIntLittle(u64);
+
         try self.db_file.seekTo(value_pos + HASH_SIZE);
 
-        const reader = self.db_file.reader();
         const value_size = try reader.readIntLittle(u64);
 
         var value = try self.allocator.alloc(u8, value_size);
@@ -203,7 +176,7 @@ pub const Database = struct {
         return value;
     }
 
-    fn readMapInner(self: *Database, key_hash: [HASH_SIZE]u8, index_pos: u64, key_offset: u32) !u64 {
+    fn readMapSlot(self: *Database, key_hash: [HASH_SIZE]u8, index_pos: u64, key_offset: u32, empty_maybe: ?*bool) !u64 {
         if (key_offset >= HASH_SIZE) {
             return error.KeyOffsetExceeded;
         }
@@ -216,7 +189,12 @@ pub const Database = struct {
         const slot = try reader.readIntLittle(u64);
 
         if (slot == 0) {
-            return error.KeyNotFound;
+            if (empty_maybe) |empty| {
+                empty.* = true;
+                return slot_pos;
+            } else {
+                return error.KeyNotFound;
+            }
         }
 
         const ptr_type = getPointerType(slot);
@@ -228,13 +206,33 @@ pub const Database = struct {
                 var existing_key_hash = [_]u8{0} ** HASH_SIZE;
                 try reader.readNoEof(&existing_key_hash);
                 if (std.mem.eql(u8, &existing_key_hash, &key_hash)) {
-                    return try reader.readIntLittle(u64);
+                    return slot_pos;
                 } else {
-                    return error.KeyNotFound;
+                    if (empty_maybe) |empty| {
+                        empty.* = true;
+                        // append new index block
+                        const writer = self.db_file.writer();
+                        if (key_offset + 1 >= HASH_SIZE) {
+                            return error.KeyOffsetExceeded;
+                        }
+                        const next_digit = @as(u64, existing_key_hash[key_offset + 1]);
+                        try self.db_file.seekFromEnd(0);
+                        const next_index_pos = try self.db_file.getPos();
+                        var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                        try writer.writeAll(&index_block);
+                        try self.db_file.seekTo(next_index_pos + (POINTER_SIZE * next_digit));
+                        try writer.writeIntLittle(u64, slot);
+                        const next_pos = try self.readMapSlot(key_hash, next_index_pos, key_offset + 1, empty);
+                        try self.db_file.seekTo(slot_pos);
+                        try writer.writeIntLittle(u64, setPointerType(next_index_pos, .index));
+                        return next_pos;
+                    } else {
+                        return error.KeyNotFound;
+                    }
                 }
             },
             .index => {
-                return self.readMapInner(key_hash, ptr, key_offset + 1);
+                return self.readMapSlot(key_hash, ptr, key_offset + 1, empty_maybe);
             },
         }
     }
@@ -380,6 +378,12 @@ test "read and write" {
     defer allocator.free(bar_value);
     try std.testing.expectEqualStrings("bar", bar_value);
 
+    // overwrite foo
+    try db.writeMap(foo_key, "baz");
+    const baz_value = try db.readMap(foo_key);
+    defer allocator.free(baz_value);
+    try std.testing.expectEqualStrings("baz", baz_value);
+
     // key not found
     try expectEqual(error.KeyNotFound, db.read("this doesn't exist"));
 
@@ -395,9 +399,9 @@ test "read and write" {
     try std.testing.expectEqualStrings("hello", hello_value);
 
     // we can still read foo
-    const bar_value2 = try db.read("foo");
-    defer allocator.free(bar_value2);
-    try std.testing.expectEqualStrings("bar", bar_value2);
+    const baz_value2 = try db.read("foo");
+    defer allocator.free(baz_value2);
+    try std.testing.expectEqualStrings("baz", baz_value2);
 
     for (0..257) |i| {
         const value = try std.fmt.allocPrint(allocator, "foo{}", .{i});
