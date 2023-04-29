@@ -117,19 +117,16 @@ pub const Database = struct {
         return self.readMap(key_hash);
     }
 
-    // maps
-
-    fn writeMap(self: *Database, key_hash: [HASH_SIZE]u8, value: []const u8) !void {
+    fn writeValue(self: *Database, value: []const u8) !u64 {
         var value_hash = [_]u8{0} ** HASH_SIZE;
         try hash_buffer(value, &value_hash);
 
         var value_pos: u64 = 0;
-
         var slot_val: u64 = 0;
-        var slot_pos = try self.readMapSlot(value_hash, VALUE_INDEX_START, 0, true, &slot_val);
+        const slot_pos = try self.readMapSlot(value_hash, VALUE_INDEX_START, 0, true, &slot_val);
 
         if (slot_val == 0) {
-            // if slot was slot_val, insert the new value
+            // if slot was empty, insert the new value
             const writer = self.db_file.writer();
             try self.db_file.seekFromEnd(0);
             value_pos = try self.db_file.getPos();
@@ -143,8 +140,14 @@ pub const Database = struct {
             value_pos = getPointerValue(slot_val);
         }
 
-        slot_pos = try self.readMapSlot(key_hash, KEY_INDEX_START, 0, true, null);
+        return value_pos;
+    }
 
+    // maps
+
+    fn writeMap(self: *Database, key_hash: [HASH_SIZE]u8, value: []const u8) !void {
+        const value_pos = try self.writeValue(value);
+        const slot_pos = try self.readMapSlot(key_hash, KEY_INDEX_START, 0, true, null);
         // always write the new key entry
         const writer = self.db_file.writer();
         try self.db_file.seekFromEnd(0);
@@ -268,12 +271,9 @@ pub const Database = struct {
     }
 
     fn writeListValue(self: *Database, value: []const u8, index_pos: u64, key: u64, shift: u6) !u64 {
+        const value_pos = try self.writeValue(value);
         const ptr_pos = try self.readListSlot(index_pos, key, shift, true, null);
         const writer = self.db_file.writer();
-        try self.db_file.seekFromEnd(0);
-        const value_pos = try self.db_file.getPos();
-        try writer.writeIntLittle(u64, value.len);
-        try writer.writeAll(value);
         try self.db_file.seekTo(ptr_pos);
         try writer.writeIntLittle(u64, value_pos);
         return value_pos;
@@ -292,9 +292,9 @@ pub const Database = struct {
         const index_pos = try reader.readIntLittle(u64);
 
         const shift = @truncate(u6, if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
-        var value_ptr: u64 = 0;
-        _ = try self.readListSlot(index_pos, key, shift, false, &value_ptr);
-        try self.db_file.seekTo(value_ptr);
+        var value_pos: u64 = 0;
+        _ = try self.readListSlot(index_pos, key, shift, false, &value_pos);
+        try self.db_file.seekTo(value_pos + HASH_SIZE);
         const value_size = try reader.readIntLittle(u64);
 
         var value = try self.allocator.alloc(u8, value_size);
