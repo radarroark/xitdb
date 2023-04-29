@@ -126,7 +126,7 @@ pub const Database = struct {
         var value_pos: u64 = 0;
 
         var slot_val: u64 = 0;
-        var slot_pos = try self.readMapSlot(value_hash, VALUE_INDEX_START, 0, &slot_val);
+        var slot_pos = try self.readMapSlot(value_hash, VALUE_INDEX_START, 0, true, &slot_val);
 
         if (slot_val == 0) {
             // if slot was slot_val, insert the new value
@@ -143,11 +143,9 @@ pub const Database = struct {
             value_pos = getPointerValue(slot_val);
         }
 
-        slot_val = 0;
-        slot_pos = try self.readMapSlot(key_hash, KEY_INDEX_START, 0, &slot_val);
+        slot_pos = try self.readMapSlot(key_hash, KEY_INDEX_START, 0, true, null);
 
         // always write the new key entry
-        // TODO: skip this if the value isn't changing
         const writer = self.db_file.writer();
         try self.db_file.seekFromEnd(0);
         const pos = try self.db_file.getPos();
@@ -160,7 +158,7 @@ pub const Database = struct {
     fn readMap(self: *Database, key_hash: [HASH_SIZE]u8) ![]u8 {
         const reader = self.db_file.reader();
 
-        _ = try self.readMapSlot(key_hash, KEY_INDEX_START, 0, null);
+        _ = try self.readMapSlot(key_hash, KEY_INDEX_START, 0, false, null);
         const value_pos = try reader.readIntLittle(u64);
 
         try self.db_file.seekTo(value_pos + HASH_SIZE);
@@ -173,7 +171,7 @@ pub const Database = struct {
         return value;
     }
 
-    fn readMapSlot(self: *Database, key_hash: [HASH_SIZE]u8, index_pos: u64, key_offset: u32, slot_val_maybe: ?*u64) !u64 {
+    fn readMapSlot(self: *Database, key_hash: [HASH_SIZE]u8, index_pos: u64, key_offset: u32, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
         if (key_offset >= HASH_SIZE) {
             return error.KeyOffsetExceeded;
         }
@@ -186,7 +184,7 @@ pub const Database = struct {
         const slot = try reader.readIntLittle(u64);
 
         if (slot == 0) {
-            if (slot_val_maybe) |_| {
+            if (allow_write) {
                 return slot_pos;
             } else {
                 return error.KeyNotFound;
@@ -207,7 +205,7 @@ pub const Database = struct {
                     }
                     return slot_pos;
                 } else {
-                    if (slot_val_maybe) |slot_val| {
+                    if (allow_write) {
                         // append new index block
                         const writer = self.db_file.writer();
                         if (key_offset + 1 >= HASH_SIZE) {
@@ -220,7 +218,7 @@ pub const Database = struct {
                         try writer.writeAll(&index_block);
                         try self.db_file.seekTo(next_index_pos + (POINTER_SIZE * next_digit));
                         try writer.writeIntLittle(u64, slot);
-                        const next_pos = try self.readMapSlot(key_hash, next_index_pos, key_offset + 1, slot_val);
+                        const next_pos = try self.readMapSlot(key_hash, next_index_pos, key_offset + 1, allow_write, slot_val_maybe);
                         try self.db_file.seekTo(slot_pos);
                         try writer.writeIntLittle(u64, setPointerType(next_index_pos, .index));
                         return next_pos;
@@ -230,7 +228,7 @@ pub const Database = struct {
                 }
             },
             .index => {
-                return self.readMapSlot(key_hash, ptr, key_offset + 1, slot_val_maybe);
+                return self.readMapSlot(key_hash, ptr, key_offset + 1, allow_write, slot_val_maybe);
             },
         }
     }
@@ -270,8 +268,7 @@ pub const Database = struct {
     }
 
     fn writeListBlob(self: *Database, value: u64, blob_maybe: ?[]const u8, index_pos: u64, key: u64, shift: u6) !u64 {
-        var ptr: u64 = 0;
-        const ptr_pos = try self.readListSlot(index_pos, key, shift, &ptr);
+        const ptr_pos = try self.readListSlot(index_pos, key, shift, true, null);
 
         const writer = self.db_file.writer();
         try self.db_file.seekFromEnd(0);
@@ -298,9 +295,8 @@ pub const Database = struct {
         const index_pos = try reader.readIntLittle(u64);
 
         const shift = @truncate(u6, if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
-        const value_ptr_pos = try self.readListSlot(index_pos, key, shift, null);
-        try self.db_file.seekTo(value_ptr_pos);
-        const value_ptr = try reader.readIntLittle(u64);
+        var value_ptr: u64 = 0;
+        _ = try self.readListSlot(index_pos, key, shift, false, &value_ptr);
         try self.db_file.seekTo(value_ptr);
         const value_size = try reader.readIntLittle(u64);
 
@@ -311,7 +307,7 @@ pub const Database = struct {
         return value;
     }
 
-    fn readListSlot(self: *Database, index_pos: u64, key: u64, shift: u6, slot_val_maybe: ?*u64) !u64 {
+    fn readListSlot(self: *Database, index_pos: u64, key: u64, shift: u6, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
         const reader = self.db_file.reader();
 
         const i = (key >> (shift * BIT_COUNT)) & MASK;
@@ -320,7 +316,7 @@ pub const Database = struct {
         const ptr = try reader.readIntLittle(u64);
 
         if (ptr == 0) {
-            if (slot_val_maybe) |slot_val| {
+            if (allow_write) {
                 if (shift == 0) {
                     return ptr_pos;
                 } else {
@@ -331,7 +327,7 @@ pub const Database = struct {
                     try writer.writeAll(&index_block);
                     try self.db_file.seekTo(ptr_pos);
                     try writer.writeIntLittle(u64, next_index_pos);
-                    return try self.readListSlot(next_index_pos, key, shift - 1, slot_val);
+                    return try self.readListSlot(next_index_pos, key, shift - 1, allow_write, slot_val_maybe);
                 }
             } else {
                 return error.KeyNotFound;
@@ -343,7 +339,7 @@ pub const Database = struct {
             if (shift == 0) {
                 return ptr_pos;
             } else {
-                return self.readListSlot(ptr, key, shift - 1, slot_val_maybe);
+                return self.readListSlot(ptr, key, shift - 1, allow_write, slot_val_maybe);
             }
         }
     }
