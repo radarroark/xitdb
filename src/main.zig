@@ -235,7 +235,7 @@ pub const Database = struct {
 
     // lists
 
-    fn writeList(self: *Database, value: u64, blob_maybe: ?[]const u8) !u64 {
+    fn writeList(self: *Database, value: []const u8) !u64 {
         const reader = self.db_file.reader();
         const writer = self.db_file.writer();
 
@@ -254,29 +254,26 @@ pub const Database = struct {
             try writer.writeAll(&index_block);
             try self.db_file.seekTo(next_index_pos);
             try writer.writeIntLittle(u64, index_pos);
-            const next_pos = try self.writeListBlob(value, blob_maybe, next_index_pos, key, next_shift);
+            const next_pos = try self.writeListValue(value, next_index_pos, key, next_shift);
             try self.db_file.seekTo(LIST_INDEX_START);
             try writer.writeIntLittle(u64, key + 1);
             try writer.writeIntLittle(u64, next_index_pos);
             return next_pos;
         } else {
-            const next_pos = try self.writeListBlob(value, blob_maybe, index_pos, key, next_shift);
+            const next_pos = try self.writeListValue(value, index_pos, key, next_shift);
             try self.db_file.seekTo(LIST_INDEX_START);
             try writer.writeIntLittle(u64, key + 1);
             return next_pos;
         }
     }
 
-    fn writeListBlob(self: *Database, value: u64, blob_maybe: ?[]const u8, index_pos: u64, key: u64, shift: u6) !u64 {
+    fn writeListValue(self: *Database, value: []const u8, index_pos: u64, key: u64, shift: u6) !u64 {
         const ptr_pos = try self.readListSlot(index_pos, key, shift, true, null);
-
         const writer = self.db_file.writer();
         try self.db_file.seekFromEnd(0);
         const value_pos = try self.db_file.getPos();
-        try writer.writeIntLittle(u64, value);
-        if (blob_maybe) |blob| {
-            try writer.writeAll(blob);
-        }
+        try writer.writeIntLittle(u64, value.len);
+        try writer.writeAll(value);
         try self.db_file.seekTo(ptr_pos);
         try writer.writeIntLittle(u64, value_pos);
         return value_pos;
@@ -403,7 +400,7 @@ test "read and write" {
     for (0..257) |i| {
         const value = try std.fmt.allocPrint(allocator, "foo{}", .{i});
         defer allocator.free(value);
-        _ = try db.writeList(value.len, value);
+        _ = try db.writeList(value);
         const value2 = try db.readList(i);
         defer allocator.free(value2);
         try std.testing.expectEqualStrings(value, value2);
