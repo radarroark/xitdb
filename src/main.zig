@@ -258,51 +258,33 @@ pub const Database = struct {
             try writer.writeAll(&index_block);
             try self.db_file.seekTo(next_index_pos);
             try writer.writeIntLittle(u64, index_pos);
-            const next_pos = try self.writeListInner(value, blob_maybe, next_index_pos, key, next_shift);
+            const next_pos = try self.writeListBlob(value, blob_maybe, next_index_pos, key, next_shift);
             try self.db_file.seekTo(LIST_INDEX_START);
             try writer.writeIntLittle(u64, key + 1);
             try writer.writeIntLittle(u64, next_index_pos);
             return next_pos;
         } else {
-            const next_pos = try self.writeListInner(value, blob_maybe, index_pos, key, next_shift);
+            const next_pos = try self.writeListBlob(value, blob_maybe, index_pos, key, next_shift);
             try self.db_file.seekTo(LIST_INDEX_START);
             try writer.writeIntLittle(u64, key + 1);
             return next_pos;
         }
     }
 
-    fn writeListInner(self: *Database, value: u64, blob_maybe: ?[]const u8, index_pos: u64, key: u64, shift: u6) !u64 {
-        const reader = self.db_file.reader();
+    fn writeListBlob(self: *Database, value: u64, blob_maybe: ?[]const u8, index_pos: u64, key: u64, shift: u6) !u64 {
+        var empty = false;
+        const ptr_pos = try self.readListSlot(index_pos, key, shift, &empty);
+
         const writer = self.db_file.writer();
-
-        const i = (key >> (shift * BIT_COUNT)) & MASK;
-        const ptr_pos = index_pos + (POINTER_SIZE * i);
-        try self.db_file.seekTo(ptr_pos);
-        const ptr = try reader.readIntLittle(u64);
-
-        if (shift == 0) {
-            try self.db_file.seekFromEnd(0);
-            const value_pos = try self.db_file.getPos();
-            try writer.writeIntLittle(u64, value);
-            if (blob_maybe) |blob| {
-                try writer.writeAll(blob);
-            }
-            try self.db_file.seekTo(ptr_pos);
-            try writer.writeIntLittle(u64, value_pos);
-            return value_pos;
-        } else {
-            if (ptr == 0) {
-                try self.db_file.seekFromEnd(0);
-                const next_index_pos = try self.db_file.getPos();
-                var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                try writer.writeAll(&index_block);
-                try self.db_file.seekTo(ptr_pos);
-                try writer.writeIntLittle(u64, next_index_pos);
-                return try self.writeListInner(value, blob_maybe, next_index_pos, key, shift - 1);
-            } else {
-                return try self.writeListInner(value, blob_maybe, ptr, key, shift - 1);
-            }
+        try self.db_file.seekFromEnd(0);
+        const value_pos = try self.db_file.getPos();
+        try writer.writeIntLittle(u64, value);
+        if (blob_maybe) |blob| {
+            try writer.writeAll(blob);
         }
+        try self.db_file.seekTo(ptr_pos);
+        try writer.writeIntLittle(u64, value_pos);
+        return value_pos;
     }
 
     fn readList(self: *Database, key: u64) ![]u8 {
@@ -318,7 +300,11 @@ pub const Database = struct {
         const index_pos = try reader.readIntLittle(u64);
 
         const shift = @truncate(u6, if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
-        const value_size = try self.readListInner(index_pos, key, shift);
+        const value_ptr_pos = try self.readListSlot(index_pos, key, shift, null);
+        try self.db_file.seekTo(value_ptr_pos);
+        const value_ptr = try reader.readIntLittle(u64);
+        try self.db_file.seekTo(value_ptr);
+        const value_size = try reader.readIntLittle(u64);
 
         var value = try self.allocator.alloc(u8, value_size);
         errdefer self.allocator.free(value);
@@ -327,7 +313,7 @@ pub const Database = struct {
         return value;
     }
 
-    fn readListInner(self: *Database, index_pos: u64, key: u64, shift: u6) !u64 {
+    fn readListSlot(self: *Database, index_pos: u64, key: u64, shift: u6, empty_maybe: ?*bool) !u64 {
         const reader = self.db_file.reader();
 
         const i = (key >> (shift * BIT_COUNT)) & MASK;
@@ -336,14 +322,29 @@ pub const Database = struct {
         const ptr = try reader.readIntLittle(u64);
 
         if (ptr == 0) {
-            return error.KeyNotFound;
-        }
-
-        if (shift == 0) {
-            try self.db_file.seekTo(ptr);
-            return try reader.readIntLittle(u64);
+            if (empty_maybe) |empty| {
+                empty.* = true;
+                if (shift == 0) {
+                    return ptr_pos;
+                } else {
+                    const writer = self.db_file.writer();
+                    try self.db_file.seekFromEnd(0);
+                    const next_index_pos = try self.db_file.getPos();
+                    var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                    try writer.writeAll(&index_block);
+                    try self.db_file.seekTo(ptr_pos);
+                    try writer.writeIntLittle(u64, next_index_pos);
+                    return try self.readListSlot(next_index_pos, key, shift - 1, empty);
+                }
+            } else {
+                return error.KeyNotFound;
+            }
         } else {
-            return self.readListInner(ptr, key, shift - 1);
+            if (shift == 0) {
+                return ptr_pos;
+            } else {
+                return self.readListSlot(ptr, key, shift - 1, empty_maybe);
+            }
         }
     }
 };
