@@ -105,18 +105,6 @@ pub const Database = struct {
         self.db_file.close();
     }
 
-    pub fn write(self: *Database, key: []const u8, value: []const u8) !void {
-        var key_hash = [_]u8{0} ** HASH_SIZE;
-        try hash_buffer(key, &key_hash);
-        try self.writeMap(key_hash, value, KEY_INDEX_START);
-    }
-
-    pub fn read(self: *Database, key: []const u8) ![]u8 {
-        var key_hash = [_]u8{0} ** HASH_SIZE;
-        try hash_buffer(key, &key_hash);
-        return self.readMap(key_hash, KEY_INDEX_START);
-    }
-
     fn writeValue(self: *Database, value: []const u8) !u64 {
         var value_hash = [_]u8{0} ** HASH_SIZE;
         try hash_buffer(value, &value_hash);
@@ -379,7 +367,9 @@ test "read and write" {
     try std.testing.expectEqualStrings("baz", baz_value);
 
     // key not found
-    try expectEqual(error.KeyNotFound, db.read("this doesn't exist"));
+    var not_found_key = [_]u8{0} ** HASH_SIZE;
+    try hash_buffer("this doesn't exist", &not_found_key);
+    try expectEqual(error.KeyNotFound, db.readMap(not_found_key, KEY_INDEX_START));
 
     // write key that conflicts with foo at first byte
     var conflict_key = [_]u8{0} ** HASH_SIZE;
@@ -393,7 +383,7 @@ test "read and write" {
     try std.testing.expectEqualStrings("hello", hello_value);
 
     // we can still read foo
-    const baz_value2 = try db.read("foo");
+    const baz_value2 = try db.readMap(foo_key, KEY_INDEX_START);
     defer allocator.free(baz_value2);
     try std.testing.expectEqualStrings("baz", baz_value2);
 
