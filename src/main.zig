@@ -23,7 +23,6 @@ const MASK = SLOT_COUNT - 1;
 const INDEX_BLOCK_SIZE = POINTER_SIZE * SLOT_COUNT;
 const KEY_INDEX_START = HEADER_BLOCK_SIZE;
 const VALUE_INDEX_START = KEY_INDEX_START + INDEX_BLOCK_SIZE;
-const LIST_INDEX_START = VALUE_INDEX_START + INDEX_BLOCK_SIZE;
 
 const PointerType = enum(u64) {
     value = 0 << 63,
@@ -72,27 +71,14 @@ pub const Database = struct {
         var key_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
         var value_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
 
-        // this is temporary, so we can test list stuff
-        var list_size: u64 = 0;
-        var list_ptr: u64 = 0;
-        var list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-
         if (size == 0) {
             try writer.writeAll(&header_block);
             try writer.writeAll(&key_index_block);
             try writer.writeAll(&value_index_block);
-            try writer.writeIntLittle(u64, list_size);
-            list_ptr = try file.getPos() + POINTER_SIZE;
-            try writer.writeIntLittle(u64, list_ptr);
-            try writer.writeAll(&list_index_block);
         } else {
             try reader.readNoEof(&header_block);
             try reader.readNoEof(&key_index_block);
             try reader.readNoEof(&value_index_block);
-            list_size = try reader.readIntLittle(u64);
-            list_ptr = try reader.readIntLittle(u64);
-            try file.seekTo(list_ptr);
-            try reader.readNoEof(&list_index_block);
         }
 
         return Database{
@@ -129,6 +115,56 @@ pub const Database = struct {
         }
 
         return value_pos;
+    }
+
+    // map of lists
+
+    fn writeListMap(self: *Database, key_hash: [HASH_SIZE]u8, value: []const u8, index_start: u64) !void {
+        var slot_val: u64 = 0;
+        const slot_pos = try self.readMapSlot(key_hash, index_start, 0, true, &slot_val);
+
+        if (slot_val == 0) {
+            // if slot was empty, insert the new list
+            const writer = self.db_file.writer();
+            try self.db_file.seekFromEnd(0);
+            const value_pos = try self.db_file.getPos();
+            try writer.writeAll(&key_hash);
+            const list_start = try self.db_file.getPos();
+            const list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+            try writer.writeIntLittle(u64, 0); // list size
+            const list_ptr = try self.db_file.getPos() + POINTER_SIZE;
+            try writer.writeIntLittle(u64, list_ptr);
+            try writer.writeAll(&list_index_block);
+            // add value to list
+            _ = try self.writeList(value, list_start);
+            // make slot point to list
+            try self.db_file.seekTo(slot_pos);
+            try writer.writeIntLittle(u64, setPointerType(value_pos, .value));
+        } else {
+            const value_pos = getPointerValue(slot_val);
+            const list_start = value_pos + HASH_SIZE;
+            _ = try self.writeList(value, list_start);
+        }
+    }
+
+    fn readListMap(self: *Database, key_hash: [HASH_SIZE]u8, index_start: u64, reverse_offset: usize) ![]u8 {
+        const reader = self.db_file.reader();
+
+        var slot_val: u64 = 0;
+        _ = try self.readMapSlot(key_hash, index_start, 0, false, &slot_val);
+
+        if (slot_val == 0) {
+            return error.KeyNotFound;
+        }
+
+        const value_pos = getPointerValue(slot_val);
+        const list_start = value_pos + HASH_SIZE;
+        try self.db_file.seekTo(list_start);
+        const list_size = try reader.readIntLittle(u64);
+        if (list_size <= reverse_offset) {
+            return error.KeyNotFound;
+        }
+        return try self.readList(list_size - reverse_offset - 1, list_start);
     }
 
     // maps
@@ -353,45 +389,54 @@ test "read and write" {
     // write foo
     var foo_key = [_]u8{0} ** HASH_SIZE;
     try hash_buffer("foo", &foo_key);
-    try db.writeMap(foo_key, "bar", KEY_INDEX_START);
+    try db.writeListMap(foo_key, "bar", KEY_INDEX_START);
 
     // read foo
-    const bar_value = try db.readMap(foo_key, KEY_INDEX_START);
+    const bar_value = try db.readListMap(foo_key, KEY_INDEX_START, 0);
     defer allocator.free(bar_value);
     try std.testing.expectEqualStrings("bar", bar_value);
 
     // overwrite foo
-    try db.writeMap(foo_key, "baz", KEY_INDEX_START);
-    const baz_value = try db.readMap(foo_key, KEY_INDEX_START);
+    try db.writeListMap(foo_key, "baz", KEY_INDEX_START);
+    const baz_value = try db.readListMap(foo_key, KEY_INDEX_START, 0);
     defer allocator.free(baz_value);
     try std.testing.expectEqualStrings("baz", baz_value);
+
+    // can still read the old value
+    const bar_value2 = try db.readListMap(foo_key, KEY_INDEX_START, 1);
+    defer allocator.free(bar_value2);
+    try std.testing.expectEqualStrings("bar", bar_value);
 
     // key not found
     var not_found_key = [_]u8{0} ** HASH_SIZE;
     try hash_buffer("this doesn't exist", &not_found_key);
-    try expectEqual(error.KeyNotFound, db.readMap(not_found_key, KEY_INDEX_START));
+    try expectEqual(error.KeyNotFound, db.readListMap(not_found_key, KEY_INDEX_START, 0));
 
     // write key that conflicts with foo at first byte
     var conflict_key = [_]u8{0} ** HASH_SIZE;
     try hash_buffer("conflict", &conflict_key);
     conflict_key[0] = foo_key[0]; // intentionally make it conflict
-    try db.writeMap(conflict_key, "hello", KEY_INDEX_START);
+    try db.writeListMap(conflict_key, "hello", KEY_INDEX_START);
 
     // read conflicting key
-    const hello_value = try db.readMap(conflict_key, KEY_INDEX_START);
+    const hello_value = try db.readListMap(conflict_key, KEY_INDEX_START, 0);
     defer allocator.free(hello_value);
     try std.testing.expectEqualStrings("hello", hello_value);
 
     // we can still read foo
-    const baz_value2 = try db.readMap(foo_key, KEY_INDEX_START);
+    const baz_value2 = try db.readListMap(foo_key, KEY_INDEX_START, 0);
     defer allocator.free(baz_value2);
     try std.testing.expectEqualStrings("baz", baz_value2);
 
+    // overwrite a value many times
+    var wat_key = [_]u8{0} ** HASH_SIZE;
+    try hash_buffer("wat", &wat_key);
     for (0..257) |i| {
-        const value = try std.fmt.allocPrint(allocator, "foo{}", .{i});
+        const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
         defer allocator.free(value);
-        _ = try db.writeList(value, LIST_INDEX_START);
-        const value2 = try db.readList(i, LIST_INDEX_START);
+        try db.writeListMap(wat_key, value, KEY_INDEX_START);
+
+        const value2 = try db.readListMap(wat_key, KEY_INDEX_START, 0);
         defer allocator.free(value2);
         try std.testing.expectEqualStrings(value, value2);
     }
