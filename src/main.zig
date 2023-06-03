@@ -29,18 +29,40 @@ const PointerType = enum(u64) {
     value = 1 << 63,
 };
 
-const TYPE_MASK: u64 = 1 << 63;
+const POINTER_TYPE_MASK: u64 = 0b1 << 63;
 
-pub fn setPointerType(ptr: u64, ptr_type: PointerType) u64 {
-    return ptr | @enumToInt(ptr_type);
+const ValueType = enum(u64) {
+    map = 0b00 << 61,
+    list = 0b01 << 61,
+    int64 = 0b10 << 61,
+    bytes = 0b11 << 61,
+};
+
+const VALUE_TYPE_MASK: u64 = 0b11 << 61;
+
+pub fn setType(ptr: u64, ptr_type: PointerType, value_type_maybe: ?ValueType) u64 {
+    switch (ptr_type) {
+        .index => return ptr | @enumToInt(ptr_type),
+        .value => {
+            if (value_type_maybe) |value_type| {
+                return ptr | @enumToInt(ptr_type) | @enumToInt(value_type);
+            } else {
+                return ptr | @enumToInt(ptr_type);
+            }
+        },
+    }
 }
 
 pub fn getPointerType(ptr: u64) PointerType {
-    return @intToEnum(PointerType, ptr & TYPE_MASK);
+    return @intToEnum(PointerType, ptr & POINTER_TYPE_MASK);
 }
 
-pub fn getPointerValue(ptr: u64) u64 {
-    return ptr & (~TYPE_MASK);
+pub fn getValueType(ptr: u64) ValueType {
+    return @intToEnum(ValueType, ptr & VALUE_TYPE_MASK);
+}
+
+pub fn getPointer(ptr: u64) u64 {
+    return ptr & (~POINTER_TYPE_MASK) & (~VALUE_TYPE_MASK);
 }
 
 pub const DatabaseError = error{
@@ -96,27 +118,25 @@ pub const Database = struct {
         var value_hash = [_]u8{0} ** HASH_SIZE;
         try hash_buffer(value, &value_hash);
 
-        var value_pos: u64 = 0;
         var slot: u64 = 0;
         const slot_pos = try self.readMapSlot(value_hash, VALUE_INDEX_START, 0, true, &slot);
-        const slot_val = getPointerValue(slot);
+        const ptr = getPointer(slot);
 
-        if (slot_val == 0) {
+        if (ptr == 0) {
             // if slot was empty, insert the new value
             const writer = self.db_file.writer();
             try self.db_file.seekFromEnd(0);
-            value_pos = try self.db_file.getPos();
+            const value_pos = try self.db_file.getPos();
             try writer.writeAll(&value_hash);
             try writer.writeIntLittle(u64, value.len);
             try writer.writeAll(value);
             try self.db_file.seekTo(slot_pos);
-            try writer.writeIntLittle(u64, setPointerType(value_pos, .value));
+            try writer.writeIntLittle(u64, setType(value_pos, .value, .bytes));
+            return value_pos;
         } else {
             // get the existing value
-            value_pos = getPointerValue(slot_val);
+            return ptr;
         }
-
-        return value_pos;
     }
 
     // map of lists
@@ -124,9 +144,9 @@ pub const Database = struct {
     fn writeListMap(self: *Database, key_hash: [HASH_SIZE]u8, value: []const u8, index_start: u64, reverse_offset: usize) !void {
         var slot: u64 = 0;
         const slot_pos = try self.readMapSlot(key_hash, index_start, 0, true, &slot);
-        const slot_val = getPointerValue(slot);
+        const ptr = getPointer(slot);
 
-        if (slot_val == 0) {
+        if (ptr == 0) {
             // if slot was empty, insert the new list
             const writer = self.db_file.writer();
             try self.db_file.seekFromEnd(0);
@@ -142,10 +162,9 @@ pub const Database = struct {
             _ = try self.writeList(value, list_start, reverse_offset);
             // make slot point to list
             try self.db_file.seekTo(slot_pos);
-            try writer.writeIntLittle(u64, setPointerType(value_pos, .value));
+            try writer.writeIntLittle(u64, setType(value_pos, .value, .list));
         } else {
-            const value_pos = getPointerValue(slot_val);
-            const list_start = value_pos + HASH_SIZE;
+            const list_start = ptr + HASH_SIZE;
             _ = try self.writeList(value, list_start, reverse_offset);
         }
     }
@@ -155,14 +174,13 @@ pub const Database = struct {
 
         var slot: u64 = 0;
         _ = try self.readMapSlot(key_hash, index_start, 0, false, &slot);
-        const slot_val = getPointerValue(slot);
+        const ptr = getPointer(slot);
 
-        if (slot_val == 0) {
+        if (ptr == 0) {
             return error.KeyNotFound;
         }
 
-        const value_pos = getPointerValue(slot_val);
-        const list_start = value_pos + HASH_SIZE;
+        const list_start = ptr + HASH_SIZE;
         try self.db_file.seekTo(list_start);
         const list_size = try reader.readIntLittle(u64);
         if (list_size <= reverse_offset) {
@@ -183,7 +201,7 @@ pub const Database = struct {
         try writer.writeAll(&key_hash);
         try writer.writeIntLittle(u64, value_pos);
         try self.db_file.seekTo(slot_pos);
-        try writer.writeIntLittle(u64, setPointerType(pos, .value));
+        try writer.writeIntLittle(u64, setType(pos, .value, .int64));
     }
 
     fn readMap(self: *Database, key_hash: [HASH_SIZE]u8, index_start: u64) ![]u8 {
@@ -223,7 +241,7 @@ pub const Database = struct {
         }
 
         const ptr_type = getPointerType(slot);
-        const ptr = getPointerValue(slot);
+        const ptr = getPointer(slot);
 
         switch (ptr_type) {
             .index => {
@@ -254,7 +272,7 @@ pub const Database = struct {
                         try writer.writeIntLittle(u64, slot);
                         const next_pos = try self.readMapSlot(key_hash, next_index_pos, key_offset + 1, allow_write, slot_val_maybe);
                         try self.db_file.seekTo(slot_pos);
-                        try writer.writeIntLittle(u64, setPointerType(next_index_pos, .index));
+                        try writer.writeIntLittle(u64, setType(next_index_pos, .index, null));
                         return next_pos;
                     } else {
                         return error.KeyNotFound;
@@ -304,10 +322,10 @@ pub const Database = struct {
 
     fn writeListValue(self: *Database, value: []const u8, index_pos: u64, key: u64, shift: u6) !u64 {
         const value_pos = try self.writeValue(value);
-        const ptr_pos = try self.readListSlot(index_pos, key, shift, true, null);
+        const slot_pos = try self.readListSlot(index_pos, key, shift, true, null);
         const writer = self.db_file.writer();
-        try self.db_file.seekTo(ptr_pos);
-        try writer.writeIntLittle(u64, value_pos);
+        try self.db_file.seekTo(slot_pos);
+        try writer.writeIntLittle(u64, setType(value_pos, .value, .int64));
         return value_pos;
     }
 
@@ -326,7 +344,7 @@ pub const Database = struct {
         const shift = @truncate(u6, if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
         var slot: u64 = 0;
         _ = try self.readListSlot(index_pos, key, shift, false, &slot);
-        const value_pos = getPointerValue(slot);
+        const value_pos = getPointer(slot);
         try self.db_file.seekTo(value_pos + HASH_SIZE);
         const value_size = try reader.readIntLittle(u64);
 
@@ -346,7 +364,7 @@ pub const Database = struct {
         const slot = try reader.readIntLittle(u64);
 
         const ptr_type = getPointerType(slot);
-        const ptr = getPointerValue(slot);
+        const ptr = getPointer(slot);
 
         if (ptr == 0) {
             if (allow_write) {
@@ -359,7 +377,7 @@ pub const Database = struct {
                     var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                     try writer.writeAll(&index_block);
                     try self.db_file.seekTo(slot_pos);
-                    try writer.writeIntLittle(u64, setPointerType(next_index_pos, .index));
+                    try writer.writeIntLittle(u64, setType(next_index_pos, .index, null));
                     return try self.readListSlot(next_index_pos, key, shift - 1, allow_write, slot_val_maybe);
                 }
             } else {
@@ -386,9 +404,10 @@ pub fn expectEqual(expected: anytype, actual: anytype) !void {
 }
 
 test "get/set pointer type" {
-    const ptr_value = setPointerType(42, .value);
+    const ptr_value = setType(42, .value, .map);
     try expectEqual(PointerType.value, getPointerType(ptr_value));
-    const ptr_index = setPointerType(42, .index);
+    try expectEqual(ValueType.map, getValueType(ptr_value));
+    const ptr_index = setType(42, .index, null);
     try expectEqual(PointerType.index, getPointerType(ptr_index));
 }
 
