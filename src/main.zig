@@ -69,7 +69,8 @@ pub const DatabaseError = error{
     NotImplemented,
     KeyOffsetExceeded,
     KeyNotFound,
-    IndexExpected,
+    UnexpectedPointerType,
+    UnexpectedValueType,
 };
 
 pub const Database = struct {
@@ -134,6 +135,14 @@ pub const Database = struct {
             try writer.writeIntLittle(u64, setType(value_pos, .value, .bytes));
             return value_pos;
         } else {
+            const ptr_type = getPointerType(slot);
+            if (ptr_type != .value) {
+                return error.UnexpectedPointerType;
+            }
+            const val_type = getValueType(slot);
+            if (val_type != .bytes) {
+                return error.UnexpectedValueType;
+            }
             // get the existing value
             return ptr;
         }
@@ -164,6 +173,14 @@ pub const Database = struct {
             try self.db_file.seekTo(slot_pos);
             try writer.writeIntLittle(u64, setType(value_pos, .value, .list));
         } else {
+            const ptr_type = getPointerType(slot);
+            if (ptr_type != .value) {
+                return error.UnexpectedPointerType;
+            }
+            const val_type = getValueType(slot);
+            if (val_type != .list) {
+                return error.UnexpectedValueType;
+            }
             const list_start = ptr + HASH_SIZE;
             _ = try self.writeList(value, list_start, reverse_offset);
         }
@@ -178,6 +195,15 @@ pub const Database = struct {
 
         if (ptr == 0) {
             return error.KeyNotFound;
+        }
+
+        const ptr_type = getPointerType(slot);
+        if (ptr_type != .value) {
+            return error.UnexpectedPointerType;
+        }
+        const val_type = getValueType(slot);
+        if (val_type != .list) {
+            return error.UnexpectedValueType;
         }
 
         const list_start = ptr + HASH_SIZE;
@@ -207,11 +233,20 @@ pub const Database = struct {
     fn readMap(self: *Database, key_hash: [HASH_SIZE]u8, index_start: u64) ![]u8 {
         const reader = self.db_file.reader();
 
-        _ = try self.readMapSlot(key_hash, index_start, 0, false, null);
-        const value_pos = try reader.readIntLittle(u64);
+        var slot: u64 = 0;
+        _ = try self.readMapSlot(key_hash, index_start, 0, false, &slot);
+        const ptr = try reader.readIntLittle(u64);
 
-        try self.db_file.seekTo(value_pos + HASH_SIZE);
+        const ptr_type = getPointerType(slot);
+        if (ptr_type != .value) {
+            return error.UnexpectedPointerType;
+        }
+        const val_type = getValueType(slot);
+        if (val_type != .int64) {
+            return error.UnexpectedValueType;
+        }
 
+        try self.db_file.seekTo(ptr + HASH_SIZE);
         const value_size = try reader.readIntLittle(u64);
 
         var value = try self.allocator.alloc(u8, value_size);
@@ -344,8 +379,18 @@ pub const Database = struct {
         const shift = @truncate(u6, if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
         var slot: u64 = 0;
         _ = try self.readListSlot(index_pos, key, shift, false, &slot);
-        const value_pos = getPointer(slot);
-        try self.db_file.seekTo(value_pos + HASH_SIZE);
+        const ptr = getPointer(slot);
+
+        const ptr_type = getPointerType(slot);
+        if (ptr_type != .value) {
+            return error.UnexpectedPointerType;
+        }
+        const val_type = getValueType(slot);
+        if (val_type != .int64) {
+            return error.UnexpectedValueType;
+        }
+
+        try self.db_file.seekTo(ptr + HASH_SIZE);
         const value_size = try reader.readIntLittle(u64);
 
         var value = try self.allocator.alloc(u8, value_size);
@@ -391,7 +436,7 @@ pub const Database = struct {
                 return slot_pos;
             } else {
                 if (ptr_type != .index) {
-                    return error.IndexExpected;
+                    return error.UnexpectedPointerType;
                 }
                 return self.readListSlot(ptr, key, shift - 1, allow_write, slot_val_maybe);
             }
