@@ -25,8 +25,8 @@ const KEY_INDEX_START = HEADER_BLOCK_SIZE;
 const VALUE_INDEX_START = KEY_INDEX_START + INDEX_BLOCK_SIZE;
 
 const PointerType = enum(u64) {
-    value = 0 << 63,
-    index = 1 << 63,
+    index = 0 << 63,
+    value = 1 << 63,
 };
 
 const TYPE_MASK: u64 = 1 << 63;
@@ -47,6 +47,7 @@ pub const DatabaseError = error{
     NotImplemented,
     KeyOffsetExceeded,
     KeyNotFound,
+    IndexExpected,
 };
 
 pub const Database = struct {
@@ -96,8 +97,9 @@ pub const Database = struct {
         try hash_buffer(value, &value_hash);
 
         var value_pos: u64 = 0;
-        var slot_val: u64 = 0;
-        const slot_pos = try self.readMapSlot(value_hash, VALUE_INDEX_START, 0, true, &slot_val);
+        var slot: u64 = 0;
+        const slot_pos = try self.readMapSlot(value_hash, VALUE_INDEX_START, 0, true, &slot);
+        const slot_val = getPointerValue(slot);
 
         if (slot_val == 0) {
             // if slot was empty, insert the new value
@@ -120,8 +122,9 @@ pub const Database = struct {
     // map of lists
 
     fn writeListMap(self: *Database, key_hash: [HASH_SIZE]u8, value: []const u8, index_start: u64, reverse_offset: usize) !void {
-        var slot_val: u64 = 0;
-        const slot_pos = try self.readMapSlot(key_hash, index_start, 0, true, &slot_val);
+        var slot: u64 = 0;
+        const slot_pos = try self.readMapSlot(key_hash, index_start, 0, true, &slot);
+        const slot_val = getPointerValue(slot);
 
         if (slot_val == 0) {
             // if slot was empty, insert the new list
@@ -150,8 +153,9 @@ pub const Database = struct {
     fn readListMap(self: *Database, key_hash: [HASH_SIZE]u8, index_start: u64, reverse_offset: usize) ![]u8 {
         const reader = self.db_file.reader();
 
-        var slot_val: u64 = 0;
-        _ = try self.readMapSlot(key_hash, index_start, 0, false, &slot_val);
+        var slot: u64 = 0;
+        _ = try self.readMapSlot(key_hash, index_start, 0, false, &slot);
+        const slot_val = getPointerValue(slot);
 
         if (slot_val == 0) {
             return error.KeyNotFound;
@@ -222,13 +226,16 @@ pub const Database = struct {
         const ptr = getPointerValue(slot);
 
         switch (ptr_type) {
+            .index => {
+                return self.readMapSlot(key_hash, ptr, key_offset + 1, allow_write, slot_val_maybe);
+            },
             .value => {
                 try self.db_file.seekTo(ptr);
                 var existing_key_hash = [_]u8{0} ** HASH_SIZE;
                 try reader.readNoEof(&existing_key_hash);
                 if (std.mem.eql(u8, &existing_key_hash, &key_hash)) {
                     if (slot_val_maybe) |slot_val| {
-                        slot_val.* = ptr;
+                        slot_val.* = slot;
                     }
                     return slot_pos;
                 } else {
@@ -253,9 +260,6 @@ pub const Database = struct {
                         return error.KeyNotFound;
                     }
                 }
-            },
-            .index => {
-                return self.readMapSlot(key_hash, ptr, key_offset + 1, allow_write, slot_val_maybe);
             },
         }
     }
@@ -320,8 +324,9 @@ pub const Database = struct {
         const index_pos = try reader.readIntLittle(u64);
 
         const shift = @truncate(u6, if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
-        var value_pos: u64 = 0;
-        _ = try self.readListSlot(index_pos, key, shift, false, &value_pos);
+        var slot: u64 = 0;
+        _ = try self.readListSlot(index_pos, key, shift, false, &slot);
+        const value_pos = getPointerValue(slot);
         try self.db_file.seekTo(value_pos + HASH_SIZE);
         const value_size = try reader.readIntLittle(u64);
 
@@ -336,22 +341,25 @@ pub const Database = struct {
         const reader = self.db_file.reader();
 
         const i = (key >> (shift * BIT_COUNT)) & MASK;
-        const ptr_pos = index_pos + (POINTER_SIZE * i);
-        try self.db_file.seekTo(ptr_pos);
-        const ptr = try reader.readIntLittle(u64);
+        const slot_pos = index_pos + (POINTER_SIZE * i);
+        try self.db_file.seekTo(slot_pos);
+        const slot = try reader.readIntLittle(u64);
+
+        const ptr_type = getPointerType(slot);
+        const ptr = getPointerValue(slot);
 
         if (ptr == 0) {
             if (allow_write) {
                 if (shift == 0) {
-                    return ptr_pos;
+                    return slot_pos;
                 } else {
                     const writer = self.db_file.writer();
                     try self.db_file.seekFromEnd(0);
                     const next_index_pos = try self.db_file.getPos();
                     var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                     try writer.writeAll(&index_block);
-                    try self.db_file.seekTo(ptr_pos);
-                    try writer.writeIntLittle(u64, next_index_pos);
+                    try self.db_file.seekTo(slot_pos);
+                    try writer.writeIntLittle(u64, setPointerType(next_index_pos, .index));
                     return try self.readListSlot(next_index_pos, key, shift - 1, allow_write, slot_val_maybe);
                 }
             } else {
@@ -359,11 +367,14 @@ pub const Database = struct {
             }
         } else {
             if (slot_val_maybe) |slot_val| {
-                slot_val.* = ptr;
+                slot_val.* = slot;
             }
             if (shift == 0) {
-                return ptr_pos;
+                return slot_pos;
             } else {
+                if (ptr_type != .index) {
+                    return error.IndexExpected;
+                }
                 return self.readListSlot(ptr, key, shift - 1, allow_write, slot_val_maybe);
             }
         }
