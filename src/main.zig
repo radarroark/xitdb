@@ -227,7 +227,7 @@ pub const Database = struct {
         try writer.writeAll(&key_hash);
         try writer.writeIntLittle(u64, value_pos);
         try self.db_file.seekTo(slot_pos);
-        try writer.writeIntLittle(u64, setType(pos, .value, .int64));
+        try writer.writeIntLittle(u64, setType(pos, .value, .bytes));
     }
 
     fn readMap(self: *Database, key_hash: [HASH_SIZE]u8, index_start: u64) ![]u8 {
@@ -242,7 +242,7 @@ pub const Database = struct {
             return error.UnexpectedPointerType;
         }
         const val_type = getValueType(slot);
-        if (val_type != .int64) {
+        if (val_type != .bytes) {
             return error.UnexpectedValueType;
         }
 
@@ -360,7 +360,7 @@ pub const Database = struct {
         const slot_pos = try self.readListSlot(index_pos, key, shift, true, null);
         const writer = self.db_file.writer();
         try self.db_file.seekTo(slot_pos);
-        try writer.writeIntLittle(u64, setType(value_pos, .value, .int64));
+        try writer.writeIntLittle(u64, setType(value_pos, .value, .bytes));
         return value_pos;
     }
 
@@ -386,7 +386,7 @@ pub const Database = struct {
             return error.UnexpectedPointerType;
         }
         const val_type = getValueType(slot);
-        if (val_type != .int64) {
+        if (val_type != .bytes) {
             return error.UnexpectedValueType;
         }
 
