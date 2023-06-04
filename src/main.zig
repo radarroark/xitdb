@@ -42,7 +42,7 @@ const VALUE_TYPE_MASK: u64 = 0b11 << 61;
 
 const PathPart = union(enum) {
     map_get: [HASH_SIZE]u8,
-    list_get: u64,
+    list_get: ?u64,
 };
 
 pub fn setType(ptr: u64, ptr_type: PointerType, value_type_maybe: ?ValueType) u64 {
@@ -162,8 +162,45 @@ pub const Database = struct {
                     break :blk try self.readMapSlot(pos, part.map_get, 0, allow_write, &next_slot);
                 },
                 .list_get => blk: {
-                    const shift = @truncate(u6, if (part.list_get < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, part.list_get));
-                    break :blk try self.readListSlot(pos, part.list_get, shift, allow_write, &next_slot);
+                    if (slot == 0) {
+                        if (allow_write) {
+                            // if slot was empty, insert the new list
+                            const writer = self.db_file.writer();
+                            try self.db_file.seekFromEnd(0);
+                            const list_start = try self.db_file.getPos();
+                            const list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                            try writer.writeIntLittle(u64, 0); // list size
+                            const list_ptr = try self.db_file.getPos() + POINTER_SIZE;
+                            try writer.writeIntLittle(u64, list_ptr);
+                            try writer.writeAll(&list_index_block);
+                            // make slot point to list
+                            try self.db_file.seekTo(pos);
+                            try writer.writeIntLittle(u64, setType(list_start, .value, .list));
+                            pos = list_start;
+                        } else {
+                            return error.KeyNotFound;
+                        }
+                    } else {
+                        const ptr_type = getPointerType(slot);
+                        if (ptr_type != .value) {
+                            return error.UnexpectedPointerType;
+                        }
+                        const val_type = getValueType(slot);
+                        if (val_type != .list) {
+                            return error.UnexpectedValueType;
+                        }
+                        pos = getPointer(slot);
+                    }
+                    if (part.list_get) |key| {
+                        const shift = @truncate(u6, if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
+                        break :blk try self.readListSlot(pos, key, shift, allow_write, &next_slot);
+                    } else {
+                        if (allow_write) {
+                            break :blk try self.readListSlotAppend(pos);
+                        } else {
+                            return error.KeyNotFound;
+                        }
+                    }
                 },
             };
             slot = next_slot;
@@ -177,36 +214,11 @@ pub const Database = struct {
     // map of lists
 
     fn writeListMap(self: *Database, key_hash: [HASH_SIZE]u8, value: []const u8, index_start: u64) !void {
-        var slot: u64 = 0;
-        const slot_pos = try self.readSlot(&[_]PathPart{.{ .map_get = key_hash }}, index_start, true, &slot);
-        const ptr = getPointer(slot);
-
-        if (ptr == 0) {
-            // if slot was empty, insert the new list
-            const writer = self.db_file.writer();
-            try self.db_file.seekFromEnd(0);
-            const list_start = try self.db_file.getPos();
-            const list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-            try writer.writeIntLittle(u64, 0); // list size
-            const list_ptr = try self.db_file.getPos() + POINTER_SIZE;
-            try writer.writeIntLittle(u64, list_ptr);
-            try writer.writeAll(&list_index_block);
-            // add value to list
-            _ = try self.writeList(value, list_start);
-            // make slot point to list
-            try self.db_file.seekTo(slot_pos);
-            try writer.writeIntLittle(u64, setType(list_start, .value, .list));
-        } else {
-            const ptr_type = getPointerType(slot);
-            if (ptr_type != .value) {
-                return error.UnexpectedPointerType;
-            }
-            const val_type = getValueType(slot);
-            if (val_type != .list) {
-                return error.UnexpectedValueType;
-            }
-            _ = try self.writeList(value, ptr); // list start
-        }
+        const slot_pos = try self.readSlot(&[_]PathPart{ .{ .map_get = key_hash }, .{ .list_get = null } }, index_start, true, null);
+        const value_pos = try self.writeValue(value);
+        const writer = self.db_file.writer();
+        try self.db_file.seekTo(slot_pos);
+        try writer.writeIntLittle(u64, setType(value_pos, .value, .bytes));
     }
 
     fn readListMap(self: *Database, key_hash: [HASH_SIZE]u8, index_start: u64, reverse_offset: usize) ![]u8 {
