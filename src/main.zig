@@ -155,14 +155,22 @@ pub const Database = struct {
 
     fn readSlot(self: *Database, path: []const PathPart, index_start: u64, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
         var pos = index_start;
+        var slot: u64 = 0;
         for (path) |part| {
+            var next_slot: u64 = 0;
             pos = switch (part) {
-                .map_get => try self.readMapSlot(pos, part.map_get, 0, allow_write, slot_val_maybe),
+                .map_get => blk: {
+                    break :blk try self.readMapSlot(pos, part.map_get, 0, allow_write, &next_slot);
+                },
                 .list_get => blk: {
                     const shift = @truncate(u6, if (part.list_get < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, part.list_get));
-                    break :blk try self.readListSlot(pos, part.list_get, shift, allow_write, slot_val_maybe);
+                    break :blk try self.readListSlot(pos, part.list_get, shift, allow_write, &next_slot);
                 },
             };
+            slot = next_slot;
+        }
+        if (slot_val_maybe) |slot_val| {
+            slot_val.* = slot;
         }
         return pos;
     }
