@@ -40,6 +40,11 @@ const ValueType = enum(u64) {
 
 const VALUE_TYPE_MASK: u64 = 0b11 << 61;
 
+const PathPart = union(enum) {
+    map_get: [HASH_SIZE]u8,
+    list_get: u64,
+};
+
 pub fn setType(ptr: u64, ptr_type: PointerType, value_type_maybe: ?ValueType) u64 {
     switch (ptr_type) {
         .index => return ptr | @enumToInt(ptr_type),
@@ -120,7 +125,7 @@ pub const Database = struct {
         try hash_buffer(value, &value_hash);
 
         var slot: u64 = 0;
-        const slot_pos = try self.readMapSlot(value_hash, VALUE_INDEX_START, 0, true, &slot);
+        const slot_pos = try self.readMapSlot(VALUE_INDEX_START, value_hash, 0, true, &slot);
         const ptr = getPointer(slot);
 
         if (ptr == 0) {
@@ -148,11 +153,25 @@ pub const Database = struct {
         }
     }
 
+    fn readSlot(self: *Database, path: []const PathPart, index_start: u64, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
+        var pos = index_start;
+        for (path) |part| {
+            pos = switch (part) {
+                .map_get => try self.readMapSlot(pos, part.map_get, 0, allow_write, slot_val_maybe),
+                .list_get => blk: {
+                    const shift = @truncate(u6, if (part.list_get < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, part.list_get));
+                    break :blk try self.readListSlot(pos, part.list_get, shift, allow_write, slot_val_maybe);
+                },
+            };
+        }
+        return pos;
+    }
+
     // map of lists
 
     fn writeListMap(self: *Database, key_hash: [HASH_SIZE]u8, value: []const u8, index_start: u64, reverse_offset: usize) !void {
         var slot: u64 = 0;
-        const slot_pos = try self.readMapSlot(key_hash, index_start, 0, true, &slot);
+        const slot_pos = try self.readSlot(&[_]PathPart{.{ .map_get = key_hash }}, index_start, true, &slot);
         const ptr = getPointer(slot);
 
         if (ptr == 0) {
@@ -190,7 +209,7 @@ pub const Database = struct {
         const reader = self.db_file.reader();
 
         var slot: u64 = 0;
-        _ = try self.readMapSlot(key_hash, index_start, 0, false, &slot);
+        _ = try self.readSlot(&[_]PathPart{.{ .map_get = key_hash }}, index_start, false, &slot);
         const ptr = getPointer(slot);
 
         if (ptr == 0) {
@@ -219,7 +238,7 @@ pub const Database = struct {
 
     fn writeMap(self: *Database, key_hash: [HASH_SIZE]u8, value: []const u8, index_start: u64) !void {
         const value_pos = try self.writeValue(value);
-        const slot_pos = try self.readMapSlot(key_hash, index_start, 0, true, null);
+        const slot_pos = try self.readMapSlot(index_start, key_hash, 0, true, null);
         // always write the new key entry
         const writer = self.db_file.writer();
         try self.db_file.seekFromEnd(0);
@@ -234,7 +253,7 @@ pub const Database = struct {
         const reader = self.db_file.reader();
 
         var slot: u64 = 0;
-        _ = try self.readMapSlot(key_hash, index_start, 0, false, &slot);
+        _ = try self.readMapSlot(index_start, key_hash, 0, false, &slot);
         const ptr = try reader.readIntLittle(u64);
 
         const ptr_type = getPointerType(slot);
@@ -255,7 +274,7 @@ pub const Database = struct {
         return value;
     }
 
-    fn readMapSlot(self: *Database, key_hash: [HASH_SIZE]u8, index_pos: u64, key_offset: u32, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
+    fn readMapSlot(self: *Database, index_pos: u64, key_hash: [HASH_SIZE]u8, key_offset: u32, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
         if (key_offset >= HASH_SIZE) {
             return error.KeyOffsetExceeded;
         }
@@ -280,7 +299,7 @@ pub const Database = struct {
 
         switch (ptr_type) {
             .index => {
-                return self.readMapSlot(key_hash, ptr, key_offset + 1, allow_write, slot_val_maybe);
+                return self.readMapSlot(ptr, key_hash, key_offset + 1, allow_write, slot_val_maybe);
             },
             .value => {
                 try self.db_file.seekTo(ptr);
@@ -305,7 +324,7 @@ pub const Database = struct {
                         try writer.writeAll(&index_block);
                         try self.db_file.seekTo(next_index_pos + (POINTER_SIZE * next_digit));
                         try writer.writeIntLittle(u64, slot);
-                        const next_pos = try self.readMapSlot(key_hash, next_index_pos, key_offset + 1, allow_write, slot_val_maybe);
+                        const next_pos = try self.readMapSlot(next_index_pos, key_hash, key_offset + 1, allow_write, slot_val_maybe);
                         try self.db_file.seekTo(slot_pos);
                         try writer.writeIntLittle(u64, setType(next_index_pos, .index, null));
                         return next_pos;
