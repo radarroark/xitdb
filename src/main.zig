@@ -34,7 +34,7 @@ const POINTER_TYPE_MASK: u64 = 0b1 << 63;
 const ValueType = enum(u64) {
     map = 0b00 << 61,
     list = 0b01 << 61,
-    int64 = 0b10 << 61,
+    hash = 0b10 << 61,
     bytes = 0b11 << 61,
 };
 
@@ -133,7 +133,6 @@ pub const Database = struct {
             const writer = self.db_file.writer();
             try self.db_file.seekFromEnd(0);
             const value_pos = try self.db_file.getPos();
-            try writer.writeAll(&value_hash);
             try writer.writeIntLittle(u64, value.len);
             try writer.writeAll(value);
             try self.db_file.seekTo(slot_pos);
@@ -186,8 +185,6 @@ pub const Database = struct {
             // if slot was empty, insert the new list
             const writer = self.db_file.writer();
             try self.db_file.seekFromEnd(0);
-            const value_pos = try self.db_file.getPos();
-            try writer.writeAll(&key_hash);
             const list_start = try self.db_file.getPos();
             const list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
             try writer.writeIntLittle(u64, 0); // list size
@@ -198,7 +195,7 @@ pub const Database = struct {
             _ = try self.writeList(value, list_start);
             // make slot point to list
             try self.db_file.seekTo(slot_pos);
-            try writer.writeIntLittle(u64, setType(value_pos, .value, .list));
+            try writer.writeIntLittle(u64, setType(list_start, .value, .list));
         } else {
             const ptr_type = getPointerType(slot);
             if (ptr_type != .value) {
@@ -208,8 +205,7 @@ pub const Database = struct {
             if (val_type != .list) {
                 return error.UnexpectedValueType;
             }
-            const list_start = ptr + HASH_SIZE;
-            _ = try self.writeList(value, list_start);
+            _ = try self.writeList(value, ptr); // list start
         }
     }
 
@@ -233,13 +229,12 @@ pub const Database = struct {
             return error.UnexpectedValueType;
         }
 
-        const list_start = ptr + HASH_SIZE;
-        try self.db_file.seekTo(list_start);
+        try self.db_file.seekTo(ptr); // list start
         const list_size = try reader.readIntLittle(u64);
         if (list_size <= reverse_offset) {
             return error.KeyNotFound;
         }
-        return try self.readList(list_size - reverse_offset - 1, list_start);
+        return try self.readList(list_size - reverse_offset - 1, ptr);
     }
 
     // maps
@@ -249,12 +244,8 @@ pub const Database = struct {
         const slot_pos = try self.readMapSlot(index_start, key_hash, 0, true, null);
         // always write the new key entry
         const writer = self.db_file.writer();
-        try self.db_file.seekFromEnd(0);
-        const pos = try self.db_file.getPos();
-        try writer.writeAll(&key_hash);
-        try writer.writeIntLittle(u64, value_pos);
         try self.db_file.seekTo(slot_pos);
-        try writer.writeIntLittle(u64, setType(pos, .value, .bytes));
+        try writer.writeIntLittle(u64, setType(value_pos, .value, .bytes));
     }
 
     fn readMap(self: *Database, key_hash: [HASH_SIZE]u8, index_start: u64) ![]u8 {
@@ -262,7 +253,7 @@ pub const Database = struct {
 
         var slot: u64 = 0;
         _ = try self.readMapSlot(index_start, key_hash, 0, false, &slot);
-        const ptr = try reader.readIntLittle(u64);
+        const ptr = getPointer(slot);
 
         const ptr_type = getPointerType(slot);
         if (ptr_type != .value) {
@@ -273,7 +264,7 @@ pub const Database = struct {
             return error.UnexpectedValueType;
         }
 
-        try self.db_file.seekTo(ptr + HASH_SIZE);
+        try self.db_file.seekTo(ptr);
         const value_size = try reader.readIntLittle(u64);
 
         var value = try self.allocator.alloc(u8, value_size);
@@ -288,6 +279,7 @@ pub const Database = struct {
         }
 
         const reader = self.db_file.reader();
+        const writer = self.db_file.writer();
 
         const digit = @as(u64, key_hash[key_offset]);
         const slot_pos = index_pos + (POINTER_SIZE * digit);
@@ -296,7 +288,17 @@ pub const Database = struct {
 
         if (slot == 0) {
             if (allow_write) {
-                return slot_pos;
+                try self.db_file.seekFromEnd(0);
+                // write hash
+                const hash_pos = try self.db_file.getPos();
+                try writer.writeAll(&key_hash);
+                // write empty value slot
+                const value_slot_pos = try self.db_file.getPos();
+                try writer.writeIntLittle(u64, 0);
+                // point slot to hash pos
+                try self.db_file.seekTo(slot_pos);
+                try writer.writeIntLittle(u64, setType(hash_pos, .value, .hash));
+                return value_slot_pos;
             } else {
                 return error.KeyNotFound;
             }
@@ -310,18 +312,23 @@ pub const Database = struct {
                 return self.readMapSlot(ptr, key_hash, key_offset + 1, allow_write, slot_val_maybe);
             },
             .value => {
+                const val_type = getValueType(slot);
+                if (val_type != .hash) {
+                    return error.UnexpectedValueType;
+                }
                 try self.db_file.seekTo(ptr);
                 var existing_key_hash = [_]u8{0} ** HASH_SIZE;
                 try reader.readNoEof(&existing_key_hash);
                 if (std.mem.eql(u8, &existing_key_hash, &key_hash)) {
+                    const value_slot_pos = try self.db_file.getPos();
+                    const value_slot = try reader.readIntLittle(u64);
                     if (slot_val_maybe) |slot_val| {
-                        slot_val.* = slot;
+                        slot_val.* = value_slot;
                     }
-                    return slot_pos;
+                    return value_slot_pos;
                 } else {
                     if (allow_write) {
                         // append new index block
-                        const writer = self.db_file.writer();
                         if (key_offset + 1 >= HASH_SIZE) {
                             return error.KeyOffsetExceeded;
                         }
@@ -381,7 +388,7 @@ pub const Database = struct {
             return error.UnexpectedValueType;
         }
 
-        try self.db_file.seekTo(ptr + HASH_SIZE);
+        try self.db_file.seekTo(ptr);
         const value_size = try reader.readIntLittle(u64);
 
         var value = try self.allocator.alloc(u8, value_size);
