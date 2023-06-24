@@ -47,23 +47,23 @@ const PathPart = union(enum) {
 
 pub fn setType(ptr: u64, ptr_type: PointerType, value_type_maybe: ?ValueType) u64 {
     switch (ptr_type) {
-        .index => return ptr | @enumToInt(ptr_type),
+        .index => return ptr | @intFromEnum(ptr_type),
         .value => {
             if (value_type_maybe) |value_type| {
-                return ptr | @enumToInt(ptr_type) | @enumToInt(value_type);
+                return ptr | @intFromEnum(ptr_type) | @intFromEnum(value_type);
             } else {
-                return ptr | @enumToInt(ptr_type);
+                return ptr | @intFromEnum(ptr_type);
             }
         },
     }
 }
 
 pub fn getPointerType(ptr: u64) PointerType {
-    return @intToEnum(PointerType, ptr & POINTER_TYPE_MASK);
+    return @enumFromInt(PointerType, ptr & POINTER_TYPE_MASK);
 }
 
 pub fn getValueType(ptr: u64) ValueType {
-    return @intToEnum(ValueType, ptr & VALUE_TYPE_MASK);
+    return @enumFromInt(ValueType, ptr & VALUE_TYPE_MASK);
 }
 
 pub fn getPointer(ptr: u64) u64 {
