@@ -86,8 +86,8 @@ pub const DatabaseError = error{
 };
 
 pub const DatabaseKind = enum {
-    Volatile,
-    Persistent,
+    memory,
+    file,
 };
 
 pub fn Database(comptime Kind: DatabaseKind) type {
@@ -96,7 +96,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
         core: Core,
 
         pub const Core = switch (Kind) {
-            .Volatile => struct {
+            .memory => struct {
                 buffer: std.ArrayList(u8),
                 size: u64,
                 position: u64,
@@ -166,7 +166,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
                     return self.position;
                 }
             },
-            .Persistent => struct {
+            .file => struct {
                 file: std.fs.File,
 
                 pub fn deinit(self: *Core) void {
@@ -196,10 +196,10 @@ pub fn Database(comptime Kind: DatabaseKind) type {
         };
 
         pub const InitOpts = switch (Kind) {
-            .Volatile => struct {
+            .memory => struct {
                 capacity: usize,
             },
-            .Persistent => struct {
+            .file => struct {
                 dir: std.fs.Dir,
                 path: []const u8,
             },
@@ -207,7 +207,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
 
         pub fn init(allocator: std.mem.Allocator, opts: InitOpts) !Database(Kind) {
             switch (Kind) {
-                .Volatile => {
+                .memory => {
                     var buffer = try std.ArrayList(u8).initCapacity(allocator, opts.capacity);
                     buffer.expandToCapacity();
 
@@ -232,7 +232,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
                         .core = core,
                     };
                 },
-                .Persistent => {
+                .file => {
                     // create or open file
                     const file_or_err = opts.dir.openFile(opts.path, .{ .mode = .read_write });
                     const file = try if (file_or_err == error.FileNotFound)
@@ -628,10 +628,10 @@ test "read and write" {
     inline for (@typeInfo(DatabaseKind).Enum.fields) |field| {
         const kind = @field(DatabaseKind, field.name);
         const opts = switch (kind) {
-            .Volatile => Database(kind).InitOpts{
+            .memory => Database(kind).InitOpts{
                 .capacity = 10000,
             },
-            .Persistent => Database(kind).InitOpts{
+            .file => Database(kind).InitOpts{
                 .dir = cwd,
                 .path = db_path,
             },
@@ -742,10 +742,10 @@ test "read and write" {
         }
     }
 
-    // volatile
+    // memory
     // low level operations
     {
-        var db = try Database(.Volatile).init(allocator, .{ .capacity = 10000 });
+        var db = try Database(.memory).init(allocator, .{ .capacity = 10000 });
         defer db.deinit();
 
         var writer = db.core.writer();
