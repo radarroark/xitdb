@@ -66,11 +66,11 @@ pub fn setType(ptr: u64, ptr_type: PointerType, value_type_maybe: ?ValueType) u6
 }
 
 pub fn getPointerType(ptr: u64) PointerType {
-    return @enumFromInt(PointerType, ptr & POINTER_TYPE_MASK);
+    return @enumFromInt(ptr & POINTER_TYPE_MASK);
 }
 
 pub fn getValueType(ptr: u64) ValueType {
-    return @enumFromInt(ValueType, ptr & VALUE_TYPE_MASK);
+    return @enumFromInt(ptr & VALUE_TYPE_MASK);
 }
 
 pub fn getPointer(ptr: u64) u64 {
@@ -354,7 +354,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
                                 return error.KeyNotFound;
                             }
                             const list_ptr = try reader.readIntLittle(u64);
-                            const shift = @truncate(u6, if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
+                            const shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
                             break :blk try self.readListSlot(list_ptr, key, shift, allow_write, &next_slot);
                         } else {
                             if (allow_write) {
@@ -453,7 +453,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
             const reader = self.core.reader();
             const writer = self.core.writer();
 
-            const i = @truncate(u64, (key_hash >> key_offset * BIT_COUNT)) & MASK;
+            const i = @as(u64, @truncate((key_hash >> key_offset * BIT_COUNT))) & MASK;
             const slot_pos = index_pos + (POINTER_SIZE * i);
             try self.core.seekTo(slot_pos);
             const slot = try reader.readIntLittle(u64);
@@ -507,7 +507,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
                             if (key_offset + 1 >= (HASH_SIZE * 8) / BIT_COUNT) {
                                 return error.KeyOffsetExceeded;
                             }
-                            const next_i = @truncate(u64, (existing_key_hash >> (key_offset + 1) * BIT_COUNT)) & MASK;
+                            const next_i = @as(u64, @truncate((existing_key_hash >> (key_offset + 1) * BIT_COUNT))) & MASK;
                             try self.core.seekFromEnd(0);
                             const next_index_pos = try self.core.getPos();
                             var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
@@ -537,8 +537,8 @@ pub fn Database(comptime Kind: DatabaseKind) type {
             const key = list_size;
             var index_pos = try reader.readIntLittle(u64);
 
-            const prev_shift = @truncate(u6, if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key - 1));
-            const next_shift = @truncate(u6, if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
+            const prev_shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key - 1));
+            const next_shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
 
             var slot_pos: u64 = 0;
 
