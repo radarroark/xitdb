@@ -9,16 +9,23 @@ const std = @import("std");
 // using sha1 to hash the keys for now, but this will eventually be
 // configurable. for many uses it will be overkill...
 pub const HASH_SIZE = std.crypto.hash.Sha1.digest_length;
-pub fn hash_buffer(buffer: []const u8, out: *[HASH_SIZE]u8) !void {
+pub const Hash = u160;
+comptime {
+    std.debug.assert(@bitSizeOf(Hash) == HASH_SIZE * 8);
+}
+pub const HASH_INT_SIZE = @sizeOf(Hash);
+pub fn hash_buffer(buffer: []const u8) Hash {
+    var hash = [_]u8{0} ** HASH_INT_SIZE;
     var h = std.crypto.hash.Sha1.init(.{});
     h.update(buffer);
-    h.final(out);
+    h.final(hash[0..HASH_SIZE]);
+    return std.mem.bytesToValue(Hash, &hash);
 }
 
 const POINTER_SIZE = @sizeOf(u64);
 const HEADER_BLOCK_SIZE = 2;
-const SLOT_COUNT = 256;
-const BIT_COUNT = 8;
+const BIT_COUNT = 5;
+const SLOT_COUNT = 1 << BIT_COUNT;
 const MASK = SLOT_COUNT - 1;
 const INDEX_BLOCK_SIZE = POINTER_SIZE * SLOT_COUNT;
 const KEY_INDEX_START = HEADER_BLOCK_SIZE;
@@ -41,7 +48,7 @@ const ValueType = enum(u64) {
 const VALUE_TYPE_MASK: u64 = 0b11 << 61;
 
 const PathPart = union(enum) {
-    map_get: [HASH_SIZE]u8,
+    map_get: Hash,
     list_get: ?u64,
 };
 
@@ -253,8 +260,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
         }
 
         fn writeValue(self: *Database(Kind), value: []const u8) !u64 {
-            var value_hash = [_]u8{0} ** HASH_SIZE;
-            try hash_buffer(value, &value_hash);
+            var value_hash = hash_buffer(value);
 
             var slot: u64 = 0;
             const slot_pos = try self.readMapSlot(VALUE_INDEX_START, value_hash, 0, true, &slot);
@@ -356,7 +362,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
 
         // map of lists
 
-        fn writeListMap(self: *Database(Kind), key_hash: [HASH_SIZE]u8, value: []const u8, index_start: u64) !void {
+        fn writeListMap(self: *Database(Kind), key_hash: Hash, value: []const u8, index_start: u64) !void {
             const slot_pos = try self.readSlot(&[_]PathPart{ .{ .map_get = key_hash }, .{ .list_get = null } }, index_start, true, null);
             const value_pos = try self.writeValue(value);
             const writer = self.core.writer();
@@ -364,7 +370,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
             try writer.writeIntLittle(u64, setType(value_pos, .value, .bytes));
         }
 
-        fn readListMap(self: *Database(Kind), key_hash: [HASH_SIZE]u8, index_start: u64, reverse_offset: u64) ![]u8 {
+        fn readListMap(self: *Database(Kind), key_hash: Hash, index_start: u64, reverse_offset: u64) ![]u8 {
             const reader = self.core.reader();
 
             var slot: u64 = 0;
@@ -392,7 +398,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
 
         // maps
 
-        fn writeMap(self: *Database(Kind), key_hash: [HASH_SIZE]u8, value: []const u8, index_start: u64) !void {
+        fn writeMap(self: *Database(Kind), key_hash: Hash, value: []const u8, index_start: u64) !void {
             const value_pos = try self.writeValue(value);
             const slot_pos = try self.readMapSlot(index_start, key_hash, 0, true, null);
             // always write the new key entry
@@ -401,7 +407,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
             try writer.writeIntLittle(u64, setType(value_pos, .value, .bytes));
         }
 
-        fn readMap(self: *Database(Kind), key_hash: [HASH_SIZE]u8, index_start: u64) ![]u8 {
+        fn readMap(self: *Database(Kind), key_hash: Hash, index_start: u64) ![]u8 {
             const reader = self.core.reader();
 
             var slot: u64 = 0;
@@ -426,16 +432,16 @@ pub fn Database(comptime Kind: DatabaseKind) type {
             return value;
         }
 
-        fn readMapSlot(self: *Database(Kind), index_pos: u64, key_hash: [HASH_SIZE]u8, key_offset: u32, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
-            if (key_offset >= HASH_SIZE) {
+        fn readMapSlot(self: *Database(Kind), index_pos: u64, key_hash: Hash, key_offset: u8, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
+            if (key_offset >= (HASH_SIZE * 8) / BIT_COUNT) {
                 return error.KeyOffsetExceeded;
             }
 
             const reader = self.core.reader();
             const writer = self.core.writer();
 
-            const digit = @as(u64, key_hash[key_offset]);
-            const slot_pos = index_pos + (POINTER_SIZE * digit);
+            const i = @truncate(u64, (key_hash >> key_offset * BIT_COUNT)) & MASK;
+            const slot_pos = index_pos + (POINTER_SIZE * i);
             try self.core.seekTo(slot_pos);
             const slot = try reader.readIntLittle(u64);
 
@@ -444,7 +450,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
                     try self.core.seekFromEnd(0);
                     // write hash
                     const hash_pos = try self.core.getPos();
-                    try writer.writeAll(&key_hash);
+                    try writer.writeAll(std.mem.asBytes(&key_hash)[0..HASH_SIZE]);
                     // write empty value slot
                     const value_slot_pos = try self.core.getPos();
                     try writer.writeIntLittle(u64, 0);
@@ -470,9 +476,12 @@ pub fn Database(comptime Kind: DatabaseKind) type {
                         return error.UnexpectedValueType;
                     }
                     try self.core.seekTo(ptr);
-                    var existing_key_hash = [_]u8{0} ** HASH_SIZE;
-                    try reader.readNoEof(&existing_key_hash);
-                    if (std.mem.eql(u8, &existing_key_hash, &key_hash)) {
+                    const existing_key_hash = blk: {
+                        var hash = [_]u8{0} ** HASH_INT_SIZE;
+                        try reader.readNoEof(hash[0..HASH_SIZE]);
+                        break :blk std.mem.bytesToValue(Hash, &hash);
+                    };
+                    if (existing_key_hash == key_hash) {
                         const value_slot_pos = try self.core.getPos();
                         const value_slot = try reader.readIntLittle(u64);
                         if (slot_val_maybe) |slot_val| {
@@ -482,15 +491,15 @@ pub fn Database(comptime Kind: DatabaseKind) type {
                     } else {
                         if (allow_write) {
                             // append new index block
-                            if (key_offset + 1 >= HASH_SIZE) {
+                            if (key_offset + 1 >= (HASH_SIZE * 8) / BIT_COUNT) {
                                 return error.KeyOffsetExceeded;
                             }
-                            const next_digit = @as(u64, existing_key_hash[key_offset + 1]);
+                            const next_i = @truncate(u64, (existing_key_hash >> (key_offset + 1) * BIT_COUNT)) & MASK;
                             try self.core.seekFromEnd(0);
                             const next_index_pos = try self.core.getPos();
                             var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                             try writer.writeAll(&index_block);
-                            try self.core.seekTo(next_index_pos + (POINTER_SIZE * next_digit));
+                            try self.core.seekTo(next_index_pos + (POINTER_SIZE * next_i));
                             try writer.writeIntLittle(u64, slot);
                             const next_pos = try self.readMapSlot(next_index_pos, key_hash, key_offset + 1, allow_write, slot_val_maybe);
                             try self.core.seekTo(slot_pos);
@@ -610,8 +619,7 @@ test "read and write" {
         defer db.deinit();
 
         // write foo
-        var foo_key = [_]u8{0} ** HASH_SIZE;
-        try hash_buffer("foo", &foo_key);
+        var foo_key = hash_buffer("foo");
         try db.writeListMap(foo_key, "bar", KEY_INDEX_START);
 
         // read foo
@@ -631,14 +639,12 @@ test "read and write" {
         try std.testing.expectEqualStrings("bar", bar_value);
 
         // key not found
-        var not_found_key = [_]u8{0} ** HASH_SIZE;
-        try hash_buffer("this doesn't exist", &not_found_key);
+        var not_found_key = hash_buffer("this doesn't exist");
         try expectEqual(error.KeyNotFound, db.readListMap(not_found_key, KEY_INDEX_START, 0));
 
-        // write key that conflicts with foo at first byte
-        var conflict_key = [_]u8{0} ** HASH_SIZE;
-        try hash_buffer("conflict", &conflict_key);
-        conflict_key[0] = foo_key[0]; // intentionally make it conflict
+        // write key that conflicts with foo
+        var conflict_key = hash_buffer("conflict");
+        conflict_key = conflict_key | (foo_key & MASK);
         try db.writeListMap(conflict_key, "hello", KEY_INDEX_START);
 
         // read conflicting key
@@ -657,8 +663,7 @@ test "read and write" {
         var db = try Database(.Persistent).initPersistent(allocator, cwd, db_path);
         defer db.deinit();
 
-        var wat_key = [_]u8{0} ** HASH_SIZE;
-        try hash_buffer("wat", &wat_key);
+        var wat_key = hash_buffer("wat");
         for (0..257) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
@@ -677,8 +682,7 @@ test "read and write" {
         defer db.deinit();
 
         // write foo
-        var foo_key = [_]u8{0} ** HASH_SIZE;
-        try hash_buffer("foo", &foo_key);
+        var foo_key = hash_buffer("foo");
         try db.writeMap(foo_key, "bar", KEY_INDEX_START);
 
         // read foo
@@ -693,14 +697,12 @@ test "read and write" {
         try std.testing.expectEqualStrings("baz", baz_value);
 
         // key not found
-        var not_found_key = [_]u8{0} ** HASH_SIZE;
-        try hash_buffer("this doesn't exist", &not_found_key);
+        var not_found_key = hash_buffer("this doesn't exist");
         try expectEqual(error.KeyNotFound, db.readMap(not_found_key, KEY_INDEX_START));
 
-        // write key that conflicts with foo at first byte
-        var conflict_key = [_]u8{0} ** HASH_SIZE;
-        try hash_buffer("conflict", &conflict_key);
-        conflict_key[0] = foo_key[0]; // intentionally make it conflict
+        // write key that conflicts with foo
+        var conflict_key = hash_buffer("conflict");
+        conflict_key = conflict_key | (foo_key & MASK);
         try db.writeMap(conflict_key, "hello", KEY_INDEX_START);
 
         // read conflicting key
@@ -745,8 +747,7 @@ test "read and write" {
         defer db.deinit();
 
         // write foo
-        var foo_key = [_]u8{0} ** HASH_SIZE;
-        try hash_buffer("foo", &foo_key);
+        var foo_key = hash_buffer("foo");
         try db.writeListMap(foo_key, "bar", KEY_INDEX_START);
 
         // read foo
@@ -766,14 +767,12 @@ test "read and write" {
         try std.testing.expectEqualStrings("bar", bar_value);
 
         // key not found
-        var not_found_key = [_]u8{0} ** HASH_SIZE;
-        try hash_buffer("this doesn't exist", &not_found_key);
+        var not_found_key = hash_buffer("this doesn't exist");
         try expectEqual(error.KeyNotFound, db.readListMap(not_found_key, KEY_INDEX_START, 0));
 
-        // write key that conflicts with foo at first byte
-        var conflict_key = [_]u8{0} ** HASH_SIZE;
-        try hash_buffer("conflict", &conflict_key);
-        conflict_key[0] = foo_key[0]; // intentionally make it conflict
+        // write key that conflicts with foo
+        var conflict_key = hash_buffer("conflict");
+        conflict_key = conflict_key | (foo_key & MASK);
         try db.writeListMap(conflict_key, "hello", KEY_INDEX_START);
 
         // read conflicting key
