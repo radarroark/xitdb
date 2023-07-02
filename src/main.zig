@@ -90,12 +90,12 @@ pub const DatabaseKind = enum {
     file,
 };
 
-pub fn Database(comptime Kind: DatabaseKind) type {
+pub fn Database(comptime kind: DatabaseKind) type {
     return struct {
         allocator: std.mem.Allocator,
         core: Core,
 
-        pub const Core = switch (Kind) {
+        pub const Core = switch (kind) {
             .memory => struct {
                 buffer: std.ArrayList(u8),
                 size: u64,
@@ -195,7 +195,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
             },
         };
 
-        pub const InitOpts = switch (Kind) {
+        pub const InitOpts = switch (kind) {
             .memory => struct {
                 capacity: usize,
             },
@@ -205,8 +205,8 @@ pub fn Database(comptime Kind: DatabaseKind) type {
             },
         };
 
-        pub fn init(allocator: std.mem.Allocator, opts: InitOpts) !Database(Kind) {
-            switch (Kind) {
+        pub fn init(allocator: std.mem.Allocator, opts: InitOpts) !Database(kind) {
+            switch (kind) {
                 .memory => {
                     var buffer = try std.ArrayList(u8).initCapacity(allocator, opts.capacity);
                     buffer.expandToCapacity();
@@ -268,11 +268,11 @@ pub fn Database(comptime Kind: DatabaseKind) type {
             }
         }
 
-        pub fn deinit(self: *Database(Kind)) void {
+        pub fn deinit(self: *Database(kind)) void {
             self.core.deinit();
         }
 
-        fn writeValue(self: *Database(Kind), value: []const u8) !u64 {
+        fn writeValue(self: *Database(kind), value: []const u8) !u64 {
             var value_hash = hash_buffer(value);
 
             var slot: u64 = 0;
@@ -303,7 +303,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
             }
         }
 
-        fn readSlot(self: *Database(Kind), path: []const PathPart, index_start: u64, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
+        fn readSlot(self: *Database(kind), path: []const PathPart, index_start: u64, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
             var pos = index_start;
             var slot: u64 = 0;
             for (path) |part| {
@@ -375,7 +375,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
 
         // map of lists
 
-        fn writeListMap(self: *Database(Kind), key_hash: Hash, value: []const u8, index_start: u64) !void {
+        fn writeListMap(self: *Database(kind), key_hash: Hash, value: []const u8, index_start: u64) !void {
             const slot_pos = try self.readSlot(&[_]PathPart{ .{ .map_get = key_hash }, .{ .list_get = null } }, index_start, true, null);
             const value_pos = try self.writeValue(value);
             const writer = self.core.writer();
@@ -383,7 +383,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
             try writer.writeIntLittle(u64, setType(value_pos, .value, .bytes));
         }
 
-        fn readListMap(self: *Database(Kind), key_hash: Hash, index_start: u64, reverse_offset: u64) ![]u8 {
+        fn readListMap(self: *Database(kind), key_hash: Hash, index_start: u64, reverse_offset: u64) ![]u8 {
             const reader = self.core.reader();
 
             var slot: u64 = 0;
@@ -411,7 +411,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
 
         // maps
 
-        fn writeMap(self: *Database(Kind), key_hash: Hash, value: []const u8, index_start: u64) !void {
+        fn writeMap(self: *Database(kind), key_hash: Hash, value: []const u8, index_start: u64) !void {
             const value_pos = try self.writeValue(value);
             const slot_pos = try self.readMapSlot(index_start, key_hash, 0, true, null);
             // always write the new key entry
@@ -420,7 +420,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
             try writer.writeIntLittle(u64, setType(value_pos, .value, .bytes));
         }
 
-        fn readMap(self: *Database(Kind), key_hash: Hash, index_start: u64) ![]u8 {
+        fn readMap(self: *Database(kind), key_hash: Hash, index_start: u64) ![]u8 {
             const reader = self.core.reader();
 
             var slot: u64 = 0;
@@ -445,7 +445,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
             return value;
         }
 
-        fn readMapSlot(self: *Database(Kind), index_pos: u64, key_hash: Hash, key_offset: u8, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
+        fn readMapSlot(self: *Database(kind), index_pos: u64, key_hash: Hash, key_offset: u8, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
             if (key_offset >= (HASH_SIZE * 8) / BIT_COUNT) {
                 return error.KeyOffsetExceeded;
             }
@@ -528,7 +528,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
 
         // lists
 
-        fn readListSlotAppend(self: *Database(Kind), index_start: u64) !u64 {
+        fn readListSlotAppend(self: *Database(kind), index_start: u64) !u64 {
             const reader = self.core.reader();
             const writer = self.core.writer();
 
@@ -563,7 +563,7 @@ pub fn Database(comptime Kind: DatabaseKind) type {
             return slot_pos;
         }
 
-        fn readListSlot(self: *Database(Kind), index_pos: u64, key: u64, shift: u6, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
+        fn readListSlot(self: *Database(kind), index_pos: u64, key: u64, shift: u6, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
             const reader = self.core.reader();
 
             const i = (key >> (shift * BIT_COUNT)) & MASK;
