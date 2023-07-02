@@ -26,7 +26,7 @@ const POINTER_SIZE = @sizeOf(u64);
 const HEADER_BLOCK_SIZE = 2;
 const BIT_COUNT = 5;
 const SLOT_COUNT = 1 << BIT_COUNT;
-const MASK = SLOT_COUNT - 1;
+const MASK: u64 = SLOT_COUNT - 1;
 const INDEX_BLOCK_SIZE = POINTER_SIZE * SLOT_COUNT;
 const KEY_INDEX_START = HEADER_BLOCK_SIZE;
 const VALUE_INDEX_START = KEY_INDEX_START + INDEX_BLOCK_SIZE;
@@ -669,7 +669,7 @@ test "read and write" {
 
             // write key that conflicts with foo
             var conflict_key = hash_buffer("conflict");
-            conflict_key = conflict_key | (foo_key & MASK);
+            conflict_key = (conflict_key & ~MASK) | (foo_key & MASK);
             try db.writeListMap(conflict_key, "hello", KEY_INDEX_START);
 
             // read conflicting key
@@ -727,7 +727,7 @@ test "read and write" {
 
             // write key that conflicts with foo
             var conflict_key = hash_buffer("conflict");
-            conflict_key = conflict_key | (foo_key & MASK);
+            conflict_key = (conflict_key & ~MASK) | (foo_key & MASK);
             try db.writeMap(conflict_key, "hello", KEY_INDEX_START);
 
             // read conflicting key
