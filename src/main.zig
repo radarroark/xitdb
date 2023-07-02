@@ -195,64 +195,77 @@ pub fn Database(comptime Kind: DatabaseKind) type {
             },
         };
 
-        pub fn initVolatile(allocator: std.mem.Allocator, capacity: usize) !Database(.Volatile) {
-            var buffer = try std.ArrayList(u8).initCapacity(allocator, capacity);
-            buffer.expandToCapacity();
+        pub const InitOpts = switch (Kind) {
+            .Volatile => struct {
+                capacity: usize,
+            },
+            .Persistent => struct {
+                dir: std.fs.Dir,
+                path: []const u8,
+            },
+        };
 
-            var core = Core{
-                .buffer = buffer,
-                .size = 0,
-                .position = 0,
-            };
+        pub fn init(allocator: std.mem.Allocator, opts: InitOpts) !Database(Kind) {
+            switch (Kind) {
+                .Volatile => {
+                    var buffer = try std.ArrayList(u8).initCapacity(allocator, opts.capacity);
+                    buffer.expandToCapacity();
 
-            const writer = core.writer();
+                    var core = Core{
+                        .buffer = buffer,
+                        .size = 0,
+                        .position = 0,
+                    };
 
-            var header_block = [_]u8{0} ** HEADER_BLOCK_SIZE;
-            var key_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-            var value_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                    const writer = core.writer();
 
-            try writer.writeAll(&header_block);
-            try writer.writeAll(&key_index_block);
-            try writer.writeAll(&value_index_block);
+                    var header_block = [_]u8{0} ** HEADER_BLOCK_SIZE;
+                    var key_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                    var value_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
 
-            return .{
-                .allocator = allocator,
-                .core = core,
-            };
-        }
+                    try writer.writeAll(&header_block);
+                    try writer.writeAll(&key_index_block);
+                    try writer.writeAll(&value_index_block);
 
-        pub fn initPersistent(allocator: std.mem.Allocator, dir: std.fs.Dir, path: []const u8) !Database(.Persistent) {
-            // create or open file
-            const file_or_err = dir.openFile(path, .{ .mode = .read_write });
-            const file = try if (file_or_err == error.FileNotFound)
-                dir.createFile(path, .{ .read = true })
-            else
-                file_or_err;
-            errdefer file.close();
+                    return .{
+                        .allocator = allocator,
+                        .core = core,
+                    };
+                },
+                .Persistent => {
+                    // create or open file
+                    const file_or_err = opts.dir.openFile(opts.path, .{ .mode = .read_write });
+                    const file = try if (file_or_err == error.FileNotFound)
+                        opts.dir.createFile(opts.path, .{ .read = true })
+                    else
+                        file_or_err;
+                    errdefer file.close();
 
-            const meta = try file.metadata();
-            const size = meta.size();
-            const reader = file.reader();
-            const writer = file.writer();
+                    const meta = try file.metadata();
+                    const size = meta.size();
+                    const reader = file.reader();
+                    const writer = file.writer();
 
-            var header_block = [_]u8{0} ** HEADER_BLOCK_SIZE;
-            var key_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-            var value_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                    var header_block = [_]u8{0} ** HEADER_BLOCK_SIZE;
+                    var key_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                    var value_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
 
-            if (size == 0) {
-                try writer.writeAll(&header_block);
-                try writer.writeAll(&key_index_block);
-                try writer.writeAll(&value_index_block);
-            } else {
-                try reader.readNoEof(&header_block);
-                try reader.readNoEof(&key_index_block);
-                try reader.readNoEof(&value_index_block);
+                    if (size == 0) {
+                        try writer.writeAll(&header_block);
+                        try writer.writeAll(&key_index_block);
+                        try writer.writeAll(&value_index_block);
+                    } else {
+                        try reader.readNoEof(&header_block);
+                        try reader.readNoEof(&key_index_block);
+                        try reader.readNoEof(&value_index_block);
+                    }
+
+                    return .{
+                        .allocator = allocator,
+                        .core = .{ .file = file },
+                    };
+                },
             }
-
-            return .{
-                .allocator = allocator,
-                .core = .{ .file = file },
-            };
         }
 
         pub fn deinit(self: *Database(Kind)) void {
@@ -612,115 +625,127 @@ test "read and write" {
     const db_path = "main.db";
     defer cwd.deleteFile(db_path) catch {};
 
-    // list maps
-    // under each key is a list of all values that were set
-    {
-        var db = try Database(.Persistent).initPersistent(allocator, cwd, db_path);
-        defer db.deinit();
+    inline for (@typeInfo(DatabaseKind).Enum.fields) |field| {
+        const kind = @field(DatabaseKind, field.name);
+        const opts = switch (kind) {
+            .Volatile => Database(kind).InitOpts{
+                .capacity = 10000,
+            },
+            .Persistent => Database(kind).InitOpts{
+                .dir = cwd,
+                .path = db_path,
+            },
+        };
 
-        // write foo
-        var foo_key = hash_buffer("foo");
-        try db.writeListMap(foo_key, "bar", KEY_INDEX_START);
+        // list maps
+        // under each key is a list of all values that were set
+        {
+            var db = try Database(kind).init(allocator, opts);
+            defer db.deinit();
 
-        // read foo
-        const bar_value = try db.readListMap(foo_key, KEY_INDEX_START, 0);
-        defer allocator.free(bar_value);
-        try std.testing.expectEqualStrings("bar", bar_value);
+            // write foo
+            var foo_key = hash_buffer("foo");
+            try db.writeListMap(foo_key, "bar", KEY_INDEX_START);
 
-        // overwrite foo
-        try db.writeListMap(foo_key, "baz", KEY_INDEX_START);
-        const baz_value = try db.readListMap(foo_key, KEY_INDEX_START, 0);
-        defer allocator.free(baz_value);
-        try std.testing.expectEqualStrings("baz", baz_value);
+            // read foo
+            const bar_value = try db.readListMap(foo_key, KEY_INDEX_START, 0);
+            defer allocator.free(bar_value);
+            try std.testing.expectEqualStrings("bar", bar_value);
 
-        // can still read the old value
-        const bar_value2 = try db.readListMap(foo_key, KEY_INDEX_START, 1);
-        defer allocator.free(bar_value2);
-        try std.testing.expectEqualStrings("bar", bar_value);
+            // overwrite foo
+            try db.writeListMap(foo_key, "baz", KEY_INDEX_START);
+            const baz_value = try db.readListMap(foo_key, KEY_INDEX_START, 0);
+            defer allocator.free(baz_value);
+            try std.testing.expectEqualStrings("baz", baz_value);
 
-        // key not found
-        var not_found_key = hash_buffer("this doesn't exist");
-        try expectEqual(error.KeyNotFound, db.readListMap(not_found_key, KEY_INDEX_START, 0));
+            // can still read the old value
+            const bar_value2 = try db.readListMap(foo_key, KEY_INDEX_START, 1);
+            defer allocator.free(bar_value2);
+            try std.testing.expectEqualStrings("bar", bar_value);
 
-        // write key that conflicts with foo
-        var conflict_key = hash_buffer("conflict");
-        conflict_key = conflict_key | (foo_key & MASK);
-        try db.writeListMap(conflict_key, "hello", KEY_INDEX_START);
+            // key not found
+            var not_found_key = hash_buffer("this doesn't exist");
+            try expectEqual(error.KeyNotFound, db.readListMap(not_found_key, KEY_INDEX_START, 0));
 
-        // read conflicting key
-        const hello_value = try db.readListMap(conflict_key, KEY_INDEX_START, 0);
-        defer allocator.free(hello_value);
-        try std.testing.expectEqualStrings("hello", hello_value);
+            // write key that conflicts with foo
+            var conflict_key = hash_buffer("conflict");
+            conflict_key = conflict_key | (foo_key & MASK);
+            try db.writeListMap(conflict_key, "hello", KEY_INDEX_START);
 
-        // we can still read foo
-        const baz_value2 = try db.readListMap(foo_key, KEY_INDEX_START, 0);
-        defer allocator.free(baz_value2);
-        try std.testing.expectEqualStrings("baz", baz_value2);
-    }
+            // read conflicting key
+            const hello_value = try db.readListMap(conflict_key, KEY_INDEX_START, 0);
+            defer allocator.free(hello_value);
+            try std.testing.expectEqualStrings("hello", hello_value);
 
-    // overwrite a value many times, filling up the list until a root overflow occurs
-    {
-        var db = try Database(.Persistent).initPersistent(allocator, cwd, db_path);
-        defer db.deinit();
+            // we can still read foo
+            const baz_value2 = try db.readListMap(foo_key, KEY_INDEX_START, 0);
+            defer allocator.free(baz_value2);
+            try std.testing.expectEqualStrings("baz", baz_value2);
+        }
 
-        var wat_key = hash_buffer("wat");
-        for (0..257) |i| {
-            const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
-            defer allocator.free(value);
-            try db.writeListMap(wat_key, value, KEY_INDEX_START);
+        // overwrite a value many times, filling up the list until a root overflow occurs
+        {
+            var db = try Database(kind).init(allocator, opts);
+            defer db.deinit();
 
-            const value2 = try db.readListMap(wat_key, KEY_INDEX_START, 0);
-            defer allocator.free(value2);
-            try std.testing.expectEqualStrings(value, value2);
+            var wat_key = hash_buffer("wat");
+            for (0..SLOT_COUNT + 1) |i| {
+                const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
+                defer allocator.free(value);
+                try db.writeListMap(wat_key, value, KEY_INDEX_START);
+
+                const value2 = try db.readListMap(wat_key, KEY_INDEX_START, 0);
+                defer allocator.free(value2);
+                try std.testing.expectEqualStrings(value, value2);
+            }
+        }
+
+        // maps
+        // under each key is a single value
+        {
+            var db = try Database(kind).init(allocator, opts);
+            defer db.deinit();
+
+            // write foo
+            var foo_key = hash_buffer("foo");
+            try db.writeMap(foo_key, "bar", KEY_INDEX_START);
+
+            // read foo
+            const bar_value = try db.readMap(foo_key, KEY_INDEX_START);
+            defer allocator.free(bar_value);
+            try std.testing.expectEqualStrings("bar", bar_value);
+
+            // overwrite foo
+            try db.writeMap(foo_key, "baz", KEY_INDEX_START);
+            const baz_value = try db.readMap(foo_key, KEY_INDEX_START);
+            defer allocator.free(baz_value);
+            try std.testing.expectEqualStrings("baz", baz_value);
+
+            // key not found
+            var not_found_key = hash_buffer("this doesn't exist");
+            try expectEqual(error.KeyNotFound, db.readMap(not_found_key, KEY_INDEX_START));
+
+            // write key that conflicts with foo
+            var conflict_key = hash_buffer("conflict");
+            conflict_key = conflict_key | (foo_key & MASK);
+            try db.writeMap(conflict_key, "hello", KEY_INDEX_START);
+
+            // read conflicting key
+            const hello_value = try db.readMap(conflict_key, KEY_INDEX_START);
+            defer allocator.free(hello_value);
+            try std.testing.expectEqualStrings("hello", hello_value);
+
+            // we can still read foo
+            const baz_value2 = try db.readMap(foo_key, KEY_INDEX_START);
+            defer allocator.free(baz_value2);
+            try std.testing.expectEqualStrings("baz", baz_value2);
         }
     }
 
-    // maps
-    // under each key is a single value
-    {
-        var db = try Database(.Persistent).initPersistent(allocator, cwd, db_path);
-        defer db.deinit();
-
-        // write foo
-        var foo_key = hash_buffer("foo");
-        try db.writeMap(foo_key, "bar", KEY_INDEX_START);
-
-        // read foo
-        const bar_value = try db.readMap(foo_key, KEY_INDEX_START);
-        defer allocator.free(bar_value);
-        try std.testing.expectEqualStrings("bar", bar_value);
-
-        // overwrite foo
-        try db.writeMap(foo_key, "baz", KEY_INDEX_START);
-        const baz_value = try db.readMap(foo_key, KEY_INDEX_START);
-        defer allocator.free(baz_value);
-        try std.testing.expectEqualStrings("baz", baz_value);
-
-        // key not found
-        var not_found_key = hash_buffer("this doesn't exist");
-        try expectEqual(error.KeyNotFound, db.readMap(not_found_key, KEY_INDEX_START));
-
-        // write key that conflicts with foo
-        var conflict_key = hash_buffer("conflict");
-        conflict_key = conflict_key | (foo_key & MASK);
-        try db.writeMap(conflict_key, "hello", KEY_INDEX_START);
-
-        // read conflicting key
-        const hello_value = try db.readMap(conflict_key, KEY_INDEX_START);
-        defer allocator.free(hello_value);
-        try std.testing.expectEqualStrings("hello", hello_value);
-
-        // we can still read foo
-        const baz_value2 = try db.readMap(foo_key, KEY_INDEX_START);
-        defer allocator.free(baz_value2);
-        try std.testing.expectEqualStrings("baz", baz_value2);
-    }
-
     // volatile
-
     // low level operations
     {
-        var db = try Database(.Volatile).initVolatile(allocator, 10000);
+        var db = try Database(.Volatile).init(allocator, .{ .capacity = 10000 });
         defer db.deinit();
 
         var writer = db.core.writer();
@@ -738,51 +763,5 @@ test "read and write" {
         try reader.readNoEof(&block);
         try std.testing.expectEqualStrings("Hello", &block);
         try expectEqual(42, reader.readIntLittle(u64));
-    }
-
-    // list maps
-    // under each key is a list of all values that were set
-    {
-        var db = try Database(.Volatile).initVolatile(allocator, 20000);
-        defer db.deinit();
-
-        // write foo
-        var foo_key = hash_buffer("foo");
-        try db.writeListMap(foo_key, "bar", KEY_INDEX_START);
-
-        // read foo
-        const bar_value = try db.readListMap(foo_key, KEY_INDEX_START, 0);
-        defer allocator.free(bar_value);
-        try std.testing.expectEqualStrings("bar", bar_value);
-
-        // overwrite foo
-        try db.writeListMap(foo_key, "baz", KEY_INDEX_START);
-        const baz_value = try db.readListMap(foo_key, KEY_INDEX_START, 0);
-        defer allocator.free(baz_value);
-        try std.testing.expectEqualStrings("baz", baz_value);
-
-        // can still read the old value
-        const bar_value2 = try db.readListMap(foo_key, KEY_INDEX_START, 1);
-        defer allocator.free(bar_value2);
-        try std.testing.expectEqualStrings("bar", bar_value);
-
-        // key not found
-        var not_found_key = hash_buffer("this doesn't exist");
-        try expectEqual(error.KeyNotFound, db.readListMap(not_found_key, KEY_INDEX_START, 0));
-
-        // write key that conflicts with foo
-        var conflict_key = hash_buffer("conflict");
-        conflict_key = conflict_key | (foo_key & MASK);
-        try db.writeListMap(conflict_key, "hello", KEY_INDEX_START);
-
-        // read conflicting key
-        const hello_value = try db.readListMap(conflict_key, KEY_INDEX_START, 0);
-        defer allocator.free(hello_value);
-        try std.testing.expectEqualStrings("hello", hello_value);
-
-        // we can still read foo
-        const baz_value2 = try db.readListMap(foo_key, KEY_INDEX_START, 0);
-        defer allocator.free(baz_value2);
-        try std.testing.expectEqualStrings("baz", baz_value2);
     }
 }
