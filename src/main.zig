@@ -211,26 +211,18 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     var buffer = try std.ArrayList(u8).initCapacity(allocator, opts.capacity);
                     buffer.expandToCapacity();
 
-                    var core = Core{
-                        .buffer = buffer,
-                        .size = 0,
-                        .position = 0,
-                    };
-
-                    const writer = core.writer();
-
-                    var header_block = [_]u8{0} ** HEADER_BLOCK_SIZE;
-                    var key_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                    var value_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-
-                    try writer.writeAll(&header_block);
-                    try writer.writeAll(&key_index_block);
-                    try writer.writeAll(&value_index_block);
-
-                    return .{
+                    var self = Database(kind){
                         .allocator = allocator,
-                        .core = core,
+                        .core = .{
+                            .buffer = buffer,
+                            .size = 0,
+                            .position = 0,
+                        },
                     };
+
+                    try self.writeHeader();
+
+                    return self;
                 },
                 .file => {
                     // create or open file
@@ -241,35 +233,37 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         file_or_err;
                     errdefer file.close();
 
-                    const meta = try file.metadata();
-                    const size = meta.size();
-                    const reader = file.reader();
-                    const writer = file.writer();
-
-                    var header_block = [_]u8{0} ** HEADER_BLOCK_SIZE;
-                    var key_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                    var value_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-
-                    if (size == 0) {
-                        try writer.writeAll(&header_block);
-                        try writer.writeAll(&key_index_block);
-                        try writer.writeAll(&value_index_block);
-                    } else {
-                        try reader.readNoEof(&header_block);
-                        try reader.readNoEof(&key_index_block);
-                        try reader.readNoEof(&value_index_block);
-                    }
-
-                    return .{
+                    var self = Database(kind){
                         .allocator = allocator,
                         .core = .{ .file = file },
                     };
+
+                    const meta = try file.metadata();
+                    const size = meta.size();
+
+                    if (size == 0) {
+                        try self.writeHeader();
+                    }
+
+                    return self;
                 },
             }
         }
 
         pub fn deinit(self: *Database(kind)) void {
             self.core.deinit();
+        }
+
+        fn writeHeader(self: *Database(kind)) !void {
+            const writer = self.core.writer();
+
+            var header_block = [_]u8{0} ** HEADER_BLOCK_SIZE;
+            var key_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+            var value_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+
+            try writer.writeAll(&header_block);
+            try writer.writeAll(&key_index_block);
+            try writer.writeAll(&value_index_block);
         }
 
         fn writeValue(self: *Database(kind), value: []const u8) !u64 {
