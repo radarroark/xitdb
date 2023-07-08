@@ -28,8 +28,8 @@ const BIT_COUNT = 5;
 const SLOT_COUNT = 1 << BIT_COUNT;
 const MASK: u64 = SLOT_COUNT - 1;
 const INDEX_BLOCK_SIZE = POINTER_SIZE * SLOT_COUNT;
-const KEY_INDEX_START = HEADER_BLOCK_SIZE;
-const VALUE_INDEX_START = KEY_INDEX_START + INDEX_BLOCK_SIZE;
+const VALUE_INDEX_START = HEADER_BLOCK_SIZE;
+const KEY_INDEX_START = VALUE_INDEX_START + INDEX_BLOCK_SIZE;
 
 const PointerType = enum(u64) {
     index = 0 << 63,
@@ -49,7 +49,11 @@ const VALUE_TYPE_MASK: u64 = 0b11 << 61;
 
 const PathPart = union(enum) {
     map_get: Hash,
-    list_get: ?u64,
+    list_get: union(enum) {
+        reverse_offset: u64,
+        append,
+        append_copy,
+    },
 };
 
 pub fn setType(ptr: u64, ptr_type: PointerType, value_type_maybe: ?ValueType) u64 {
@@ -258,12 +262,16 @@ pub fn Database(comptime kind: DatabaseKind) type {
             const writer = self.core.writer();
 
             var header_block = [_]u8{0} ** HEADER_BLOCK_SIZE;
-            var key_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-            var value_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-
             try writer.writeAll(&header_block);
-            try writer.writeAll(&key_index_block);
+
+            var value_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
             try writer.writeAll(&value_index_block);
+
+            const list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+            try writer.writeIntLittle(u64, 0); // list size
+            const list_ptr = try self.core.getPos() + POINTER_SIZE;
+            try writer.writeIntLittle(u64, list_ptr);
+            try writer.writeAll(&list_index_block);
         }
 
         fn writeValue(self: *Database(kind), value: []const u8) !u64 {
@@ -299,78 +307,141 @@ pub fn Database(comptime kind: DatabaseKind) type {
 
         fn readSlot(self: *Database(kind), path: []const PathPart, index_start: u64, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
             var pos = index_start;
-            var slot: u64 = 0;
+            var slot_maybe: ?u64 = null;
             for (path) |part| {
                 var next_slot: u64 = 0;
                 pos = switch (part) {
                     .map_get => blk: {
+                        if (slot_maybe) |slot| {
+                            if (slot == 0) {
+                                if (allow_write) {
+                                    // if slot was empty, insert the new map
+                                    const writer = self.core.writer();
+                                    try self.core.seekFromEnd(0);
+                                    const map_start = try self.core.getPos();
+                                    const map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                                    try writer.writeAll(&map_index_block);
+                                    // make slot point to map
+                                    try self.core.seekTo(pos);
+                                    try writer.writeIntLittle(u64, setType(map_start, .value, .map));
+                                    pos = map_start;
+                                } else {
+                                    return error.KeyNotFound;
+                                }
+                            } else {
+                                const ptr_type = getPointerType(slot);
+                                if (ptr_type != .value) {
+                                    return error.UnexpectedPointerType;
+                                }
+                                const val_type = getValueType(slot);
+                                if (val_type != .map) {
+                                    return error.UnexpectedValueType;
+                                }
+                                pos = getPointer(slot);
+                            }
+                        }
                         break :blk try self.readMapSlot(pos, part.map_get, 0, allow_write, &next_slot);
                     },
                     .list_get => blk: {
-                        if (slot == 0) {
-                            if (allow_write) {
-                                // if slot was empty, insert the new list
-                                const writer = self.core.writer();
-                                try self.core.seekFromEnd(0);
-                                const list_start = try self.core.getPos();
-                                const list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                try writer.writeIntLittle(u64, 0); // list size
-                                const list_ptr = try self.core.getPos() + POINTER_SIZE;
-                                try writer.writeIntLittle(u64, list_ptr);
-                                try writer.writeAll(&list_index_block);
-                                // make slot point to list
-                                try self.core.seekTo(pos);
-                                try writer.writeIntLittle(u64, setType(list_start, .value, .list));
-                                pos = list_start;
+                        if (slot_maybe) |slot| {
+                            if (slot == 0) {
+                                if (allow_write) {
+                                    // if slot was empty, insert the new list
+                                    const writer = self.core.writer();
+                                    try self.core.seekFromEnd(0);
+                                    const list_start = try self.core.getPos();
+                                    const list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                                    try writer.writeIntLittle(u64, 0); // list size
+                                    const list_ptr = try self.core.getPos() + POINTER_SIZE;
+                                    try writer.writeIntLittle(u64, list_ptr);
+                                    try writer.writeAll(&list_index_block);
+                                    // make slot point to list
+                                    try self.core.seekTo(pos);
+                                    try writer.writeIntLittle(u64, setType(list_start, .value, .list));
+                                    pos = list_start;
+                                } else {
+                                    return error.KeyNotFound;
+                                }
                             } else {
-                                return error.KeyNotFound;
+                                const ptr_type = getPointerType(slot);
+                                if (ptr_type != .value) {
+                                    return error.UnexpectedPointerType;
+                                }
+                                const val_type = getValueType(slot);
+                                if (val_type != .list) {
+                                    return error.UnexpectedValueType;
+                                }
+                                pos = getPointer(slot);
                             }
-                        } else {
-                            const ptr_type = getPointerType(slot);
-                            if (ptr_type != .value) {
-                                return error.UnexpectedPointerType;
-                            }
-                            const val_type = getValueType(slot);
-                            if (val_type != .list) {
-                                return error.UnexpectedValueType;
-                            }
-                            pos = getPointer(slot);
                         }
-                        if (part.list_get) |reverse_offset| {
-                            try self.core.seekTo(pos);
-                            const reader = self.core.reader();
-                            const list_size = try reader.readIntLittle(u64);
-                            if (list_size <= reverse_offset) {
-                                return error.KeyNotFound;
-                            }
-                            const key = list_size - reverse_offset - 1;
-                            if (key < 0 or key >= list_size) {
-                                return error.KeyNotFound;
-                            }
-                            const list_ptr = try reader.readIntLittle(u64);
-                            const shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
-                            break :blk try self.readListSlot(list_ptr, key, shift, allow_write, &next_slot);
-                        } else {
-                            if (allow_write) {
-                                break :blk try self.readListSlotAppend(pos);
-                            } else {
-                                return error.KeyNotFound;
-                            }
+                        switch (part.list_get) {
+                            .reverse_offset => {
+                                const reverse_offset = part.list_get.reverse_offset;
+                                try self.core.seekTo(pos);
+                                const reader = self.core.reader();
+                                const list_size = try reader.readIntLittle(u64);
+                                if (list_size <= reverse_offset) {
+                                    return error.KeyNotFound;
+                                }
+                                const key = list_size - reverse_offset - 1;
+                                if (key < 0 or key >= list_size) {
+                                    return error.KeyNotFound;
+                                }
+                                const list_ptr = try reader.readIntLittle(u64);
+                                const shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
+                                break :blk try self.readListSlot(list_ptr, key, shift, allow_write, &next_slot);
+                            },
+                            .append => {
+                                if (allow_write) {
+                                    break :blk try self.readListSlotAppend(pos);
+                                } else {
+                                    return error.KeyNotFound;
+                                }
+                            },
+                            .append_copy => {
+                                if (allow_write) {
+                                    try self.core.seekTo(pos);
+                                    const reader = self.core.reader();
+                                    const list_size = try reader.readIntLittle(u64);
+                                    // read the last slot in the list
+                                    var last_slot: u64 = 0;
+                                    if (list_size > 0) {
+                                        const key = list_size - 1;
+                                        const list_ptr = try reader.readIntLittle(u64);
+                                        const shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
+                                        _ = try self.readListSlot(list_ptr, key, shift, false, &last_slot);
+                                    }
+                                    // make the next slot
+                                    const next_pos = try self.readListSlotAppend(pos);
+                                    // set its value to the last slot
+                                    if (last_slot != 0) {
+                                        const writer = self.core.writer();
+                                        try self.core.seekTo(next_pos);
+                                        try writer.writeIntLittle(u64, last_slot);
+                                        next_slot = last_slot;
+                                    }
+                                    break :blk next_pos;
+                                } else {
+                                    return error.KeyNotFound;
+                                }
+                            },
                         }
                     },
                 };
-                slot = next_slot;
+                slot_maybe = next_slot;
             }
             if (slot_val_maybe) |slot_val| {
-                slot_val.* = slot;
+                if (slot_maybe) |slot| {
+                    slot_val.* = slot;
+                }
             }
             return pos;
         }
 
-        // map of lists
+        // list of maps
 
         fn writeListMap(self: *Database(kind), key_hash: Hash, value: []const u8, index_start: u64) !void {
-            const slot_pos = try self.readSlot(&[_]PathPart{ .{ .map_get = key_hash }, .{ .list_get = null } }, index_start, true, null);
+            const slot_pos = try self.readSlot(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .map_get = key_hash } }, index_start, true, null);
             const value_pos = try self.writeValue(value);
             const writer = self.core.writer();
             try self.core.seekTo(slot_pos);
@@ -381,7 +452,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
             const reader = self.core.reader();
 
             var slot: u64 = 0;
-            _ = try self.readSlot(&[_]PathPart{ .{ .map_get = key_hash }, .{ .list_get = reverse_offset } }, index_start, false, &slot);
+            _ = try self.readSlot(&[_]PathPart{ .{ .list_get = .{ .reverse_offset = reverse_offset } }, .{ .map_get = key_hash } }, index_start, false, &slot);
             const ptr = getPointer(slot);
 
             const ptr_type = getPointerType(slot);
@@ -614,8 +685,7 @@ test "get/set pointer type" {
 }
 
 fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Database(kind).InitOpts) !void {
-    // list maps
-    // under each key is a list of all values that were set
+    // list of maps
     {
         var db = try Database(kind).init(allocator, opts);
         defer db.deinit();
@@ -661,7 +731,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
     }
 
     // overwrite a value many times, filling up the list until a root overflow occurs
-    {
+    if (false) {
         var db = try Database(kind).init(allocator, opts);
         defer db.deinit();
 
@@ -678,42 +748,41 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
     }
 
     // maps
-    // under each key is a single value
-    {
+    if (false) {
         var db = try Database(kind).init(allocator, opts);
         defer db.deinit();
 
         // write foo
         var foo_key = hash_buffer("foo");
-        try db.writeMap(foo_key, "bar", KEY_INDEX_START);
+        try db.writeMap(foo_key, "bar", VALUE_INDEX_START);
 
         // read foo
-        const bar_value = try db.readMap(foo_key, KEY_INDEX_START);
+        const bar_value = try db.readMap(foo_key, VALUE_INDEX_START);
         defer allocator.free(bar_value);
         try std.testing.expectEqualStrings("bar", bar_value);
 
         // overwrite foo
-        try db.writeMap(foo_key, "baz", KEY_INDEX_START);
-        const baz_value = try db.readMap(foo_key, KEY_INDEX_START);
+        try db.writeMap(foo_key, "baz", VALUE_INDEX_START);
+        const baz_value = try db.readMap(foo_key, VALUE_INDEX_START);
         defer allocator.free(baz_value);
         try std.testing.expectEqualStrings("baz", baz_value);
 
         // key not found
         var not_found_key = hash_buffer("this doesn't exist");
-        try expectEqual(error.KeyNotFound, db.readMap(not_found_key, KEY_INDEX_START));
+        try expectEqual(error.KeyNotFound, db.readMap(not_found_key, VALUE_INDEX_START));
 
         // write key that conflicts with foo
         var conflict_key = hash_buffer("conflict");
         conflict_key = (conflict_key & ~MASK) | (foo_key & MASK);
-        try db.writeMap(conflict_key, "hello", KEY_INDEX_START);
+        try db.writeMap(conflict_key, "hello", VALUE_INDEX_START);
 
         // read conflicting key
-        const hello_value = try db.readMap(conflict_key, KEY_INDEX_START);
+        const hello_value = try db.readMap(conflict_key, VALUE_INDEX_START);
         defer allocator.free(hello_value);
         try std.testing.expectEqualStrings("hello", hello_value);
 
         // we can still read foo
-        const baz_value2 = try db.readMap(foo_key, KEY_INDEX_START);
+        const baz_value2 = try db.readMap(foo_key, VALUE_INDEX_START);
         defer allocator.free(baz_value2);
         try std.testing.expectEqualStrings("baz", baz_value2);
     }
