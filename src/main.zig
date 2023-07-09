@@ -47,10 +47,15 @@ const ValueType = enum(u64) {
 
 const VALUE_TYPE_MASK: u64 = 0b11 << 61;
 
+const Index = struct {
+    index: u64,
+    reverse: bool,
+};
+
 const PathPart = union(enum) {
     map_get: Hash,
     list_get: union(enum) {
-        reverse_offset: u64,
+        index: Index,
         append,
         append_copy,
     },
@@ -375,17 +380,24 @@ pub fn Database(comptime kind: DatabaseKind) type {
                             }
                         }
                         switch (part.list_get) {
-                            .reverse_offset => {
-                                const reverse_offset = part.list_get.reverse_offset;
+                            .index => {
+                                const index = part.list_get.index;
                                 try self.core.seekTo(pos);
                                 const reader = self.core.reader();
                                 const list_size = try reader.readIntLittle(u64);
-                                if (list_size <= reverse_offset) {
-                                    return error.KeyNotFound;
-                                }
-                                const key = list_size - reverse_offset - 1;
-                                if (key < 0 or key >= list_size) {
-                                    return error.KeyNotFound;
+                                var key: u64 = 0;
+                                if (index.reverse) {
+                                    if (key >= list_size) {
+                                        return error.KeyNotFound;
+                                    } else {
+                                        key = list_size - index.index - 1;
+                                    }
+                                } else {
+                                    if (key >= list_size) {
+                                        return error.KeyNotFound;
+                                    } else {
+                                        key = index.index;
+                                    }
                                 }
                                 const list_ptr = try reader.readIntLittle(u64);
                                 const shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
@@ -448,11 +460,11 @@ pub fn Database(comptime kind: DatabaseKind) type {
             try writer.writeIntLittle(u64, setType(value_pos, .value, .bytes));
         }
 
-        fn readListMap(self: *Database(kind), key_hash: Hash, index_start: u64, reverse_offset: u64) ![]u8 {
+        fn readListMap(self: *Database(kind), key_hash: Hash, index_start: u64, index: Index) ![]u8 {
             const reader = self.core.reader();
 
             var slot: u64 = 0;
-            _ = try self.readSlot(&[_]PathPart{ .{ .list_get = .{ .reverse_offset = reverse_offset } }, .{ .map_get = key_hash } }, index_start, false, &slot);
+            _ = try self.readSlot(&[_]PathPart{ .{ .list_get = .{ .index = index } }, .{ .map_get = key_hash } }, index_start, false, &slot);
             const ptr = getPointer(slot);
 
             const ptr_type = getPointerType(slot);
@@ -695,24 +707,24 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
         try db.writeListMap(foo_key, "bar", KEY_INDEX_START);
 
         // read foo
-        const bar_value = try db.readListMap(foo_key, KEY_INDEX_START, 0);
+        const bar_value = try db.readListMap(foo_key, KEY_INDEX_START, .{ .index = 0, .reverse = true });
         defer allocator.free(bar_value);
         try std.testing.expectEqualStrings("bar", bar_value);
 
         // overwrite foo
         try db.writeListMap(foo_key, "baz", KEY_INDEX_START);
-        const baz_value = try db.readListMap(foo_key, KEY_INDEX_START, 0);
+        const baz_value = try db.readListMap(foo_key, KEY_INDEX_START, .{ .index = 0, .reverse = true });
         defer allocator.free(baz_value);
         try std.testing.expectEqualStrings("baz", baz_value);
 
         // can still read the old value
-        const bar_value2 = try db.readListMap(foo_key, KEY_INDEX_START, 1);
+        const bar_value2 = try db.readListMap(foo_key, KEY_INDEX_START, .{ .index = 1, .reverse = true });
         defer allocator.free(bar_value2);
         try std.testing.expectEqualStrings("bar", bar_value);
 
         // key not found
         var not_found_key = hash_buffer("this doesn't exist");
-        try expectEqual(error.KeyNotFound, db.readListMap(not_found_key, KEY_INDEX_START, 0));
+        try expectEqual(error.KeyNotFound, db.readListMap(not_found_key, KEY_INDEX_START, .{ .index = 0, .reverse = true }));
 
         // write key that conflicts with foo
         var conflict_key = hash_buffer("conflict");
@@ -720,12 +732,12 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
         try db.writeListMap(conflict_key, "hello", KEY_INDEX_START);
 
         // read conflicting key
-        const hello_value = try db.readListMap(conflict_key, KEY_INDEX_START, 0);
+        const hello_value = try db.readListMap(conflict_key, KEY_INDEX_START, .{ .index = 0, .reverse = true });
         defer allocator.free(hello_value);
         try std.testing.expectEqualStrings("hello", hello_value);
 
         // we can still read foo
-        const baz_value2 = try db.readListMap(foo_key, KEY_INDEX_START, 0);
+        const baz_value2 = try db.readListMap(foo_key, KEY_INDEX_START, .{ .index = 0, .reverse = true });
         defer allocator.free(baz_value2);
         try std.testing.expectEqualStrings("baz", baz_value2);
     }
@@ -741,7 +753,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
             defer allocator.free(value);
             try db.writeListMap(wat_key, value, KEY_INDEX_START);
 
-            const value2 = try db.readListMap(wat_key, KEY_INDEX_START, 0);
+            const value2 = try db.readListMap(wat_key, KEY_INDEX_START, .{ .index = 0, .reverse = true });
             defer allocator.free(value2);
             try std.testing.expectEqualStrings(value, value2);
         }
