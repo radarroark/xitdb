@@ -720,7 +720,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
         // can still read the old value
         const bar_value2 = try db.readListMap(foo_key, KEY_INDEX_START, .{ .index = 1, .reverse = true });
         defer allocator.free(bar_value2);
-        try std.testing.expectEqualStrings("bar", bar_value);
+        try std.testing.expectEqualStrings("bar", bar_value2);
 
         // key not found
         var not_found_key = hash_buffer("this doesn't exist");
