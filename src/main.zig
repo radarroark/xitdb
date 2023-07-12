@@ -387,13 +387,13 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                 const list_size = try reader.readIntLittle(u64);
                                 var key: u64 = 0;
                                 if (index.reverse) {
-                                    if (key >= list_size) {
+                                    if (index.index >= list_size) {
                                         return error.KeyNotFound;
                                     } else {
                                         key = list_size - index.index - 1;
                                     }
                                 } else {
-                                    if (key >= list_size) {
+                                    if (index.index >= list_size) {
                                         return error.KeyNotFound;
                                     } else {
                                         key = index.index;
