@@ -772,6 +772,17 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
         const baz_value2 = try db.readListMap(foo_key, KEY_INDEX_START, .{ .index = 0, .reverse = true });
         defer allocator.free(baz_value2);
         try std.testing.expectEqualStrings("baz", baz_value2);
+
+        // overwrite conflicting key
+        try db.writeListMap(conflict_key, "goodbye", KEY_INDEX_START);
+        const goodbye_value = try db.readListMap(conflict_key, KEY_INDEX_START, .{ .index = 0, .reverse = true });
+        defer allocator.free(goodbye_value);
+        try std.testing.expectEqualStrings("goodbye", goodbye_value);
+
+        // we can still read the old conflicting key
+        const hello_value2 = try db.readListMap(conflict_key, KEY_INDEX_START, .{ .index = 1, .reverse = true });
+        defer allocator.free(hello_value2);
+        try std.testing.expectEqualStrings("hello", hello_value2);
     }
 
     // overwrite a value many times, filling up the list until a root overflow occurs
