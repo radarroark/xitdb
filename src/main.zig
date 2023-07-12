@@ -342,7 +342,25 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                 if (val_type != .map) {
                                     return error.UnexpectedValueType;
                                 }
-                                pos = getPointer(slot);
+                                const next_pos = getPointer(slot);
+                                if (allow_write) {
+                                    // read existing block
+                                    const reader = self.core.reader();
+                                    try self.core.seekTo(next_pos);
+                                    var map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                                    try reader.readNoEof(&map_index_block);
+                                    // copy it to the end
+                                    const writer = self.core.writer();
+                                    try self.core.seekFromEnd(0);
+                                    const map_start = try self.core.getPos();
+                                    try writer.writeAll(&map_index_block);
+                                    // make slot point to map
+                                    try self.core.seekTo(pos);
+                                    try writer.writeIntLittle(u64, setType(map_start, .value, .map));
+                                    pos = map_start;
+                                } else {
+                                    pos = next_pos;
+                                }
                             }
                         }
                         break :blk try self.readMapSlot(pos, part.map_get, 0, allow_write, &next_slot);
@@ -577,7 +595,21 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         if (slot_val_maybe) |slot_val| {
                             slot_val.* = value_slot;
                         }
-                        return value_slot_pos;
+                        if (allow_write) {
+                            try self.core.seekFromEnd(0);
+                            // write hash
+                            const hash_pos = try self.core.getPos();
+                            try writer.writeAll(std.mem.asBytes(&key_hash)[0..HASH_SIZE]);
+                            // write value slot
+                            const next_value_slot_pos = try self.core.getPos();
+                            try writer.writeIntLittle(u64, value_slot);
+                            // point slot to hash pos
+                            try self.core.seekTo(slot_pos);
+                            try writer.writeIntLittle(u64, setType(hash_pos, .value, .hash));
+                            return next_value_slot_pos;
+                        } else {
+                            return value_slot_pos;
+                        }
                     } else {
                         if (allow_write) {
                             // append new index block
