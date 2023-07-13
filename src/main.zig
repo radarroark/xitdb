@@ -771,6 +771,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
     // list of maps
     {
         var db = try Database(kind).init(allocator, opts);
+        defer if (kind == .file) opts.dir.deleteFile(opts.path) catch {};
         defer db.deinit();
 
         // write foo
@@ -844,12 +845,13 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
         try expectEqual(error.KeyNotFound, db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 1, .reverse = true } } }, .{ .map_get = fruits_key }, .{ .list_get = .{ .index = .{ .index = 1, .reverse = false } } } }, KEY_INDEX_START));
     }
 
-    // overwrite a value many times, filling up the list until a root overflow occurs
+    // append to top-level list many times, filling up the list until a root overflow occurs
     {
         var db = try Database(kind).init(allocator, opts);
+        defer if (kind == .file) opts.dir.deleteFile(opts.path) catch {};
         defer db.deinit();
 
-        var wat_key = hash_buffer("wat");
+        const wat_key = hash_buffer("wat");
         for (0..SLOT_COUNT + 1) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
@@ -864,10 +866,11 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
     // maps
     {
         var db = try Database(kind).init(allocator, opts);
+        defer if (kind == .file) opts.dir.deleteFile(opts.path) catch {};
         defer db.deinit();
 
         // write foo
-        var foo_key = hash_buffer("foo");
+        const foo_key = hash_buffer("foo");
         try db.writeMap(foo_key, "bar", VALUE_INDEX_START);
 
         // read foo
@@ -882,7 +885,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
         try std.testing.expectEqualStrings("baz", baz_value);
 
         // key not found
-        var not_found_key = hash_buffer("this doesn't exist");
+        const not_found_key = hash_buffer("this doesn't exist");
         try expectEqual(error.KeyNotFound, db.readMap(not_found_key, VALUE_INDEX_START));
 
         // write key that conflicts with foo
@@ -909,13 +912,9 @@ test "read and write" {
         .capacity = 20000,
     });
 
-    const cwd = std.fs.cwd();
-    const db_path = "main.db";
-    defer cwd.deleteFile(db_path) catch {};
-
     try testMain(allocator, .file, Database(.file).InitOpts{
-        .dir = cwd,
-        .path = db_path,
+        .dir = std.fs.cwd(),
+        .path = "main.db",
     });
 
     // memory
