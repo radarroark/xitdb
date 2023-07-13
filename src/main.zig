@@ -441,8 +441,9 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                         key = index.index;
                                     }
                                 }
+                                const last_key = list_size - 1;
                                 const list_ptr = try reader.readIntLittle(u64);
-                                const shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
+                                const shift: u6 = @truncate(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
                                 break :blk try self.readListSlot(list_ptr, key, shift, allow_write, &next_slot);
                             },
                             .append => {
