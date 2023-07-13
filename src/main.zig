@@ -468,21 +468,21 @@ pub fn Database(comptime kind: DatabaseKind) type {
             return pos;
         }
 
-        // list of maps
+        // paths
 
-        fn writeListMap(self: *Database(kind), key_hash: Hash, value: []const u8, index_start: u64) !void {
-            const slot_pos = try self.readSlot(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .map_get = key_hash } }, index_start, true, null);
+        fn writePath(self: *Database(kind), path: []const PathPart, value: []const u8, index_start: u64) !void {
+            const slot_pos = try self.readSlot(path, index_start, true, null);
             const value_pos = try self.writeValue(value);
             const writer = self.core.writer();
             try self.core.seekTo(slot_pos);
             try writer.writeIntLittle(u64, setType(value_pos, .value, .bytes));
         }
 
-        fn readListMap(self: *Database(kind), key_hash: Hash, index_start: u64, index: Index) ![]u8 {
+        fn readPath(self: *Database(kind), path: []const PathPart, index_start: u64) ![]u8 {
             const reader = self.core.reader();
 
             var slot: u64 = 0;
-            _ = try self.readSlot(&[_]PathPart{ .{ .list_get = .{ .index = index } }, .{ .map_get = key_hash } }, index_start, false, &slot);
+            _ = try self.readSlot(path, index_start, false, &slot);
             const ptr = getPointer(slot);
 
             const ptr_type = getPointerType(slot);
@@ -749,52 +749,52 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
         defer db.deinit();
 
         // write foo
-        var foo_key = hash_buffer("foo");
-        try db.writeListMap(foo_key, "bar", KEY_INDEX_START);
+        const foo_key = hash_buffer("foo");
+        try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .map_get = foo_key } }, "bar", KEY_INDEX_START);
 
         // read foo
-        const bar_value = try db.readListMap(foo_key, KEY_INDEX_START, .{ .index = 0, .reverse = true });
+        const bar_value = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = foo_key } }, KEY_INDEX_START);
         defer allocator.free(bar_value);
         try std.testing.expectEqualStrings("bar", bar_value);
 
         // overwrite foo
-        try db.writeListMap(foo_key, "baz", KEY_INDEX_START);
-        const baz_value = try db.readListMap(foo_key, KEY_INDEX_START, .{ .index = 0, .reverse = true });
+        try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .map_get = foo_key } }, "baz", KEY_INDEX_START);
+        const baz_value = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = foo_key } }, KEY_INDEX_START);
         defer allocator.free(baz_value);
         try std.testing.expectEqualStrings("baz", baz_value);
 
         // can still read the old value
-        const bar_value2 = try db.readListMap(foo_key, KEY_INDEX_START, .{ .index = 1, .reverse = true });
+        const bar_value2 = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 1, .reverse = true } } }, .{ .map_get = foo_key } }, KEY_INDEX_START);
         defer allocator.free(bar_value2);
         try std.testing.expectEqualStrings("bar", bar_value2);
 
         // key not found
-        var not_found_key = hash_buffer("this doesn't exist");
-        try expectEqual(error.KeyNotFound, db.readListMap(not_found_key, KEY_INDEX_START, .{ .index = 0, .reverse = true }));
+        const not_found_key = hash_buffer("this doesn't exist");
+        try expectEqual(error.KeyNotFound, db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = not_found_key } }, KEY_INDEX_START));
 
         // write key that conflicts with foo
         var conflict_key = hash_buffer("conflict");
         conflict_key = (conflict_key & ~MASK) | (foo_key & MASK);
-        try db.writeListMap(conflict_key, "hello", KEY_INDEX_START);
+        try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .map_get = conflict_key } }, "hello", KEY_INDEX_START);
 
         // read conflicting key
-        const hello_value = try db.readListMap(conflict_key, KEY_INDEX_START, .{ .index = 0, .reverse = true });
+        const hello_value = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = conflict_key } }, KEY_INDEX_START);
         defer allocator.free(hello_value);
         try std.testing.expectEqualStrings("hello", hello_value);
 
         // we can still read foo
-        const baz_value2 = try db.readListMap(foo_key, KEY_INDEX_START, .{ .index = 0, .reverse = true });
+        const baz_value2 = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = foo_key } }, KEY_INDEX_START);
         defer allocator.free(baz_value2);
         try std.testing.expectEqualStrings("baz", baz_value2);
 
         // overwrite conflicting key
-        try db.writeListMap(conflict_key, "goodbye", KEY_INDEX_START);
-        const goodbye_value = try db.readListMap(conflict_key, KEY_INDEX_START, .{ .index = 0, .reverse = true });
+        try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .map_get = conflict_key } }, "goodbye", KEY_INDEX_START);
+        const goodbye_value = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = conflict_key } }, KEY_INDEX_START);
         defer allocator.free(goodbye_value);
         try std.testing.expectEqualStrings("goodbye", goodbye_value);
 
         // we can still read the old conflicting key
-        const hello_value2 = try db.readListMap(conflict_key, KEY_INDEX_START, .{ .index = 1, .reverse = true });
+        const hello_value2 = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 1, .reverse = true } } }, .{ .map_get = conflict_key } }, KEY_INDEX_START);
         defer allocator.free(hello_value2);
         try std.testing.expectEqualStrings("hello", hello_value2);
     }
@@ -808,9 +808,9 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
         for (0..SLOT_COUNT + 1) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
-            try db.writeListMap(wat_key, value, KEY_INDEX_START);
+            try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .map_get = wat_key } }, value, KEY_INDEX_START);
 
-            const value2 = try db.readListMap(wat_key, KEY_INDEX_START, .{ .index = 0, .reverse = true });
+            const value2 = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = wat_key } }, KEY_INDEX_START);
             defer allocator.free(value2);
             try std.testing.expectEqualStrings(value, value2);
         }
