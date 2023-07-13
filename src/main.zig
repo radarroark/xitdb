@@ -61,6 +61,12 @@ const PathPart = union(enum) {
     },
 };
 
+const WriteMode = enum {
+    read_only,
+    write,
+    write_immutable,
+};
+
 pub fn setType(ptr: u64, ptr_type: PointerType, value_type_maybe: ?ValueType) u64 {
     switch (ptr_type) {
         .index => return ptr | @intFromEnum(ptr_type),
@@ -283,7 +289,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
             var value_hash = hash_buffer(value);
 
             var slot: u64 = 0;
-            const slot_pos = try self.readMapSlot(VALUE_INDEX_START, value_hash, 0, true, &slot);
+            const slot_pos = try self.readMapSlot(VALUE_INDEX_START, value_hash, 0, .write, &slot);
             const ptr = getPointer(slot);
 
             if (ptr == 0) {
@@ -314,6 +320,10 @@ pub fn Database(comptime kind: DatabaseKind) type {
             var pos = index_start;
             var slot_maybe: ?u64 = null;
             for (path) |part| {
+                const write_mode: WriteMode = if (allow_write)
+                    if (slot_maybe != null) .write_immutable else .write
+                else
+                    .read_only;
                 var next_slot: u64 = 0;
                 pos = switch (part) {
                     .map_get => blk: {
@@ -363,7 +373,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                 }
                             }
                         }
-                        break :blk try self.readMapSlot(pos, part.map_get, 0, allow_write, &next_slot);
+                        break :blk try self.readMapSlot(pos, part.map_get, 0, write_mode, &next_slot);
                     },
                     .list_get => blk: {
                         if (slot_maybe) |slot| {
@@ -444,11 +454,11 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                 const last_key = list_size - 1;
                                 const list_ptr = try reader.readIntLittle(u64);
                                 const shift: u6 = @truncate(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
-                                break :blk try self.readListSlot(list_ptr, key, shift, allow_write, &next_slot);
+                                break :blk try self.readListSlot(list_ptr, key, shift, write_mode, &next_slot);
                             },
                             .append => {
                                 if (allow_write) {
-                                    break :blk try self.readListSlotAppend(pos);
+                                    break :blk try self.readListSlotAppend(pos, write_mode);
                                 } else {
                                     return error.KeyNotFound;
                                 }
@@ -464,10 +474,10 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                         const key = list_size - 1;
                                         const list_ptr = try reader.readIntLittle(u64);
                                         const shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
-                                        _ = try self.readListSlot(list_ptr, key, shift, false, &last_slot);
+                                        _ = try self.readListSlot(list_ptr, key, shift, .read_only, &last_slot);
                                     }
                                     // make the next slot
-                                    const next_pos = try self.readListSlotAppend(pos);
+                                    const next_pos = try self.readListSlotAppend(pos, write_mode);
                                     // set its value to the last slot
                                     if (last_slot != 0) {
                                         const writer = self.core.writer();
@@ -533,7 +543,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
 
         fn writeMap(self: *Database(kind), key_hash: Hash, value: []const u8, index_start: u64) !void {
             const value_pos = try self.writeValue(value);
-            const slot_pos = try self.readMapSlot(index_start, key_hash, 0, true, null);
+            const slot_pos = try self.readMapSlot(index_start, key_hash, 0, .write_immutable, null);
             // always write the new key entry
             const writer = self.core.writer();
             try self.core.seekTo(slot_pos);
@@ -544,7 +554,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
             const reader = self.core.reader();
 
             var slot: u64 = 0;
-            _ = try self.readMapSlot(index_start, key_hash, 0, false, &slot);
+            _ = try self.readMapSlot(index_start, key_hash, 0, .read_only, &slot);
             const ptr = getPointer(slot);
 
             const ptr_type = getPointerType(slot);
@@ -565,7 +575,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
             return value;
         }
 
-        fn readMapSlot(self: *Database(kind), index_pos: u64, key_hash: Hash, key_offset: u8, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
+        fn readMapSlot(self: *Database(kind), index_pos: u64, key_hash: Hash, key_offset: u8, write_mode: WriteMode, slot_val_maybe: ?*u64) !u64 {
             if (key_offset >= (HASH_SIZE * 8) / BIT_COUNT) {
                 return error.KeyOffsetExceeded;
             }
@@ -579,7 +589,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
             const slot = try reader.readIntLittle(u64);
 
             if (slot == 0) {
-                if (allow_write) {
+                if (write_mode == .write or write_mode == .write_immutable) {
                     try self.core.seekFromEnd(0);
                     // write hash
                     const hash_pos = try self.core.getPos();
@@ -602,7 +612,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
             switch (ptr_type) {
                 .index => {
                     var next_ptr = ptr;
-                    if (allow_write) {
+                    if (write_mode == .write_immutable) {
                         // read existing block
                         try self.core.seekTo(ptr);
                         var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
@@ -615,7 +625,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         try self.core.seekTo(slot_pos);
                         try writer.writeIntLittle(u64, setType(next_ptr, .index, null));
                     }
-                    return self.readMapSlot(next_ptr, key_hash, key_offset + 1, allow_write, slot_val_maybe);
+                    return self.readMapSlot(next_ptr, key_hash, key_offset + 1, write_mode, slot_val_maybe);
                 },
                 .value => {
                     const val_type = getValueType(slot);
@@ -634,7 +644,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         if (slot_val_maybe) |slot_val| {
                             slot_val.* = value_slot;
                         }
-                        if (allow_write) {
+                        if (write_mode == .write_immutable) {
                             try self.core.seekFromEnd(0);
                             // write hash
                             const hash_pos = try self.core.getPos();
@@ -650,7 +660,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                             return value_slot_pos;
                         }
                     } else {
-                        if (allow_write) {
+                        if (write_mode == .write or write_mode == .write_immutable) {
                             // append new index block
                             if (key_offset + 1 >= (HASH_SIZE * 8) / BIT_COUNT) {
                                 return error.KeyOffsetExceeded;
@@ -662,7 +672,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                             try writer.writeAll(&index_block);
                             try self.core.seekTo(next_index_pos + (POINTER_SIZE * next_i));
                             try writer.writeIntLittle(u64, slot);
-                            const next_pos = try self.readMapSlot(next_index_pos, key_hash, key_offset + 1, allow_write, slot_val_maybe);
+                            const next_pos = try self.readMapSlot(next_index_pos, key_hash, key_offset + 1, write_mode, slot_val_maybe);
                             try self.core.seekTo(slot_pos);
                             try writer.writeIntLittle(u64, setType(next_index_pos, .index, null));
                             return next_pos;
@@ -676,7 +686,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
 
         // lists
 
-        fn readListSlotAppend(self: *Database(kind), index_start: u64) !u64 {
+        fn readListSlotAppend(self: *Database(kind), index_start: u64, write_mode: WriteMode) !u64 {
             const reader = self.core.reader();
             const writer = self.core.writer();
 
@@ -698,10 +708,10 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 try writer.writeAll(&index_block);
                 try self.core.seekTo(next_index_pos);
                 try writer.writeIntLittle(u64, index_pos);
-                slot_pos = try self.readListSlot(next_index_pos, key, next_shift, true, null);
+                slot_pos = try self.readListSlot(next_index_pos, key, next_shift, write_mode, null);
                 index_pos = next_index_pos;
             } else {
-                slot_pos = try self.readListSlot(index_pos, key, next_shift, true, null);
+                slot_pos = try self.readListSlot(index_pos, key, next_shift, write_mode, null);
             }
 
             try self.core.seekTo(index_start);
@@ -711,7 +721,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
             return slot_pos;
         }
 
-        fn readListSlot(self: *Database(kind), index_pos: u64, key: u64, shift: u6, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
+        fn readListSlot(self: *Database(kind), index_pos: u64, key: u64, shift: u6, write_mode: WriteMode, slot_val_maybe: ?*u64) !u64 {
             const reader = self.core.reader();
 
             const i = (key >> (shift * BIT_COUNT)) & MASK;
@@ -720,7 +730,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
             const slot = try reader.readIntLittle(u64);
 
             if (slot == 0) {
-                if (allow_write) {
+                if (write_mode == .write or write_mode == .write_immutable) {
                     if (shift == 0) {
                         return slot_pos;
                     } else {
@@ -731,7 +741,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         try writer.writeAll(&index_block);
                         try self.core.seekTo(slot_pos);
                         try writer.writeIntLittle(u64, setType(next_index_pos, .index, null));
-                        return try self.readListSlot(next_index_pos, key, shift - 1, allow_write, slot_val_maybe);
+                        return try self.readListSlot(next_index_pos, key, shift - 1, write_mode, slot_val_maybe);
                     }
                 } else {
                     return error.KeyNotFound;
@@ -749,7 +759,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         return error.UnexpectedPointerType;
                     }
                     var next_ptr = ptr;
-                    if (allow_write) {
+                    if (write_mode == .write_immutable) {
                         // read existing block
                         try self.core.seekTo(ptr);
                         var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
@@ -763,7 +773,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         try self.core.seekTo(slot_pos);
                         try writer.writeIntLittle(u64, setType(next_ptr, .index, null));
                     }
-                    return self.readListSlot(next_ptr, key, shift - 1, allow_write, slot_val_maybe);
+                    return self.readListSlot(next_ptr, key, shift - 1, write_mode, slot_val_maybe);
                 }
             }
         }
