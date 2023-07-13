@@ -394,7 +394,31 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                 if (val_type != .list) {
                                     return error.UnexpectedValueType;
                                 }
-                                pos = getPointer(slot);
+                                const next_pos = getPointer(slot);
+                                if (allow_write) {
+                                    // read existing block
+                                    const reader = self.core.reader();
+                                    try self.core.seekTo(next_pos);
+                                    const list_size = try reader.readIntLittle(u64);
+                                    const list_ptr = try reader.readIntLittle(u64);
+                                    try self.core.seekTo(list_ptr);
+                                    var list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                                    try reader.readNoEof(&list_index_block);
+                                    // copy it to the end
+                                    const writer = self.core.writer();
+                                    try self.core.seekFromEnd(0);
+                                    const list_start = try self.core.getPos();
+                                    try writer.writeIntLittle(u64, list_size);
+                                    const next_list_ptr = try self.core.getPos() + POINTER_SIZE;
+                                    try writer.writeIntLittle(u64, next_list_ptr);
+                                    try writer.writeAll(&list_index_block);
+                                    // make slot point to map
+                                    try self.core.seekTo(pos);
+                                    try writer.writeIntLittle(u64, setType(list_start, .value, .list));
+                                    pos = list_start;
+                                } else {
+                                    pos = next_pos;
+                                }
                             }
                         }
                         switch (part.list_get) {
@@ -797,6 +821,26 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
         const hello_value2 = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 1, .reverse = true } } }, .{ .map_get = conflict_key } }, KEY_INDEX_START);
         defer allocator.free(hello_value2);
         try std.testing.expectEqualStrings("hello", hello_value2);
+
+        // write apple
+        const fruits_key = hash_buffer("fruits");
+        try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .map_get = fruits_key }, .{ .list_get = .append } }, "apple", KEY_INDEX_START);
+
+        // read apple
+        const apple_value = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = fruits_key }, .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } } }, KEY_INDEX_START);
+        defer allocator.free(apple_value);
+        try std.testing.expectEqualStrings("apple", apple_value);
+
+        // write banana
+        try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .map_get = fruits_key }, .{ .list_get = .append } }, "banana", KEY_INDEX_START);
+
+        // read banana
+        const banana_value = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = fruits_key }, .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } } }, KEY_INDEX_START);
+        defer allocator.free(banana_value);
+        try std.testing.expectEqualStrings("banana", banana_value);
+
+        // can't read banana in older list
+        try expectEqual(error.KeyNotFound, db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 1, .reverse = true } } }, .{ .map_get = fruits_key }, .{ .list_get = .{ .index = .{ .index = 1, .reverse = false } } } }, KEY_INDEX_START));
     }
 
     // overwrite a value many times, filling up the list until a root overflow occurs
