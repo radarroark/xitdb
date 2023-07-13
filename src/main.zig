@@ -800,7 +800,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
     }
 
     // overwrite a value many times, filling up the list until a root overflow occurs
-    if (false) {
+    {
         var db = try Database(kind).init(allocator, opts);
         defer db.deinit();
 
@@ -817,7 +817,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
     }
 
     // maps
-    if (false) {
+    {
         var db = try Database(kind).init(allocator, opts);
         defer db.deinit();
 
@@ -861,7 +861,7 @@ test "read and write" {
     const allocator = std.testing.allocator;
 
     try testMain(allocator, .memory, Database(.memory).InitOpts{
-        .capacity = 10000,
+        .capacity = 20000,
     });
 
     const cwd = std.fs.cwd();
