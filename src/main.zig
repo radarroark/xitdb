@@ -863,6 +863,44 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
         }
     }
 
+    // append to inner list many times, filling up the list until a root overflow occurs
+    {
+        var db = try Database(kind).init(allocator, opts);
+        defer if (kind == .file) opts.dir.deleteFile(opts.path) catch {};
+        defer db.deinit();
+
+        for (0..SLOT_COUNT + 1) |i| {
+            const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
+            defer allocator.free(value);
+            try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .list_get = .append } }, value, KEY_INDEX_START);
+
+            const value2 = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } } }, KEY_INDEX_START);
+            defer allocator.free(value2);
+            try std.testing.expectEqualStrings(value, value2);
+        }
+
+        // overwrite last value with hello
+        try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } } }, "hello", KEY_INDEX_START);
+
+        // read last value
+        const value = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } } }, KEY_INDEX_START);
+        defer allocator.free(value);
+        try std.testing.expectEqualStrings("hello", value);
+
+        // overwrite last value with goodbye
+        try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } } }, "goodbye", KEY_INDEX_START);
+
+        // read last value
+        const value2 = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } } }, KEY_INDEX_START);
+        defer allocator.free(value2);
+        try std.testing.expectEqualStrings("goodbye", value2);
+
+        // previous last value is still hello
+        const value3 = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 1, .reverse = true } } }, .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } } }, KEY_INDEX_START);
+        defer allocator.free(value3);
+        try std.testing.expectEqualStrings("hello", value3);
+    }
+
     // maps
     {
         var db = try Database(kind).init(allocator, opts);
