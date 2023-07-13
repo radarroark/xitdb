@@ -748,7 +748,22 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     if (ptr_type != .index) {
                         return error.UnexpectedPointerType;
                     }
-                    return self.readListSlot(ptr, key, shift - 1, allow_write, slot_val_maybe);
+                    var next_ptr = ptr;
+                    if (allow_write) {
+                        // read existing block
+                        try self.core.seekTo(ptr);
+                        var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                        try reader.readNoEof(&index_block);
+                        // copy it to the end
+                        const writer = self.core.writer();
+                        try self.core.seekFromEnd(0);
+                        next_ptr = try self.core.getPos();
+                        try writer.writeAll(&index_block);
+                        // make slot point to block
+                        try self.core.seekTo(slot_pos);
+                        try writer.writeIntLittle(u64, setType(next_ptr, .index, null));
+                    }
+                    return self.readListSlot(next_ptr, key, shift - 1, allow_write, slot_val_maybe);
                 }
             }
         }
