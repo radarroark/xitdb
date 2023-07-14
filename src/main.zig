@@ -24,7 +24,7 @@ pub fn hash_buffer(buffer: []const u8) Hash {
 
 const POINTER_SIZE = @sizeOf(u64);
 const HEADER_BLOCK_SIZE = 2;
-const BIT_COUNT = 5;
+const BIT_COUNT = 4;
 const SLOT_COUNT = 1 << BIT_COUNT;
 const MASK: u64 = SLOT_COUNT - 1;
 const INDEX_BLOCK_SIZE = POINTER_SIZE * SLOT_COUNT;
@@ -972,7 +972,7 @@ test "read and write" {
     const allocator = std.testing.allocator;
 
     try testMain(allocator, .memory, Database(.memory).InitOpts{
-        .capacity = 20000,
+        .capacity = 10000,
     });
 
     try testMain(allocator, .file, Database(.file).InitOpts{
