@@ -8,12 +8,33 @@ pub fn expectEqual(expected: anytype, actual: anytype) !void {
     try std.testing.expectEqual(@as(@TypeOf(actual), expected), actual);
 }
 
-fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Database(kind).InitOpts) !void {
+fn initOpts(comptime kind: DatabaseKind, opts: anytype) !Database(kind).InitOpts {
+    switch (kind) {
+        .file => {
+            const file_or_err = opts.dir.openFile(opts.path, .{ .mode = .read_write, .lock = .exclusive });
+            const file = try if (file_or_err == error.FileNotFound)
+                opts.dir.createFile(opts.path, .{ .read = true, .lock = .exclusive })
+            else
+                file_or_err;
+            errdefer file.close();
+            return .{ .file = file };
+        },
+        .memory => return opts,
+    }
+}
+
+fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: anytype) !void {
     // list of maps
     {
-        var db = try Database(kind).init(allocator, opts);
-        defer if (kind == .file) opts.dir.deleteFile(opts.path) catch {};
-        defer db.deinit();
+        const init_opts = try initOpts(kind, opts);
+        var db = try Database(kind).init(allocator, init_opts);
+        defer {
+            db.deinit();
+            if (kind == .file) {
+                init_opts.file.close();
+                opts.dir.deleteFile(opts.path) catch {};
+            }
+        }
 
         // write foo
         const foo_key = main.hash_buffer("foo");
@@ -88,9 +109,15 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
 
     // append to top-level list many times, filling up the list until a root overflow occurs
     {
-        var db = try Database(kind).init(allocator, opts);
-        defer if (kind == .file) opts.dir.deleteFile(opts.path) catch {};
-        defer db.deinit();
+        const init_opts = try initOpts(kind, opts);
+        var db = try Database(kind).init(allocator, init_opts);
+        defer {
+            db.deinit();
+            if (kind == .file) {
+                init_opts.file.close();
+                opts.dir.deleteFile(opts.path) catch {};
+            }
+        }
 
         const wat_key = main.hash_buffer("wat");
         for (0..main.SLOT_COUNT + 1) |i| {
@@ -106,9 +133,15 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
 
     // append to inner list many times, filling up the list until a root overflow occurs
     {
-        var db = try Database(kind).init(allocator, opts);
-        defer if (kind == .file) opts.dir.deleteFile(opts.path) catch {};
-        defer db.deinit();
+        const init_opts = try initOpts(kind, opts);
+        var db = try Database(kind).init(allocator, init_opts);
+        defer {
+            db.deinit();
+            if (kind == .file) {
+                init_opts.file.close();
+                opts.dir.deleteFile(opts.path) catch {};
+            }
+        }
 
         for (0..main.SLOT_COUNT + 1) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
@@ -146,14 +179,9 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Dat
 test "read and write" {
     const allocator = std.testing.allocator;
 
-    try testMain(allocator, .memory, Database(.memory).InitOpts{
-        .capacity = 10000,
-    });
+    try testMain(allocator, .memory, .{ .capacity = 10000 });
 
-    try testMain(allocator, .file, Database(.file).InitOpts{
-        .dir = std.fs.cwd(),
-        .path = "main.db",
-    });
+    try testMain(allocator, .file, .{ .dir = std.fs.cwd(), .path = "main.db" });
 
     // memory
     // low level operations

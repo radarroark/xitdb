@@ -190,7 +190,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 file: std.fs.File,
 
                 pub fn deinit(self: *Core) void {
-                    self.file.close();
+                    _ = self;
                 }
 
                 pub fn reader(self: Core) std.fs.File.Reader {
@@ -220,8 +220,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 capacity: usize,
             },
             .file => struct {
-                dir: std.fs.Dir,
-                path: []const u8,
+                file: std.fs.File,
             },
         };
 
@@ -245,20 +244,12 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     return self;
                 },
                 .file => {
-                    // create or open file
-                    const file_or_err = opts.dir.openFile(opts.path, .{ .mode = .read_write });
-                    const file = try if (file_or_err == error.FileNotFound)
-                        opts.dir.createFile(opts.path, .{ .read = true })
-                    else
-                        file_or_err;
-                    errdefer file.close();
-
                     var self = Database(kind){
                         .allocator = allocator,
-                        .core = .{ .file = file },
+                        .core = .{ .file = opts.file },
                     };
 
-                    const meta = try file.metadata();
+                    const meta = try self.core.file.metadata();
                     const size = meta.size();
 
                     if (size == 0) {
