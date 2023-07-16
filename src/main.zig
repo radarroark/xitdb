@@ -465,16 +465,25 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         },
                         .append => {
                             if (allow_write) {
-                                const next_slot_ptr = try self.readListSlotAppend(pos, write_mode);
-                                return self.readSlot(path[1..], allow_write, next_slot_ptr.position, next_slot_ptr.slot);
+                                const append_result = try self.readListSlotAppend(pos, write_mode);
+                                const final_slot_ptr = self.readSlot(path[1..], allow_write, append_result.slot_ptr.position, append_result.slot_ptr.slot);
+                                // update list size and ptr
+                                try self.core.seekTo(pos);
+                                const writer = self.core.writer();
+                                try writer.writeIntLittle(u64, append_result.list_size);
+                                try writer.writeIntLittle(u64, append_result.list_ptr);
+
+                                return final_slot_ptr;
                             } else {
                                 return error.KeyNotFound;
                             }
                         },
                         .append_copy => {
                             if (allow_write) {
-                                try self.core.seekTo(pos);
                                 const reader = self.core.reader();
+                                const writer = self.core.writer();
+
+                                try self.core.seekTo(pos);
                                 const list_size = try reader.readIntLittle(u64);
                                 // read the last slot in the list
                                 var last_slot: u64 = 0;
@@ -486,15 +495,20 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                     last_slot = last_slot_ptr.slot;
                                 }
                                 // make the next slot
-                                var next_slot_ptr = try self.readListSlotAppend(pos, write_mode);
+                                var append_result = try self.readListSlotAppend(pos, write_mode);
                                 // set its value to the last slot
                                 if (last_slot != 0) {
-                                    const writer = self.core.writer();
-                                    try self.core.seekTo(next_slot_ptr.position);
+                                    try self.core.seekTo(append_result.slot_ptr.position);
                                     try writer.writeIntLittle(u64, last_slot);
-                                    next_slot_ptr.slot = last_slot;
+                                    append_result.slot_ptr.slot = last_slot;
                                 }
-                                return self.readSlot(path[1..], allow_write, next_slot_ptr.position, next_slot_ptr.slot);
+                                const final_slot_ptr = self.readSlot(path[1..], allow_write, append_result.slot_ptr.position, append_result.slot_ptr.slot);
+                                // update list size and ptr
+                                try self.core.seekTo(pos);
+                                try writer.writeIntLittle(u64, append_result.list_size);
+                                try writer.writeIntLittle(u64, append_result.list_ptr);
+
+                                return final_slot_ptr;
                             } else {
                                 return error.KeyNotFound;
                             }
@@ -651,13 +665,18 @@ pub fn Database(comptime kind: DatabaseKind) type {
 
         // lists
 
-        fn readListSlotAppend(self: *Database(kind), index_start: u64, write_mode: WriteMode) !SlotPointer {
+        const AppendResult = struct {
+            list_size: u64,
+            list_ptr: u64,
+            slot_ptr: SlotPointer,
+        };
+
+        fn readListSlotAppend(self: *Database(kind), index_start: u64, write_mode: WriteMode) !AppendResult {
             const reader = self.core.reader();
             const writer = self.core.writer();
 
             try self.core.seekTo(index_start);
-            const list_size = try reader.readIntLittle(u64);
-            const key = list_size;
+            const key = try reader.readIntLittle(u64);
             var index_pos = try reader.readIntLittle(u64);
 
             const prev_shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key - 1));
@@ -679,11 +698,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 slot_ptr = try self.readListSlot(index_pos, key, next_shift, write_mode);
             }
 
-            try self.core.seekTo(index_start);
-            try writer.writeIntLittle(u64, key + 1);
-            try writer.writeIntLittle(u64, index_pos);
-
-            return slot_ptr;
+            return AppendResult{ .list_size = key + 1, .list_ptr = index_pos, .slot_ptr = slot_ptr };
         }
 
         fn readListSlot(self: *Database(kind), index_pos: u64, key: u64, shift: u6, write_mode: WriteMode) !SlotPointer {
