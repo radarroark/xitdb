@@ -322,18 +322,18 @@ pub fn Database(comptime kind: DatabaseKind) type {
             }
         }
 
-        fn readSlot(self: *Database(kind), path: []const PathPart, index_start: u64, allow_write: bool, slot_val_maybe: ?*u64) !u64 {
-            var pos = index_start;
-            var slot_maybe: ?u64 = null;
-            for (path) |part| {
+        fn readSlot(self: *Database(kind), path: []const PathPart, allow_write: bool, index_start: u64) !SlotPointer {
+            var slot_ptr = SlotPointer{ .position = index_start, .slot = 0 };
+            for (path, 0..) |part, i| {
                 const write_mode: WriteMode = if (allow_write)
-                    if (slot_maybe != null) .write_immutable else .write
+                    if (i > 0) .write_immutable else .write
                 else
                     .read_only;
-                var next_slot: u64 = 0;
-                pos = switch (part) {
+                slot_ptr = switch (part) {
                     .map_get => blk: {
-                        if (slot_maybe) |slot| {
+                        var pos = slot_ptr.position;
+                        const slot = slot_ptr.slot;
+                        if (i > 0) {
                             if (slot == 0) {
                                 if (allow_write) {
                                     // if slot was empty, insert the new map
@@ -379,12 +379,12 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                 }
                             }
                         }
-                        const slot_ptr = try self.readMapSlot(pos, part.map_get, 0, write_mode);
-                        next_slot = slot_ptr.slot;
-                        break :blk slot_ptr.position;
+                        break :blk try self.readMapSlot(pos, part.map_get, 0, write_mode);
                     },
                     .list_get => blk: {
-                        if (slot_maybe) |slot| {
+                        var pos = slot_ptr.position;
+                        const slot = slot_ptr.slot;
+                        if (i > 0) {
                             if (slot == 0) {
                                 if (allow_write) {
                                     // if slot was empty, insert the new list
@@ -462,15 +462,11 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                 const last_key = list_size - 1;
                                 const list_ptr = try reader.readIntLittle(u64);
                                 const shift: u6 = @truncate(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
-                                const slot_ptr = try self.readListSlot(list_ptr, key, shift, write_mode);
-                                next_slot = slot_ptr.slot;
-                                break :blk slot_ptr.position;
+                                break :blk try self.readListSlot(list_ptr, key, shift, write_mode);
                             },
                             .append => {
                                 if (allow_write) {
-                                    const slot_ptr = try self.readListSlotAppend(pos, write_mode);
-                                    next_slot = slot_ptr.slot;
-                                    break :blk slot_ptr.position;
+                                    break :blk try self.readListSlotAppend(pos, write_mode);
                                 } else {
                                     return error.KeyNotFound;
                                 }
@@ -486,19 +482,19 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                         const key = list_size - 1;
                                         const list_ptr = try reader.readIntLittle(u64);
                                         const shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
-                                        const slot_ptr = try self.readListSlot(list_ptr, key, shift, .read_only);
-                                        last_slot = slot_ptr.slot;
+                                        const last_slot_ptr = try self.readListSlot(list_ptr, key, shift, .read_only);
+                                        last_slot = last_slot_ptr.slot;
                                     }
                                     // make the next slot
-                                    const next_slot_ptr = try self.readListSlotAppend(pos, write_mode);
+                                    var next_slot_ptr = try self.readListSlotAppend(pos, write_mode);
                                     // set its value to the last slot
                                     if (last_slot != 0) {
                                         const writer = self.core.writer();
                                         try self.core.seekTo(next_slot_ptr.position);
                                         try writer.writeIntLittle(u64, last_slot);
-                                        next_slot = last_slot;
+                                        next_slot_ptr.slot = last_slot;
                                     }
-                                    break :blk next_slot_ptr.position;
+                                    break :blk next_slot_ptr;
                                 } else {
                                     return error.KeyNotFound;
                                 }
@@ -506,20 +502,15 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         }
                     },
                 };
-                slot_maybe = next_slot;
             }
-            if (slot_val_maybe) |slot_val| {
-                if (slot_maybe) |slot| {
-                    slot_val.* = slot;
-                }
-            }
-            return pos;
+            return slot_ptr;
         }
 
         // paths
 
         pub fn writePath(self: *Database(kind), path: []const PathPart, value: []const u8) !void {
-            const slot_pos = try self.readSlot(path, KEY_INDEX_START, true, null);
+            const slot_ptr = try self.readSlot(path, true, KEY_INDEX_START);
+            const slot_pos = slot_ptr.position;
             const value_pos = try self.writeValue(value);
             const writer = self.core.writer();
             try self.core.seekTo(slot_pos);
@@ -529,8 +520,8 @@ pub fn Database(comptime kind: DatabaseKind) type {
         pub fn readPath(self: *Database(kind), path: []const PathPart) ![]u8 {
             const reader = self.core.reader();
 
-            var slot: u64 = 0;
-            _ = try self.readSlot(path, KEY_INDEX_START, false, &slot);
+            const slot_ptr = try self.readSlot(path, false, KEY_INDEX_START);
+            const slot = slot_ptr.slot;
             const ptr = getPointer(slot);
 
             const ptr_type = getPointerType(slot);
