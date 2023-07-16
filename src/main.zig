@@ -25,8 +25,8 @@ pub fn hash_buffer(buffer: []const u8) Hash {
 const POINTER_SIZE = @sizeOf(u64);
 const HEADER_BLOCK_SIZE = 2;
 const BIT_COUNT = 4;
-const SLOT_COUNT = 1 << BIT_COUNT;
-const MASK: u64 = SLOT_COUNT - 1;
+pub const SLOT_COUNT = 1 << BIT_COUNT;
+pub const MASK: u64 = SLOT_COUNT - 1;
 const INDEX_BLOCK_SIZE = POINTER_SIZE * SLOT_COUNT;
 const VALUE_INDEX_START = HEADER_BLOCK_SIZE;
 const KEY_INDEX_START = VALUE_INDEX_START + INDEX_BLOCK_SIZE;
@@ -52,7 +52,7 @@ const Index = struct {
     reverse: bool,
 };
 
-const PathPart = union(enum) {
+pub const PathPart = union(enum) {
     map_get: Hash,
     list_get: union(enum) {
         index: Index,
@@ -67,7 +67,7 @@ const WriteMode = enum {
     write_immutable,
 };
 
-pub fn setType(ptr: u64, ptr_type: PointerType, value_type_maybe: ?ValueType) u64 {
+fn setType(ptr: u64, ptr_type: PointerType, value_type_maybe: ?ValueType) u64 {
     switch (ptr_type) {
         .index => return ptr | @intFromEnum(ptr_type),
         .value => {
@@ -80,15 +80,15 @@ pub fn setType(ptr: u64, ptr_type: PointerType, value_type_maybe: ?ValueType) u6
     }
 }
 
-pub fn getPointerType(ptr: u64) PointerType {
+fn getPointerType(ptr: u64) PointerType {
     return @enumFromInt(ptr & POINTER_TYPE_MASK);
 }
 
-pub fn getValueType(ptr: u64) ValueType {
+fn getValueType(ptr: u64) ValueType {
     return @enumFromInt(ptr & VALUE_TYPE_MASK);
 }
 
-pub fn getPointer(ptr: u64) u64 {
+fn getPointer(ptr: u64) u64 {
     return ptr & (~POINTER_TYPE_MASK) & (~VALUE_TYPE_MASK);
 }
 
@@ -505,19 +505,19 @@ pub fn Database(comptime kind: DatabaseKind) type {
 
         // paths
 
-        fn writePath(self: *Database(kind), path: []const PathPart, value: []const u8, index_start: u64) !void {
-            const slot_pos = try self.readSlot(path, index_start, true, null);
+        pub fn writePath(self: *Database(kind), path: []const PathPart, value: []const u8) !void {
+            const slot_pos = try self.readSlot(path, KEY_INDEX_START, true, null);
             const value_pos = try self.writeValue(value);
             const writer = self.core.writer();
             try self.core.seekTo(slot_pos);
             try writer.writeIntLittle(u64, setType(value_pos, .value, .bytes));
         }
 
-        fn readPath(self: *Database(kind), path: []const PathPart, index_start: u64) ![]u8 {
+        pub fn readPath(self: *Database(kind), path: []const PathPart) ![]u8 {
             const reader = self.core.reader();
 
             var slot: u64 = 0;
-            _ = try self.readSlot(path, index_start, false, &slot);
+            _ = try self.readSlot(path, KEY_INDEX_START, false, &slot);
             const ptr = getPointer(slot);
 
             const ptr_type = getPointerType(slot);
@@ -540,40 +540,6 @@ pub fn Database(comptime kind: DatabaseKind) type {
         }
 
         // maps
-
-        fn writeMap(self: *Database(kind), key_hash: Hash, value: []const u8, index_start: u64) !void {
-            const value_pos = try self.writeValue(value);
-            const slot_pos = try self.readMapSlot(index_start, key_hash, 0, .write_immutable, null);
-            // always write the new key entry
-            const writer = self.core.writer();
-            try self.core.seekTo(slot_pos);
-            try writer.writeIntLittle(u64, setType(value_pos, .value, .bytes));
-        }
-
-        fn readMap(self: *Database(kind), key_hash: Hash, index_start: u64) ![]u8 {
-            const reader = self.core.reader();
-
-            var slot: u64 = 0;
-            _ = try self.readMapSlot(index_start, key_hash, 0, .read_only, &slot);
-            const ptr = getPointer(slot);
-
-            const ptr_type = getPointerType(slot);
-            if (ptr_type != .value) {
-                return error.UnexpectedPointerType;
-            }
-            const val_type = getValueType(slot);
-            if (val_type != .bytes) {
-                return error.UnexpectedValueType;
-            }
-
-            try self.core.seekTo(ptr);
-            const value_size = try reader.readIntLittle(u64);
-
-            var value = try self.allocator.alloc(u8, value_size);
-            errdefer self.allocator.free(value);
-            try reader.readNoEof(value);
-            return value;
-        }
 
         fn readMapSlot(self: *Database(kind), index_pos: u64, key_hash: Hash, key_offset: u8, write_mode: WriteMode, slot_val_maybe: ?*u64) !u64 {
             if (key_offset >= (HASH_SIZE * 8) / BIT_COUNT) {
@@ -780,226 +746,10 @@ pub fn Database(comptime kind: DatabaseKind) type {
     };
 }
 
-pub fn expectEqual(expected: anytype, actual: anytype) !void {
-    try std.testing.expectEqual(@as(@TypeOf(actual), expected), actual);
-}
-
 test "get/set pointer type" {
     const ptr_value = setType(42, .value, .map);
-    try expectEqual(PointerType.value, getPointerType(ptr_value));
-    try expectEqual(ValueType.map, getValueType(ptr_value));
+    try std.testing.expectEqual(PointerType.value, getPointerType(ptr_value));
+    try std.testing.expectEqual(ValueType.map, getValueType(ptr_value));
     const ptr_index = setType(42, .index, null);
-    try expectEqual(PointerType.index, getPointerType(ptr_index));
-}
-
-fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: Database(kind).InitOpts) !void {
-    // list of maps
-    {
-        var db = try Database(kind).init(allocator, opts);
-        defer if (kind == .file) opts.dir.deleteFile(opts.path) catch {};
-        defer db.deinit();
-
-        // write foo
-        const foo_key = hash_buffer("foo");
-        try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .map_get = foo_key } }, "bar", KEY_INDEX_START);
-
-        // read foo
-        const bar_value = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = foo_key } }, KEY_INDEX_START);
-        defer allocator.free(bar_value);
-        try std.testing.expectEqualStrings("bar", bar_value);
-
-        // overwrite foo
-        try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .map_get = foo_key } }, "baz", KEY_INDEX_START);
-        const baz_value = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = foo_key } }, KEY_INDEX_START);
-        defer allocator.free(baz_value);
-        try std.testing.expectEqualStrings("baz", baz_value);
-
-        // can still read the old value
-        const bar_value2 = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 1, .reverse = true } } }, .{ .map_get = foo_key } }, KEY_INDEX_START);
-        defer allocator.free(bar_value2);
-        try std.testing.expectEqualStrings("bar", bar_value2);
-
-        // key not found
-        const not_found_key = hash_buffer("this doesn't exist");
-        try expectEqual(error.KeyNotFound, db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = not_found_key } }, KEY_INDEX_START));
-
-        // write key that conflicts with foo
-        var conflict_key = hash_buffer("conflict");
-        conflict_key = (conflict_key & ~MASK) | (foo_key & MASK);
-        try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .map_get = conflict_key } }, "hello", KEY_INDEX_START);
-
-        // read conflicting key
-        const hello_value = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = conflict_key } }, KEY_INDEX_START);
-        defer allocator.free(hello_value);
-        try std.testing.expectEqualStrings("hello", hello_value);
-
-        // we can still read foo
-        const baz_value2 = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = foo_key } }, KEY_INDEX_START);
-        defer allocator.free(baz_value2);
-        try std.testing.expectEqualStrings("baz", baz_value2);
-
-        // overwrite conflicting key
-        try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .map_get = conflict_key } }, "goodbye", KEY_INDEX_START);
-        const goodbye_value = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = conflict_key } }, KEY_INDEX_START);
-        defer allocator.free(goodbye_value);
-        try std.testing.expectEqualStrings("goodbye", goodbye_value);
-
-        // we can still read the old conflicting key
-        const hello_value2 = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 1, .reverse = true } } }, .{ .map_get = conflict_key } }, KEY_INDEX_START);
-        defer allocator.free(hello_value2);
-        try std.testing.expectEqualStrings("hello", hello_value2);
-
-        // write apple
-        const fruits_key = hash_buffer("fruits");
-        try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .map_get = fruits_key }, .{ .list_get = .append } }, "apple", KEY_INDEX_START);
-
-        // read apple
-        const apple_value = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = fruits_key }, .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } } }, KEY_INDEX_START);
-        defer allocator.free(apple_value);
-        try std.testing.expectEqualStrings("apple", apple_value);
-
-        // write banana
-        try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .map_get = fruits_key }, .{ .list_get = .append } }, "banana", KEY_INDEX_START);
-
-        // read banana
-        const banana_value = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = fruits_key }, .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } } }, KEY_INDEX_START);
-        defer allocator.free(banana_value);
-        try std.testing.expectEqualStrings("banana", banana_value);
-
-        // can't read banana in older list
-        try expectEqual(error.KeyNotFound, db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 1, .reverse = true } } }, .{ .map_get = fruits_key }, .{ .list_get = .{ .index = .{ .index = 1, .reverse = false } } } }, KEY_INDEX_START));
-    }
-
-    // append to top-level list many times, filling up the list until a root overflow occurs
-    {
-        var db = try Database(kind).init(allocator, opts);
-        defer if (kind == .file) opts.dir.deleteFile(opts.path) catch {};
-        defer db.deinit();
-
-        const wat_key = hash_buffer("wat");
-        for (0..SLOT_COUNT + 1) |i| {
-            const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
-            defer allocator.free(value);
-            try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .map_get = wat_key } }, value, KEY_INDEX_START);
-
-            const value2 = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = wat_key } }, KEY_INDEX_START);
-            defer allocator.free(value2);
-            try std.testing.expectEqualStrings(value, value2);
-        }
-    }
-
-    // append to inner list many times, filling up the list until a root overflow occurs
-    {
-        var db = try Database(kind).init(allocator, opts);
-        defer if (kind == .file) opts.dir.deleteFile(opts.path) catch {};
-        defer db.deinit();
-
-        for (0..SLOT_COUNT + 1) |i| {
-            const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
-            defer allocator.free(value);
-            try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .list_get = .append } }, value, KEY_INDEX_START);
-
-            const value2 = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } } }, KEY_INDEX_START);
-            defer allocator.free(value2);
-            try std.testing.expectEqualStrings(value, value2);
-        }
-
-        // overwrite last value with hello
-        try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } } }, "hello", KEY_INDEX_START);
-
-        // read last value
-        const value = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } } }, KEY_INDEX_START);
-        defer allocator.free(value);
-        try std.testing.expectEqualStrings("hello", value);
-
-        // overwrite last value with goodbye
-        try db.writePath(&[_]PathPart{ .{ .list_get = .append_copy }, .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } } }, "goodbye", KEY_INDEX_START);
-
-        // read last value
-        const value2 = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } } }, KEY_INDEX_START);
-        defer allocator.free(value2);
-        try std.testing.expectEqualStrings("goodbye", value2);
-
-        // previous last value is still hello
-        const value3 = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 1, .reverse = true } } }, .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } } }, KEY_INDEX_START);
-        defer allocator.free(value3);
-        try std.testing.expectEqualStrings("hello", value3);
-    }
-
-    // maps
-    {
-        var db = try Database(kind).init(allocator, opts);
-        defer if (kind == .file) opts.dir.deleteFile(opts.path) catch {};
-        defer db.deinit();
-
-        // write foo
-        const foo_key = hash_buffer("foo");
-        try db.writeMap(foo_key, "bar", VALUE_INDEX_START);
-
-        // read foo
-        const bar_value = try db.readMap(foo_key, VALUE_INDEX_START);
-        defer allocator.free(bar_value);
-        try std.testing.expectEqualStrings("bar", bar_value);
-
-        // overwrite foo
-        try db.writeMap(foo_key, "baz", VALUE_INDEX_START);
-        const baz_value = try db.readMap(foo_key, VALUE_INDEX_START);
-        defer allocator.free(baz_value);
-        try std.testing.expectEqualStrings("baz", baz_value);
-
-        // key not found
-        const not_found_key = hash_buffer("this doesn't exist");
-        try expectEqual(error.KeyNotFound, db.readMap(not_found_key, VALUE_INDEX_START));
-
-        // write key that conflicts with foo
-        var conflict_key = hash_buffer("conflict");
-        conflict_key = (conflict_key & ~MASK) | (foo_key & MASK);
-        try db.writeMap(conflict_key, "hello", VALUE_INDEX_START);
-
-        // read conflicting key
-        const hello_value = try db.readMap(conflict_key, VALUE_INDEX_START);
-        defer allocator.free(hello_value);
-        try std.testing.expectEqualStrings("hello", hello_value);
-
-        // we can still read foo
-        const baz_value2 = try db.readMap(foo_key, VALUE_INDEX_START);
-        defer allocator.free(baz_value2);
-        try std.testing.expectEqualStrings("baz", baz_value2);
-    }
-}
-
-test "read and write" {
-    const allocator = std.testing.allocator;
-
-    try testMain(allocator, .memory, Database(.memory).InitOpts{
-        .capacity = 10000,
-    });
-
-    try testMain(allocator, .file, Database(.file).InitOpts{
-        .dir = std.fs.cwd(),
-        .path = "main.db",
-    });
-
-    // memory
-    // low level operations
-    {
-        var db = try Database(.memory).init(allocator, .{ .capacity = 10000 });
-        defer db.deinit();
-
-        var writer = db.core.writer();
-        try db.core.seekTo(0);
-        try writer.writeAll("Hello");
-        try std.testing.expectEqualStrings("Hello", db.core.buffer.items[0..5]);
-        try writer.writeIntLittle(u64, 42);
-        const hello = try std.fmt.allocPrint(allocator, "Hello{s}", .{std.mem.asBytes(&std.mem.nativeToLittle(u64, 42))});
-        defer allocator.free(hello);
-        try std.testing.expectEqualStrings(hello, db.core.buffer.items[0..13]);
-
-        var reader = db.core.reader();
-        try db.core.seekTo(0);
-        var block = [_]u8{0} ** 5;
-        try reader.readNoEof(&block);
-        try std.testing.expectEqualStrings("Hello", &block);
-        try expectEqual(42, reader.readIntLittle(u64));
-    }
+    try std.testing.expectEqual(PointerType.index, getPointerType(ptr_index));
 }
