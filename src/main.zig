@@ -104,6 +104,7 @@ pub const DatabaseError = error{
     UnexpectedValueType,
     WriteNotAllowed,
     ValueMustBeAtEnd,
+    EmptyPath,
 };
 
 pub const DatabaseKind = enum {
@@ -287,124 +288,144 @@ pub fn Database(comptime kind: DatabaseKind) type {
             try writer.writeAll(&list_index_block);
         }
 
-        fn readSlot(self: *Database(kind), path: []const PathPart, allow_write: bool, position: u64, slot_maybe: ?u64) !SlotPointer {
-            const slot_ptr = SlotPointer{ .position = position, .slot = slot_maybe orelse 0 };
-            const part = if (path.len > 0) path[0] else return slot_ptr;
+        const ReadSlotCursor = union(enum) {
+            index_start: u64,
+            slot_ptr: SlotPointer,
+        };
+
+        fn readSlot(self: *Database(kind), path: []const PathPart, allow_write: bool, cursor: ReadSlotCursor) !SlotPointer {
+            const part = if (path.len > 0) path[0] else switch (cursor) {
+                .index_start => return error.EmptyPath,
+                .slot_ptr => return cursor.slot_ptr,
+            };
             const write_mode: WriteMode = if (allow_write)
-                if (slot_maybe != null) .write_immutable else .write
+                switch (cursor) {
+                    .index_start => .write,
+                    .slot_ptr => .write_immutable,
+                }
             else
                 .read_only;
             switch (part) {
                 .map_get => {
-                    var next_map_start = position;
-                    if (slot_maybe) |slot| {
-                        if (slot == 0) {
-                            if (allow_write) {
-                                // if slot was empty, insert the new map
-                                const writer = self.core.writer();
-                                try self.core.seekFromEnd(0);
-                                const map_start = try self.core.getPos();
-                                const map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                try writer.writeAll(&map_index_block);
-                                // make slot point to map
-                                try self.core.seekTo(position);
-                                try writer.writeIntLittle(u64, setType(map_start, .value, .map));
-                                next_map_start = map_start;
+                    var next_map_start: u64 = undefined;
+                    switch (cursor) {
+                        .index_start => {
+                            next_map_start = cursor.index_start;
+                        },
+                        .slot_ptr => {
+                            if (cursor.slot_ptr.slot == 0) {
+                                if (allow_write) {
+                                    // if slot was empty, insert the new map
+                                    const writer = self.core.writer();
+                                    try self.core.seekFromEnd(0);
+                                    const map_start = try self.core.getPos();
+                                    const map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                                    try writer.writeAll(&map_index_block);
+                                    // make slot point to map
+                                    try self.core.seekTo(cursor.slot_ptr.position);
+                                    try writer.writeIntLittle(u64, setType(map_start, .value, .map));
+                                    next_map_start = map_start;
+                                } else {
+                                    return error.KeyNotFound;
+                                }
                             } else {
-                                return error.KeyNotFound;
+                                const ptr_type = getPointerType(cursor.slot_ptr.slot);
+                                if (ptr_type != .value) {
+                                    return error.UnexpectedPointerType;
+                                }
+                                const val_type = getValueType(cursor.slot_ptr.slot);
+                                if (val_type != .map) {
+                                    return error.UnexpectedValueType;
+                                }
+                                const next_pos = getPointer(cursor.slot_ptr.slot);
+                                if (allow_write) {
+                                    // read existing block
+                                    const reader = self.core.reader();
+                                    try self.core.seekTo(next_pos);
+                                    var map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                                    try reader.readNoEof(&map_index_block);
+                                    // copy it to the end
+                                    const writer = self.core.writer();
+                                    try self.core.seekFromEnd(0);
+                                    const map_start = try self.core.getPos();
+                                    try writer.writeAll(&map_index_block);
+                                    // make slot point to map
+                                    try self.core.seekTo(cursor.slot_ptr.position);
+                                    try writer.writeIntLittle(u64, setType(map_start, .value, .map));
+                                    next_map_start = map_start;
+                                } else {
+                                    next_map_start = next_pos;
+                                }
                             }
-                        } else {
-                            const ptr_type = getPointerType(slot);
-                            if (ptr_type != .value) {
-                                return error.UnexpectedPointerType;
-                            }
-                            const val_type = getValueType(slot);
-                            if (val_type != .map) {
-                                return error.UnexpectedValueType;
-                            }
-                            const next_pos = getPointer(slot);
-                            if (allow_write) {
-                                // read existing block
-                                const reader = self.core.reader();
-                                try self.core.seekTo(next_pos);
-                                var map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                try reader.readNoEof(&map_index_block);
-                                // copy it to the end
-                                const writer = self.core.writer();
-                                try self.core.seekFromEnd(0);
-                                const map_start = try self.core.getPos();
-                                try writer.writeAll(&map_index_block);
-                                // make slot point to map
-                                try self.core.seekTo(position);
-                                try writer.writeIntLittle(u64, setType(map_start, .value, .map));
-                                next_map_start = map_start;
-                            } else {
-                                next_map_start = next_pos;
-                            }
-                        }
+                        },
                     }
                     const next_slot_ptr = try self.readMapSlot(next_map_start, part.map_get, 0, write_mode);
-                    return self.readSlot(path[1..], allow_write, next_slot_ptr.position, next_slot_ptr.slot);
+                    return self.readSlot(path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                 },
                 .list_get => {
-                    var next_list_start = position;
-                    var next_slot_ptr = slot_ptr;
-                    if (slot_maybe) |slot| {
-                        if (slot == 0) {
-                            if (allow_write) {
-                                // if slot was empty, insert the new list
-                                const writer = self.core.writer();
-                                try self.core.seekFromEnd(0);
-                                const list_start = try self.core.getPos();
-                                const list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                try writer.writeIntLittle(u64, 0); // list size
-                                const list_ptr = try self.core.getPos() + POINTER_SIZE;
-                                try writer.writeIntLittle(u64, list_ptr);
-                                try writer.writeAll(&list_index_block);
-                                // make slot point to list
-                                try self.core.seekTo(position);
-                                next_slot_ptr.slot = setType(list_start, .value, .list);
-                                try writer.writeIntLittle(u64, next_slot_ptr.slot);
-                                next_list_start = list_start;
+                    var next_list_start: u64 = undefined;
+                    var next_slot_ptr: SlotPointer = undefined;
+                    switch (cursor) {
+                        .index_start => {
+                            next_list_start = cursor.index_start;
+                        },
+                        .slot_ptr => {
+                            if (cursor.slot_ptr.slot == 0) {
+                                if (allow_write) {
+                                    // if slot was empty, insert the new list
+                                    const writer = self.core.writer();
+                                    try self.core.seekFromEnd(0);
+                                    const list_start = try self.core.getPos();
+                                    const list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                                    try writer.writeIntLittle(u64, 0); // list size
+                                    const list_ptr = try self.core.getPos() + POINTER_SIZE;
+                                    try writer.writeIntLittle(u64, list_ptr);
+                                    try writer.writeAll(&list_index_block);
+                                    // make slot point to list
+                                    next_list_start = list_start;
+                                    next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = setType(list_start, .value, .list) };
+                                    try self.core.seekTo(next_slot_ptr.position);
+                                    try writer.writeIntLittle(u64, next_slot_ptr.slot);
+                                } else {
+                                    return error.KeyNotFound;
+                                }
                             } else {
-                                return error.KeyNotFound;
+                                const ptr_type = getPointerType(cursor.slot_ptr.slot);
+                                if (ptr_type != .value) {
+                                    return error.UnexpectedPointerType;
+                                }
+                                const val_type = getValueType(cursor.slot_ptr.slot);
+                                if (val_type != .list) {
+                                    return error.UnexpectedValueType;
+                                }
+                                const next_pos = getPointer(cursor.slot_ptr.slot);
+                                if (allow_write) {
+                                    // read existing block
+                                    const reader = self.core.reader();
+                                    try self.core.seekTo(next_pos);
+                                    const list_size = try reader.readIntLittle(u64);
+                                    const list_ptr = try reader.readIntLittle(u64);
+                                    try self.core.seekTo(list_ptr);
+                                    var list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                                    try reader.readNoEof(&list_index_block);
+                                    // copy it to the end
+                                    const writer = self.core.writer();
+                                    try self.core.seekFromEnd(0);
+                                    const list_start = try self.core.getPos();
+                                    try writer.writeIntLittle(u64, list_size);
+                                    const next_list_ptr = try self.core.getPos() + POINTER_SIZE;
+                                    try writer.writeIntLittle(u64, next_list_ptr);
+                                    try writer.writeAll(&list_index_block);
+                                    // make slot point to map
+                                    next_list_start = list_start;
+                                    next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = setType(list_start, .value, .list) };
+                                    try self.core.seekTo(next_slot_ptr.position);
+                                    try writer.writeIntLittle(u64, next_slot_ptr.slot);
+                                } else {
+                                    next_list_start = next_pos;
+                                }
                             }
-                        } else {
-                            const ptr_type = getPointerType(slot);
-                            if (ptr_type != .value) {
-                                return error.UnexpectedPointerType;
-                            }
-                            const val_type = getValueType(slot);
-                            if (val_type != .list) {
-                                return error.UnexpectedValueType;
-                            }
-                            const next_pos = getPointer(slot);
-                            if (allow_write) {
-                                // read existing block
-                                const reader = self.core.reader();
-                                try self.core.seekTo(next_pos);
-                                const list_size = try reader.readIntLittle(u64);
-                                const list_ptr = try reader.readIntLittle(u64);
-                                try self.core.seekTo(list_ptr);
-                                var list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                try reader.readNoEof(&list_index_block);
-                                // copy it to the end
-                                const writer = self.core.writer();
-                                try self.core.seekFromEnd(0);
-                                const list_start = try self.core.getPos();
-                                try writer.writeIntLittle(u64, list_size);
-                                const next_list_ptr = try self.core.getPos() + POINTER_SIZE;
-                                try writer.writeIntLittle(u64, next_list_ptr);
-                                try writer.writeAll(&list_index_block);
-                                // make slot point to map
-                                try self.core.seekTo(position);
-                                next_slot_ptr.slot = setType(list_start, .value, .list);
-                                try writer.writeIntLittle(u64, next_slot_ptr.slot);
-                                next_list_start = list_start;
-                            } else {
-                                next_list_start = next_pos;
-                            }
-                        }
+                        },
                     }
                     switch (part.list_get) {
                         .index => {
@@ -430,13 +451,13 @@ pub fn Database(comptime kind: DatabaseKind) type {
                             const list_ptr = try reader.readIntLittle(u64);
                             const shift: u6 = @truncate(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
                             next_slot_ptr = try self.readListSlot(list_ptr, key, shift, write_mode);
-                            return self.readSlot(path[1..], allow_write, next_slot_ptr.position, next_slot_ptr.slot);
+                            return self.readSlot(path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                         },
                         .append => {
                             if (!allow_write) return error.WriteNotAllowed;
 
                             const append_result = try self.readListSlotAppend(next_list_start, write_mode);
-                            _ = try self.readSlot(path[1..], allow_write, append_result.slot_ptr.position, append_result.slot_ptr.slot);
+                            _ = try self.readSlot(path[1..], allow_write, .{ .slot_ptr = append_result.slot_ptr });
                             // update list size and ptr
                             try self.core.seekTo(next_list_start);
                             const writer = self.core.writer();
@@ -470,7 +491,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                 try writer.writeIntLittle(u64, last_slot);
                                 append_result.slot_ptr.slot = last_slot;
                             }
-                            const final_slot_ptr = self.readSlot(path[1..], allow_write, append_result.slot_ptr.position, append_result.slot_ptr.slot);
+                            const final_slot_ptr = self.readSlot(path[1..], allow_write, .{ .slot_ptr = append_result.slot_ptr });
                             // update list size and ptr
                             try self.core.seekTo(next_list_start);
                             try writer.writeIntLittle(u64, append_result.list_size);
@@ -484,6 +505,8 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     if (!allow_write) return error.WriteNotAllowed;
 
                     if (path.len > 1) return error.ValueMustBeAtEnd;
+
+                    if (cursor != .slot_ptr) return error.NotImplemented;
 
                     const writer = self.core.writer();
 
@@ -523,15 +546,15 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         value_pos = ptr;
                     }
 
-                    try self.core.seekTo(position);
+                    try self.core.seekTo(cursor.slot_ptr.position);
                     try writer.writeIntLittle(u64, setType(value_pos, .value, .bytes));
 
                     return next_slot_ptr;
                 },
                 .path => {
                     if (!allow_write) return error.WriteNotAllowed;
-                    const next_slot_ptr = try self.readSlot(part.path, allow_write, position, slot_maybe);
-                    return try self.readSlot(path[1..], allow_write, next_slot_ptr.position, next_slot_ptr.slot);
+                    const next_slot_ptr = try self.readSlot(part.path, allow_write, cursor);
+                    return try self.readSlot(path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                 },
             }
         }
@@ -539,13 +562,13 @@ pub fn Database(comptime kind: DatabaseKind) type {
         // paths
 
         pub fn writePath(self: *Database(kind), path: []const PathPart) !void {
-            _ = try self.readSlot(path, true, KEY_INDEX_START, null);
+            _ = try self.readSlot(path, true, .{ .index_start = KEY_INDEX_START });
         }
 
         pub fn readPath(self: *Database(kind), path: []const PathPart) ![]u8 {
             const reader = self.core.reader();
 
-            const slot_ptr = try self.readSlot(path, false, KEY_INDEX_START, null);
+            const slot_ptr = try self.readSlot(path, false, .{ .index_start = KEY_INDEX_START });
             const slot = slot_ptr.slot;
             const ptr = getPointer(slot);
 
