@@ -180,7 +180,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 file: std.fs.File,
 
                 pub fn deinit(self: *Core) void {
-                    _ = self;
+                    self.file.close();
                 }
 
                 pub fn reader(self: Core) std.fs.File.Reader {

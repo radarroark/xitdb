@@ -31,7 +31,6 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         defer {
             db.deinit();
             if (kind == .file) {
-                init_opts.file.close();
                 opts.dir.deleteFile(opts.path) catch {};
             }
         }
@@ -226,7 +225,6 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         defer {
             db.deinit();
             if (kind == .file) {
-                init_opts.file.close();
                 opts.dir.deleteFile(opts.path) catch {};
             }
         }
@@ -257,7 +255,6 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         defer {
             db.deinit();
             if (kind == .file) {
-                init_opts.file.close();
                 opts.dir.deleteFile(opts.path) catch {};
             }
         }
