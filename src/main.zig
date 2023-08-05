@@ -75,8 +75,8 @@ fn getPointerType(ptr: u64) PointerType {
     return @enumFromInt(ptr & POINTER_TYPE_MASK);
 }
 
-fn getPointer(ptr: u64) u64 {
-    return ptr & (~POINTER_TYPE_MASK);
+fn getPointerValue(ptr: u64) u60 {
+    return @intCast(ptr & (~POINTER_TYPE_MASK));
 }
 
 pub const DatabaseError = error{
@@ -315,7 +315,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                 if (ptr_type != .map) {
                                     return error.UnexpectedPointerType;
                                 }
-                                const next_pos = getPointer(cursor.slot_ptr.slot);
+                                const next_pos = getPointerValue(cursor.slot_ptr.slot);
                                 if (allow_write) {
                                     // read existing block
                                     const reader = self.core.reader();
@@ -372,7 +372,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                 if (ptr_type != .list) {
                                     return error.UnexpectedPointerType;
                                 }
-                                const next_pos = getPointer(cursor.slot_ptr.slot);
+                                const next_pos = getPointerValue(cursor.slot_ptr.slot);
                                 if (allow_write) {
                                     // read existing block
                                     const reader = self.core.reader();
@@ -497,7 +497,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                             next_slot_ptr = try self.readMapSlot(VALUE_INDEX_START, value_hash, 0, .write);
                             const slot_pos = next_slot_ptr.position;
                             const slot = next_slot_ptr.slot;
-                            const ptr = getPointer(slot);
+                            const ptr = getPointerValue(slot);
 
                             if (ptr == 0) {
                                 // if slot was empty, insert the new value
@@ -547,7 +547,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
 
             const slot_ptr = try self.readSlot(path, false, .{ .index_start = KEY_INDEX_START });
             const slot = slot_ptr.slot;
-            const ptr = getPointer(slot);
+            const ptr = getPointerValue(slot);
 
             const ptr_type = getPointerType(slot);
             if (ptr_type != .bytes) {
@@ -564,10 +564,10 @@ pub fn Database(comptime kind: DatabaseKind) type {
             return value;
         }
 
-        pub fn readInt(self: *Database(kind), path: []const PathPart) !u64 {
+        pub fn readInt(self: *Database(kind), path: []const PathPart) !u60 {
             const slot_ptr = try self.readSlot(path, false, .{ .index_start = KEY_INDEX_START });
             const slot = slot_ptr.slot;
-            const value = getPointer(slot);
+            const value = getPointerValue(slot);
 
             const ptr_type = getPointerType(slot);
             if (ptr_type != .int) {
@@ -610,7 +610,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
             }
 
             const ptr_type = getPointerType(slot);
-            const ptr = getPointer(slot);
+            const ptr = getPointerValue(slot);
 
             switch (ptr_type) {
                 .index => {
@@ -622,7 +622,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         try reader.readNoEof(&index_block);
                         // copy it to the end
                         try self.core.seekFromEnd(0);
-                        next_ptr = try self.core.getPos();
+                        next_ptr = @intCast(try self.core.getPos());
                         try writer.writeAll(&index_block);
                         // make slot point to block
                         try self.core.seekTo(slot_pos);
@@ -748,7 +748,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 }
             } else {
                 const ptr_type = getPointerType(slot);
-                const ptr = getPointer(slot);
+                const ptr = getPointerValue(slot);
                 if (shift == 0) {
                     return SlotPointer{ .position = slot_pos, .slot = slot };
                 } else {
@@ -764,7 +764,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         // copy it to the end
                         const writer = self.core.writer();
                         try self.core.seekFromEnd(0);
-                        next_ptr = try self.core.getPos();
+                        next_ptr = @intCast(try self.core.getPos());
                         try writer.writeAll(&index_block);
                         // make slot point to block
                         try self.core.seekTo(slot_pos);
