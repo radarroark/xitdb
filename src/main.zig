@@ -34,9 +34,10 @@ const KEY_INDEX_START = VALUE_INDEX_START + INDEX_BLOCK_SIZE;
 const PointerType = enum(u64) {
     index = 0b0000 << 60,
     map = 0b1000 << 60,
-    list = 0b1010 << 60,
-    hash = 0b1100 << 60,
-    bytes = 0b1110 << 60,
+    list = 0b0100 << 60,
+    hash = 0b0010 << 60,
+    bytes = 0b0001 << 60,
+    int = 0b1100 << 60,
 };
 
 const POINTER_TYPE_MASK: u64 = 0b1111 << 60;
@@ -54,6 +55,7 @@ pub const PathPart = union(enum) {
         append_copy,
     },
     value: union(enum) {
+        int: u60,
         bytes: []const u8,
     },
     path: []const PathPart,
@@ -482,40 +484,47 @@ pub fn Database(comptime kind: DatabaseKind) type {
 
                     const writer = self.core.writer();
 
-                    const value_hash = switch (part.value) {
-                        .bytes => hash_buffer(part.value.bytes),
-                    };
+                    var value_pos: u64 = undefined;
+                    var next_slot_ptr: SlotPointer = undefined;
 
-                    const next_slot_ptr = try self.readMapSlot(VALUE_INDEX_START, value_hash, 0, .write);
-                    const slot_pos = next_slot_ptr.position;
-                    const slot = next_slot_ptr.slot;
-                    const ptr = getPointer(slot);
+                    switch (part.value) {
+                        .int => {
+                            value_pos = part.value.int;
+                            next_slot_ptr = cursor.slot_ptr;
+                        },
+                        .bytes => {
+                            const value_hash = hash_buffer(part.value.bytes);
+                            next_slot_ptr = try self.readMapSlot(VALUE_INDEX_START, value_hash, 0, .write);
+                            const slot_pos = next_slot_ptr.position;
+                            const slot = next_slot_ptr.slot;
+                            const ptr = getPointer(slot);
 
-                    var value_pos: u64 = 0;
-
-                    if (ptr == 0) {
-                        // if slot was empty, insert the new value
-                        try self.core.seekFromEnd(0);
-                        value_pos = try self.core.getPos();
-                        switch (part.value) {
-                            .bytes => {
+                            if (ptr == 0) {
+                                // if slot was empty, insert the new value
+                                try self.core.seekFromEnd(0);
+                                value_pos = try self.core.getPos();
                                 try writer.writeIntLittle(u64, part.value.bytes.len);
                                 try writer.writeAll(part.value.bytes);
-                            },
-                        }
-                        try self.core.seekTo(slot_pos);
-                        try writer.writeIntLittle(u64, setType(value_pos, .bytes));
-                    } else {
-                        const ptr_type = getPointerType(slot);
-                        if (ptr_type != .bytes) {
-                            return error.UnexpectedPointerType;
-                        }
-                        // get the existing value
-                        value_pos = ptr;
+                                try self.core.seekTo(slot_pos);
+                                try writer.writeIntLittle(u64, setType(value_pos, .bytes));
+                            } else {
+                                const ptr_type = getPointerType(slot);
+                                if (ptr_type != .bytes) {
+                                    return error.UnexpectedPointerType;
+                                }
+                                // get the existing value
+                                value_pos = ptr;
+                            }
+                        },
                     }
 
+                    const ptr_type: PointerType = switch (part.value) {
+                        .int => .int,
+                        .bytes => .bytes,
+                    };
+
                     try self.core.seekTo(cursor.slot_ptr.position);
-                    try writer.writeIntLittle(u64, setType(value_pos, .bytes));
+                    try writer.writeIntLittle(u64, setType(value_pos, ptr_type));
 
                     return next_slot_ptr;
                 },
@@ -533,7 +542,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
             _ = try self.readSlot(path, true, .{ .index_start = KEY_INDEX_START });
         }
 
-        pub fn readPath(self: *Database(kind), path: []const PathPart) ![]u8 {
+        pub fn readBytes(self: *Database(kind), path: []const PathPart) ![]u8 {
             const reader = self.core.reader();
 
             const slot_ptr = try self.readSlot(path, false, .{ .index_start = KEY_INDEX_START });
@@ -552,6 +561,18 @@ pub fn Database(comptime kind: DatabaseKind) type {
             errdefer self.allocator.free(value);
 
             try reader.readNoEof(value);
+            return value;
+        }
+
+        pub fn readInt(self: *Database(kind), path: []const PathPart) !u64 {
+            const slot_ptr = try self.readSlot(path, false, .{ .index_start = KEY_INDEX_START });
+            const slot = slot_ptr.slot;
+            const value = getPointer(slot);
+
+            const ptr_type = getPointerType(slot);
+            if (ptr_type != .int) {
+                return error.UnexpectedPointerType;
+            }
             return value;
         }
 

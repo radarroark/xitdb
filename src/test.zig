@@ -45,7 +45,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         });
 
         // read foo
-        const bar_value = try db.readPath(&[_]PathPart{
+        const bar_value = try db.readBytes(&[_]PathPart{
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .map_get = foo_key },
         });
@@ -58,12 +58,12 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .map_get = foo_key },
             .{ .value = .{ .bytes = "baz" } },
         });
-        const baz_value = try db.readPath(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = foo_key } });
+        const baz_value = try db.readBytes(&[_]PathPart{ .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } }, .{ .map_get = foo_key } });
         defer allocator.free(baz_value);
         try std.testing.expectEqualStrings("baz", baz_value);
 
         // can still read the old value
-        const bar_value2 = try db.readPath(&[_]PathPart{
+        const bar_value2 = try db.readBytes(&[_]PathPart{
             .{ .list_get = .{ .index = .{ .index = 1, .reverse = true } } },
             .{ .map_get = foo_key },
         });
@@ -72,7 +72,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
         // key not found
         const not_found_key = main.hash_buffer("this doesn't exist");
-        try expectEqual(error.KeyNotFound, db.readPath(&[_]PathPart{
+        try expectEqual(error.KeyNotFound, db.readBytes(&[_]PathPart{
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .map_get = not_found_key },
         }));
@@ -87,7 +87,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         });
 
         // read conflicting key
-        const hello_value = try db.readPath(&[_]PathPart{
+        const hello_value = try db.readBytes(&[_]PathPart{
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .map_get = conflict_key },
         });
@@ -95,7 +95,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try std.testing.expectEqualStrings("hello", hello_value);
 
         // we can still read foo
-        const baz_value2 = try db.readPath(&[_]PathPart{
+        const baz_value2 = try db.readBytes(&[_]PathPart{
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .map_get = foo_key },
         });
@@ -108,7 +108,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .map_get = conflict_key },
             .{ .value = .{ .bytes = "goodbye" } },
         });
-        const goodbye_value = try db.readPath(&[_]PathPart{
+        const goodbye_value = try db.readBytes(&[_]PathPart{
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .map_get = conflict_key },
         });
@@ -116,7 +116,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try std.testing.expectEqualStrings("goodbye", goodbye_value);
 
         // we can still read the old conflicting key
-        const hello_value2 = try db.readPath(&[_]PathPart{
+        const hello_value2 = try db.readBytes(&[_]PathPart{
             .{ .list_get = .{ .index = .{ .index = 1, .reverse = true } } },
             .{ .map_get = conflict_key },
         });
@@ -133,7 +133,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         });
 
         // read apple
-        const apple_value = try db.readPath(&[_]PathPart{
+        const apple_value = try db.readBytes(&[_]PathPart{
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .map_get = fruits_key },
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
@@ -150,7 +150,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         });
 
         // read banana
-        const banana_value = try db.readPath(&[_]PathPart{
+        const banana_value = try db.readBytes(&[_]PathPart{
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .map_get = fruits_key },
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
@@ -159,7 +159,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try std.testing.expectEqualStrings("banana", banana_value);
 
         // can't read banana in older list
-        try expectEqual(error.KeyNotFound, db.readPath(&[_]PathPart{
+        try expectEqual(error.KeyNotFound, db.readBytes(&[_]PathPart{
             .{ .list_get = .{ .index = .{ .index = 1, .reverse = true } } },
             .{ .map_get = fruits_key },
             .{ .list_get = .{ .index = .{ .index = 1, .reverse = false } } },
@@ -174,7 +174,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         });
 
         // read pear
-        const pear_value = try db.readPath(&[_]PathPart{
+        const pear_value = try db.readBytes(&[_]PathPart{
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .map_get = fruits_key },
             .{ .list_get = .{ .index = .{ .index = 1, .reverse = true } } },
@@ -183,13 +183,27 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try std.testing.expectEqualStrings("pear", pear_value);
 
         // read grape
-        const grape_value = try db.readPath(&[_]PathPart{
+        const grape_value = try db.readBytes(&[_]PathPart{
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .map_get = fruits_key },
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
         });
         defer allocator.free(grape_value);
         try std.testing.expectEqualStrings("grape", grape_value);
+
+        // overwrite foo with an int
+        try db.writePath(&[_]PathPart{
+            .{ .list_get = .append_copy },
+            .{ .map_get = foo_key },
+            .{ .value = .{ .int = 42 } },
+        });
+
+        // read foo
+        const int_value = try db.readInt(&[_]PathPart{
+            .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+            .{ .map_get = foo_key },
+        });
+        try expectEqual(42, int_value);
     }
 
     // append to top-level list many times, filling up the list until a root overflow occurs
@@ -214,7 +228,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 .{ .value = .{ .bytes = value } },
             });
 
-            const value2 = try db.readPath(&[_]PathPart{
+            const value2 = try db.readBytes(&[_]PathPart{
                 .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
                 .{ .map_get = wat_key },
             });
@@ -244,7 +258,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 .{ .value = .{ .bytes = value } },
             });
 
-            const value2 = try db.readPath(&[_]PathPart{
+            const value2 = try db.readBytes(&[_]PathPart{
                 .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
                 .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             });
@@ -260,7 +274,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         });
 
         // read last value
-        const value = try db.readPath(&[_]PathPart{
+        const value = try db.readBytes(&[_]PathPart{
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
         });
@@ -275,7 +289,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         });
 
         // read last value
-        const value2 = try db.readPath(&[_]PathPart{
+        const value2 = try db.readBytes(&[_]PathPart{
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
         });
@@ -283,7 +297,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try std.testing.expectEqualStrings("goodbye", value2);
 
         // previous last value is still hello
-        const value3 = try db.readPath(&[_]PathPart{
+        const value3 = try db.readBytes(&[_]PathPart{
             .{ .list_get = .{ .index = .{ .index = 1, .reverse = true } } },
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
         });
