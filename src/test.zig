@@ -204,6 +204,19 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .map_get = foo_key },
         });
         try expectEqual(42, int_value);
+
+        // remove foo
+        try db.writePath(&[_]PathPart{
+            .{ .list_get = .append_copy },
+            .{ .map_get = foo_key },
+            .{ .value = .none },
+        });
+
+        // read foo
+        try expectEqual(error.KeyNotFound, db.readInt(&[_]PathPart{
+            .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+            .{ .map_get = foo_key },
+        }));
     }
 
     // append to top-level list many times, filling up the list until a root overflow occurs

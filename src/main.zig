@@ -55,6 +55,7 @@ pub const PathPart = union(enum) {
         append_copy,
     },
     value: union(enum) {
+        none,
         int: u60,
         bytes: []const u8,
     },
@@ -278,7 +279,12 @@ pub fn Database(comptime kind: DatabaseKind) type {
         fn readSlot(self: *Database(kind), path: []const PathPart, allow_write: bool, cursor: ReadSlotCursor) !SlotPointer {
             const part = if (path.len > 0) path[0] else switch (cursor) {
                 .index_start => return error.EmptyPath,
-                .slot_ptr => return cursor.slot_ptr,
+                .slot_ptr => {
+                    if (!allow_write and cursor.slot_ptr.slot == 0) {
+                        return error.KeyNotFound;
+                    }
+                    return cursor.slot_ptr;
+                },
             };
             const write_mode: WriteMode = if (allow_write)
                 switch (cursor) {
@@ -487,6 +493,9 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     var value_pos: u64 = undefined;
 
                     switch (part.value) {
+                        .none => {
+                            value_pos = 0;
+                        },
                         .int => {
                             value_pos = part.value.int;
                         },
@@ -517,6 +526,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     }
 
                     const ptr: u64 = switch (part.value) {
+                        .none => value_pos,
                         .int => setType(value_pos, .int),
                         .bytes => setType(value_pos, .bytes),
                     };
