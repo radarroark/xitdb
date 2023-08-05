@@ -485,16 +485,14 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     const writer = self.core.writer();
 
                     var value_pos: u64 = undefined;
-                    var next_slot_ptr: SlotPointer = undefined;
 
                     switch (part.value) {
                         .int => {
                             value_pos = part.value.int;
-                            next_slot_ptr = cursor.slot_ptr;
                         },
                         .bytes => {
                             const value_hash = hash_buffer(part.value.bytes);
-                            next_slot_ptr = try self.readMapSlot(VALUE_INDEX_START, value_hash, 0, .write);
+                            const next_slot_ptr = try self.readMapSlot(VALUE_INDEX_START, value_hash, 0, .write);
                             const slot_pos = next_slot_ptr.position;
                             const slot = next_slot_ptr.slot;
                             const ptr = getPointerValue(slot);
@@ -518,15 +516,15 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         },
                     }
 
-                    const ptr_type: PointerType = switch (part.value) {
-                        .int => .int,
-                        .bytes => .bytes,
+                    const ptr: u64 = switch (part.value) {
+                        .int => setType(value_pos, .int),
+                        .bytes => setType(value_pos, .bytes),
                     };
 
                     try self.core.seekTo(cursor.slot_ptr.position);
-                    try writer.writeIntLittle(u64, setType(value_pos, ptr_type));
+                    try writer.writeIntLittle(u64, ptr);
 
-                    return next_slot_ptr;
+                    return cursor.slot_ptr;
                 },
                 .path => {
                     if (!allow_write) return error.WriteNotAllowed;
