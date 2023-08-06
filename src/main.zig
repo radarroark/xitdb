@@ -550,10 +550,15 @@ pub fn Database(comptime kind: DatabaseKind) type {
             _ = try self.readSlot(path, true, .{ .index_start = KEY_INDEX_START });
         }
 
-        pub fn readBytes(self: *Database(kind), path: []const PathPart) ![]u8 {
+        pub fn readBytes(self: *Database(kind), path: []const PathPart) !?[]u8 {
             const reader = self.core.reader();
 
-            const slot_ptr = try self.readSlot(path, false, .{ .index_start = KEY_INDEX_START });
+            const slot_ptr = self.readSlot(path, false, .{ .index_start = KEY_INDEX_START }) catch |err| {
+                switch (err) {
+                    error.KeyNotFound => return null,
+                    else => return err,
+                }
+            };
             const slot = slot_ptr.slot;
             const ptr = getPointerValue(slot);
 
@@ -572,8 +577,13 @@ pub fn Database(comptime kind: DatabaseKind) type {
             return value;
         }
 
-        pub fn readInt(self: *Database(kind), path: []const PathPart) !u60 {
-            const slot_ptr = try self.readSlot(path, false, .{ .index_start = KEY_INDEX_START });
+        pub fn readInt(self: *Database(kind), path: []const PathPart) !?u60 {
+            const slot_ptr = self.readSlot(path, false, .{ .index_start = KEY_INDEX_START }) catch |err| {
+                switch (err) {
+                    error.KeyNotFound => return null,
+                    else => return err,
+                }
+            };
             const slot = slot_ptr.slot;
             const value = getPointerValue(slot);
 
