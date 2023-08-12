@@ -255,6 +255,66 @@ pub fn Database(comptime kind: DatabaseKind) type {
             self.core.deinit();
         }
 
+        pub const Cursor = struct {
+            index_start: u64,
+            db: *Database(kind),
+
+            pub fn writePath(self: *Cursor, path: []const PathPart) !void {
+                _ = try self.db.readSlot(path, true, .{ .index_start = self.index_start });
+            }
+
+            pub fn readBytes(self: *Cursor, path: []const PathPart) !?[]u8 {
+                const reader = self.db.core.reader();
+
+                const slot_ptr = self.db.readSlot(path, false, .{ .index_start = self.index_start }) catch |err| {
+                    switch (err) {
+                        error.KeyNotFound => return null,
+                        else => return err,
+                    }
+                };
+                const slot = slot_ptr.slot;
+                const ptr = getPointerValue(slot);
+
+                const ptr_type = getPointerType(slot);
+                if (ptr_type != .bytes) {
+                    return error.UnexpectedPointerType;
+                }
+
+                try self.db.core.seekTo(ptr);
+                const value_size = try reader.readIntLittle(u64);
+
+                var value = try self.db.allocator.alloc(u8, value_size);
+                errdefer self.db.allocator.free(value);
+
+                try reader.readNoEof(value);
+                return value;
+            }
+
+            pub fn readInt(self: *Cursor, path: []const PathPart) !?u60 {
+                const slot_ptr = self.db.readSlot(path, false, .{ .index_start = self.index_start }) catch |err| {
+                    switch (err) {
+                        error.KeyNotFound => return null,
+                        else => return err,
+                    }
+                };
+                const slot = slot_ptr.slot;
+                const value = getPointerValue(slot);
+
+                const ptr_type = getPointerType(slot);
+                if (ptr_type != .int) {
+                    return error.UnexpectedPointerType;
+                }
+                return value;
+            }
+        };
+
+        pub fn rootCursor(self: *Database(kind)) Cursor {
+            return Cursor{
+                .index_start = KEY_INDEX_START,
+                .db = self,
+            };
+        }
+
         fn writeHeader(self: *Database(kind)) !void {
             const writer = self.core.writer();
 
@@ -542,56 +602,6 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     return try self.readSlot(path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                 },
             }
-        }
-
-        // paths
-
-        pub fn writePath(self: *Database(kind), path: []const PathPart) !void {
-            _ = try self.readSlot(path, true, .{ .index_start = KEY_INDEX_START });
-        }
-
-        pub fn readBytes(self: *Database(kind), path: []const PathPart) !?[]u8 {
-            const reader = self.core.reader();
-
-            const slot_ptr = self.readSlot(path, false, .{ .index_start = KEY_INDEX_START }) catch |err| {
-                switch (err) {
-                    error.KeyNotFound => return null,
-                    else => return err,
-                }
-            };
-            const slot = slot_ptr.slot;
-            const ptr = getPointerValue(slot);
-
-            const ptr_type = getPointerType(slot);
-            if (ptr_type != .bytes) {
-                return error.UnexpectedPointerType;
-            }
-
-            try self.core.seekTo(ptr);
-            const value_size = try reader.readIntLittle(u64);
-
-            var value = try self.allocator.alloc(u8, value_size);
-            errdefer self.allocator.free(value);
-
-            try reader.readNoEof(value);
-            return value;
-        }
-
-        pub fn readInt(self: *Database(kind), path: []const PathPart) !?u60 {
-            const slot_ptr = self.readSlot(path, false, .{ .index_start = KEY_INDEX_START }) catch |err| {
-                switch (err) {
-                    error.KeyNotFound => return null,
-                    else => return err,
-                }
-            };
-            const slot = slot_ptr.slot;
-            const value = getPointerValue(slot);
-
-            const ptr_type = getPointerType(slot);
-            if (ptr_type != .int) {
-                return error.UnexpectedPointerType;
-            }
-            return value;
         }
 
         // maps
