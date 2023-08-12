@@ -255,61 +255,110 @@ pub fn Database(comptime kind: DatabaseKind) type {
             self.core.deinit();
         }
 
-        pub const Cursor = struct {
-            index_start: u64,
-            db: *Database(kind),
+        pub fn Cursor(comptime cursor_kind: PointerType) type {
+            return struct {
+                index_start: u64,
+                db: *Database(kind),
 
-            pub fn writePath(self: *Cursor, path: []const PathPart) !void {
-                _ = try self.db.readSlot(path, true, .{ .index_start = self.index_start });
-            }
-
-            pub fn readBytes(self: *Cursor, path: []const PathPart) !?[]u8 {
-                const reader = self.db.core.reader();
-
-                const slot_ptr = self.db.readSlot(path, false, .{ .index_start = self.index_start }) catch |err| {
-                    switch (err) {
-                        error.KeyNotFound => return null,
-                        else => return err,
-                    }
-                };
-                const slot = slot_ptr.slot;
-                const ptr = getPointerValue(slot);
-
-                const ptr_type = getPointerType(slot);
-                if (ptr_type != .bytes) {
-                    return error.UnexpectedPointerType;
+                pub fn writePath(self: *Cursor(cursor_kind), path: []const PathPart) !void {
+                    _ = try self.db.readSlot(path, true, .{ .index_start = self.index_start });
                 }
 
-                try self.db.core.seekTo(ptr);
-                const value_size = try reader.readIntLittle(u64);
+                pub fn readBytes(self: *Cursor(cursor_kind), path: []const PathPart) !?[]u8 {
+                    const reader = self.db.core.reader();
 
-                var value = try self.db.allocator.alloc(u8, value_size);
-                errdefer self.db.allocator.free(value);
+                    const slot_ptr = self.db.readSlot(path, false, .{ .index_start = self.index_start }) catch |err| {
+                        switch (err) {
+                            error.KeyNotFound => return null,
+                            else => return err,
+                        }
+                    };
+                    const slot = slot_ptr.slot;
+                    const ptr = getPointerValue(slot);
 
-                try reader.readNoEof(value);
-                return value;
-            }
+                    const ptr_type = getPointerType(slot);
+                    if (ptr_type != .bytes) {
+                        return error.UnexpectedPointerType;
+                    }
 
-            pub fn readInt(self: *Cursor, path: []const PathPart) !?u60 {
-                const slot_ptr = self.db.readSlot(path, false, .{ .index_start = self.index_start }) catch |err| {
-                    switch (err) {
-                        error.KeyNotFound => return null,
-                        else => return err,
+                    try self.db.core.seekTo(ptr);
+                    const value_size = try reader.readIntLittle(u64);
+
+                    var value = try self.db.allocator.alloc(u8, value_size);
+                    errdefer self.db.allocator.free(value);
+
+                    try reader.readNoEof(value);
+                    return value;
+                }
+
+                pub fn readInt(self: *Cursor(cursor_kind), path: []const PathPart) !?u60 {
+                    const slot_ptr = self.db.readSlot(path, false, .{ .index_start = self.index_start }) catch |err| {
+                        switch (err) {
+                            error.KeyNotFound => return null,
+                            else => return err,
+                        }
+                    };
+                    const slot = slot_ptr.slot;
+                    const value = getPointerValue(slot);
+
+                    const ptr_type = getPointerType(slot);
+                    if (ptr_type != .int) {
+                        return error.UnexpectedPointerType;
+                    }
+                    return value;
+                }
+
+                pub const Iter = struct {
+                    index_maybe: ?u64,
+                    cursor: *Cursor(cursor_kind),
+                    core: IterCore,
+
+                    pub const IterCore = switch (cursor_kind) {
+                        .list => struct {
+                            size: u64,
+                        },
+                        else => struct {},
+                    };
+
+                    pub fn init(cursor: *Cursor(cursor_kind)) !Iter {
+                        const core = switch (cursor_kind) {
+                            .list => blk: {
+                                const reader = cursor.db.core.reader();
+                                try cursor.db.core.seekTo(cursor.index_start);
+                                const list_size = try reader.readIntLittle(u64);
+                                break :blk .{
+                                    .size = list_size,
+                                };
+                            },
+                            else => .{},
+                        };
+                        return .{
+                            .index_maybe = null,
+                            .cursor = cursor,
+                            .core = core,
+                        };
+                    }
+
+                    pub fn next(self: *Iter) ?Cursor(cursor_kind) {
+                        if (self.index_maybe) |*index| {
+                            index += 1;
+                        } else {
+                            self.index_maybe = 0;
+                        }
+                        //const index = self.index_maybe.?;
+
+                        return null;
                     }
                 };
-                const slot = slot_ptr.slot;
-                const value = getPointerValue(slot);
 
-                const ptr_type = getPointerType(slot);
-                if (ptr_type != .int) {
-                    return error.UnexpectedPointerType;
+                pub fn iter(self: *Cursor(cursor_kind)) !Iter {
+                    return try Iter.init(self);
                 }
-                return value;
-            }
-        };
+            };
+        }
 
-        pub fn rootCursor(self: *Database(kind)) Cursor {
-            return Cursor{
+        pub fn rootCursor(self: *Database(kind)) Cursor(.list) {
+            return Cursor(.list){
                 .index_start = KEY_INDEX_START,
                 .db = self,
             };
