@@ -351,8 +351,6 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
         })).?;
         var iter = try inner_cursor.iter(.list);
-        try expectEqual(17, iter.core.list.size);
-
         var i: u64 = 0;
         while (try iter.next()) |*next_cursor| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
