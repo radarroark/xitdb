@@ -256,17 +256,17 @@ pub fn Database(comptime kind: DatabaseKind) type {
         }
 
         pub const Cursor = struct {
-            index_start: u64,
+            read_slot_cursor: ReadSlotCursor,
             db: *Database(kind),
 
             pub fn writePath(self: *Cursor, path: []const PathPart) !void {
-                _ = try self.db.readSlot(path, true, .{ .index_start = self.index_start });
+                _ = try self.db.readSlot(path, true, self.read_slot_cursor);
             }
 
             pub fn readBytes(self: *Cursor, path: []const PathPart) !?[]u8 {
                 const reader = self.db.core.reader();
 
-                const slot_ptr = self.db.readSlot(path, false, .{ .index_start = self.index_start }) catch |err| {
+                const slot_ptr = self.db.readSlot(path, false, self.read_slot_cursor) catch |err| {
                     switch (err) {
                         error.KeyNotFound => return null,
                         else => return err,
@@ -291,7 +291,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
             }
 
             pub fn readInt(self: *Cursor, path: []const PathPart) !?u60 {
-                const slot_ptr = self.db.readSlot(path, false, .{ .index_start = self.index_start }) catch |err| {
+                const slot_ptr = self.db.readSlot(path, false, self.read_slot_cursor) catch |err| {
                     switch (err) {
                         error.KeyNotFound => return null,
                         else => return err,
@@ -325,7 +325,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     const core: IterCore = switch (iter_kind) {
                         .list => blk: {
                             const reader = cursor.db.core.reader();
-                            try cursor.db.core.seekTo(cursor.index_start);
+                            try cursor.db.core.seekTo(cursor.read_slot_cursor.index_start);
                             const list_size = try reader.readIntLittle(u64);
                             break :blk .{
                                 .list = .{
@@ -363,7 +363,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
 
         pub fn rootCursor(self: *Database(kind)) Cursor {
             return Cursor{
-                .index_start = KEY_INDEX_START,
+                .read_slot_cursor = .{ .index_start = KEY_INDEX_START },
                 .db = self,
             };
         }
