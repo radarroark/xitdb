@@ -317,6 +317,53 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         defer allocator.free(value3);
         try std.testing.expectEqualStrings("hello", value3);
     }
+
+    // iterate over inner list
+    {
+        const init_opts = try initOpts(kind, opts);
+        var db = try Database(kind).init(allocator, init_opts);
+        defer {
+            db.deinit();
+            if (kind == .file) {
+                opts.dir.deleteFile(opts.path) catch {};
+            }
+        }
+        var cursor = db.rootCursor();
+
+        for (0..main.SLOT_COUNT + 1) |i| {
+            const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
+            defer allocator.free(value);
+            try cursor.writePath(&[_]PathPart{
+                .{ .list_get = .append_copy },
+                .{ .list_get = .append },
+                .{ .value = .{ .bytes = value } },
+            });
+
+            const value2 = (try cursor.readBytes(&[_]PathPart{
+                .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+                .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+            })).?;
+            defer allocator.free(value2);
+            try std.testing.expectEqualStrings(value, value2);
+        }
+
+        var inner_cursor = (try cursor.readCursor(&[_]PathPart{
+            .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+        })).?;
+        var iter = try inner_cursor.iter(.list);
+        try expectEqual(17, iter.core.list.size);
+
+        var i: u64 = 0;
+        while (try iter.next()) |*next_cursor| {
+            const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
+            defer allocator.free(value);
+            const value2 = (try next_cursor.readBytes(&[_]PathPart{})).?;
+            defer allocator.free(value2);
+            try std.testing.expectEqualStrings(value, value2);
+
+            i += 1;
+        }
+    }
 }
 
 test "read and write" {

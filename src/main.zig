@@ -259,11 +259,11 @@ pub fn Database(comptime kind: DatabaseKind) type {
             read_slot_cursor: ReadSlotCursor,
             db: *Database(kind),
 
-            pub fn writePath(self: *Cursor, path: []const PathPart) !void {
+            pub fn writePath(self: Cursor, path: []const PathPart) !void {
                 _ = try self.db.readSlot(path, true, self.read_slot_cursor);
             }
 
-            pub fn readBytes(self: *Cursor, path: []const PathPart) !?[]u8 {
+            pub fn readBytes(self: Cursor, path: []const PathPart) !?[]u8 {
                 const reader = self.db.core.reader();
 
                 const slot_ptr = self.db.readSlot(path, false, self.read_slot_cursor) catch |err| {
@@ -290,7 +290,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 return value;
             }
 
-            pub fn readInt(self: *Cursor, path: []const PathPart) !?u60 {
+            pub fn readInt(self: Cursor, path: []const PathPart) !?u60 {
                 const slot_ptr = self.db.readSlot(path, false, self.read_slot_cursor) catch |err| {
                     switch (err) {
                         error.KeyNotFound => return null,
@@ -305,6 +305,21 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     return error.UnexpectedPointerType;
                 }
                 return value;
+            }
+
+            pub fn readCursor(self: Cursor, path: []const PathPart) !?Cursor {
+                const slot_ptr = self.db.readSlot(path, false, self.read_slot_cursor) catch |err| {
+                    switch (err) {
+                        error.KeyNotFound => return null,
+                        else => return err,
+                    }
+                };
+                return Cursor{
+                    .read_slot_cursor = ReadSlotCursor{
+                        .slot_ptr = slot_ptr,
+                    },
+                    .db = self.db,
+                };
             }
 
             pub const Iter = struct {
@@ -325,7 +340,19 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     const core: IterCore = switch (iter_kind) {
                         .list => blk: {
                             const reader = cursor.db.core.reader();
-                            try cursor.db.core.seekTo(cursor.read_slot_cursor.index_start);
+                            switch (cursor.read_slot_cursor) {
+                                .index_start => {
+                                    try cursor.db.core.seekTo(cursor.read_slot_cursor.index_start);
+                                },
+                                .slot_ptr => {
+                                    const ptr = getPointerValue(cursor.read_slot_cursor.slot_ptr.slot);
+                                    const ptr_type = getPointerType(cursor.read_slot_cursor.slot_ptr.slot);
+                                    if (ptr_type != .list) {
+                                        return error.UnexpectedPointerType;
+                                    }
+                                    try cursor.db.core.seekTo(ptr);
+                                },
+                            }
                             const list_size = try reader.readIntLittle(u64);
                             break :blk .{
                                 .list = .{
@@ -341,16 +368,26 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     };
                 }
 
-                pub fn next(self: *Iter) ?Cursor {
+                pub fn next(self: *Iter) !?Cursor {
                     switch (self.core) {
                         .list => {
-                            if (self.index_maybe) |*index| {
-                                index += 1;
+                            if (self.core.list.index_maybe) |*index| {
+                                index.* += 1;
                             } else {
-                                self.index_maybe = 0;
+                                self.core.list.index_maybe = 0;
                             }
-                            //const index = self.index_maybe.?;
-                            return null;
+                            const index = self.core.list.index_maybe.?;
+                            if (index == self.core.list.size) {
+                                return null;
+                            }
+                            const path = &[_]PathPart{.{ .list_get = .{ .index = .{ .index = index, .reverse = false } } }};
+                            const slot_ptr = try self.cursor.db.readSlot(path, false, self.cursor.read_slot_cursor);
+                            return Cursor{
+                                .read_slot_cursor = ReadSlotCursor{
+                                    .slot_ptr = slot_ptr,
+                                },
+                                .db = self.cursor.db,
+                            };
                         },
                     }
                 }
