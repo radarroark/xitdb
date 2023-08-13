@@ -770,49 +770,13 @@ pub fn Database(comptime kind: DatabaseKind) type {
 
                     if (cursor != .slot_ptr) return error.NotImplemented;
 
-                    const writer = self.core.writer();
-
-                    var value_pos: u64 = undefined;
-
-                    switch (part.value) {
-                        .none => {
-                            value_pos = 0;
-                        },
-                        .int => {
-                            value_pos = part.value.int;
-                        },
-                        .bytes => {
-                            const value_hash = hash_buffer(part.value.bytes);
-                            const next_slot_ptr = try self.readMapSlot(VALUE_INDEX_START, value_hash, 0, .write);
-                            const slot_pos = next_slot_ptr.position;
-                            const slot = next_slot_ptr.slot;
-                            const ptr = getPointerValue(slot);
-
-                            if (ptr == 0) {
-                                // if slot was empty, insert the new value
-                                try self.core.seekFromEnd(0);
-                                value_pos = try self.core.getPos();
-                                try writer.writeIntLittle(u64, part.value.bytes.len);
-                                try writer.writeAll(part.value.bytes);
-                                try self.core.seekTo(slot_pos);
-                                try writer.writeIntLittle(u64, setType(value_pos, .bytes));
-                            } else {
-                                const ptr_type = getPointerType(slot);
-                                if (ptr_type != .bytes) {
-                                    return error.UnexpectedPointerType;
-                                }
-                                // get the existing value
-                                value_pos = ptr;
-                            }
-                        },
-                    }
-
                     const ptr: u64 = switch (part.value) {
-                        .none => value_pos,
-                        .int => setType(value_pos, .int),
-                        .bytes => setType(value_pos, .bytes),
+                        .none => 0,
+                        .int => setType(part.value.int, .int),
+                        .bytes => setType(try self.writeValue(part.value.bytes), .bytes),
                     };
 
+                    const writer = self.core.writer();
                     try self.core.seekTo(cursor.slot_ptr.position);
                     try writer.writeIntLittle(u64, ptr);
 
@@ -824,6 +788,36 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     return try self.readSlot(path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                 },
             }
+        }
+
+        fn writeValue(self: *Database(kind), value: []const u8) !u64 {
+            const value_hash = hash_buffer(value);
+            const next_slot_ptr = try self.readMapSlot(VALUE_INDEX_START, value_hash, 0, .write);
+            const slot_pos = next_slot_ptr.position;
+            const slot = next_slot_ptr.slot;
+            const ptr = getPointerValue(slot);
+
+            var value_pos: u64 = undefined;
+
+            if (ptr == 0) {
+                const writer = self.core.writer();
+                // if slot was empty, insert the new value
+                try self.core.seekFromEnd(0);
+                value_pos = try self.core.getPos();
+                try writer.writeIntLittle(u64, value.len);
+                try writer.writeAll(value);
+                try self.core.seekTo(slot_pos);
+                try writer.writeIntLittle(u64, setType(value_pos, .bytes));
+            } else {
+                const ptr_type = getPointerType(slot);
+                if (ptr_type != .bytes) {
+                    return error.UnexpectedPointerType;
+                }
+                // get the existing value
+                value_pos = ptr;
+            }
+
+            return value_pos;
         }
 
         // maps
