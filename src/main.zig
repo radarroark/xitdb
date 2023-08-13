@@ -382,7 +382,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     pub const MapLevel = struct {
                         position: u64,
                         block: [SLOT_COUNT]u64,
-                        index: u32,
+                        index: u16,
                     };
                 };
 
@@ -396,7 +396,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         .map => .{
                             .map = .{
                                 .stack = blk: {
-                                    const reader = cursor.db.core.reader();
+                                    // find the block
                                     const position = switch (cursor.read_slot_cursor) {
                                         .index_start => cursor.read_slot_cursor.index_start,
                                         .slot_ptr => pos_blk: {
@@ -409,12 +409,24 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                         },
                                     };
                                     try cursor.db.core.seekTo(position);
-                                    var map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                    try reader.readNoEof(&map_index_block);
+                                    // read the block
+                                    const reader = cursor.db.core.reader();
+                                    var map_index_block_bytes = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                                    try reader.readNoEof(&map_index_block_bytes);
+                                    // convert the block into 64-bit little endian ints
+                                    var map_index_block = [_]u64{0} ** SLOT_COUNT;
+                                    {
+                                        var stream = std.io.fixedBufferStream(&map_index_block_bytes);
+                                        var block_reader = stream.reader();
+                                        for (&map_index_block) |*block_slot| {
+                                            block_slot.* = try block_reader.readIntLittle(u64);
+                                        }
+                                    }
+                                    // init the stack
                                     var stack = std.ArrayList(IterCore.MapLevel).init(cursor.db.allocator);
                                     try stack.append(IterCore.MapLevel{
                                         .position = position,
-                                        .block = std.mem.bytesAsValue([SLOT_COUNT]u64, &map_index_block).*,
+                                        .block = map_index_block,
                                         .index = 0,
                                     });
                                     break :blk stack;
@@ -471,14 +483,26 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                     } else {
                                         const ptr_type = getPointerType(slot);
                                         if (ptr_type == .index) {
+                                            // find the block
                                             const next_pos = getPointerValue(slot);
-                                            const reader = self.cursor.db.core.reader();
                                             try self.cursor.db.core.seekTo(next_pos);
-                                            var map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                            try reader.readNoEof(&map_index_block);
+                                            // read the block
+                                            const reader = self.cursor.db.core.reader();
+                                            var map_index_block_bytes = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                                            try reader.readNoEof(&map_index_block_bytes);
+                                            // convert the block into 64-bit little endian ints
+                                            var map_index_block = [_]u64{0} ** SLOT_COUNT;
+                                            {
+                                                var stream = std.io.fixedBufferStream(&map_index_block_bytes);
+                                                var block_reader = stream.reader();
+                                                for (&map_index_block) |*block_slot| {
+                                                    block_slot.* = try block_reader.readIntLittle(u64);
+                                                }
+                                            }
+                                            // append to the stack
                                             try self.core.map.stack.append(IterCore.MapLevel{
                                                 .position = next_pos,
-                                                .block = std.mem.bytesAsValue([SLOT_COUNT]u64, &map_index_block).*,
+                                                .block = map_index_block,
                                                 .index = 0,
                                             });
                                             continue;
