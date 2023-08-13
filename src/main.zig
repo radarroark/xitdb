@@ -276,11 +276,22 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 const ptr = getPointerValue(slot);
 
                 const ptr_type = getPointerType(slot);
-                if (ptr_type != .bytes) {
-                    return error.UnexpectedPointerType;
-                }
+                const position = switch (ptr_type) {
+                    .bytes => ptr,
+                    .hash => blk: {
+                        try self.db.core.seekTo(ptr + HASH_SIZE);
+                        const value_slot = try reader.readIntLittle(u64);
+                        const value_ptr_type = getPointerType(value_slot);
+                        if (value_ptr_type != .bytes) {
+                            return error.UnexpectedPointerType;
+                        }
+                        const value_ptr = getPointerValue(value_slot);
+                        break :blk value_ptr;
+                    },
+                    else => return error.UnexpectedPointerType,
+                };
 
-                try self.db.core.seekTo(ptr);
+                try self.db.core.seekTo(position);
                 const value_size = try reader.readIntLittle(u64);
 
                 var value = try self.db.allocator.alloc(u8, value_size);
@@ -288,6 +299,36 @@ pub fn Database(comptime kind: DatabaseKind) type {
 
                 try reader.readNoEof(value);
                 return value;
+            }
+
+            pub fn readKeyBytes(self: Cursor, path: []const PathPart) !?[]u8 {
+                const reader = self.db.core.reader();
+
+                const slot_ptr = self.db.readSlot(path, false, self.read_slot_cursor) catch |err| {
+                    switch (err) {
+                        error.KeyNotFound => return null,
+                        else => return err,
+                    }
+                };
+                const slot = slot_ptr.slot;
+                const ptr = getPointerValue(slot);
+
+                const ptr_type = getPointerType(slot);
+                if (ptr_type != .hash) {
+                    return error.UnexpectedPointerType;
+                }
+
+                try self.db.core.seekTo(ptr);
+                var hash = [_]u8{0} ** HASH_INT_SIZE;
+                try reader.readNoEof(hash[0..HASH_SIZE]);
+
+                const value_cursor = Cursor{
+                    .read_slot_cursor = ReadSlotCursor{
+                        .index_start = VALUE_INDEX_START,
+                    },
+                    .db = self.db,
+                };
+                return value_cursor.readBytes(&[_]PathPart{.{ .map_get = std.mem.bytesToValue(Hash, &hash) }});
             }
 
             pub fn readInt(self: Cursor, path: []const PathPart) !?u60 {
@@ -328,18 +369,56 @@ pub fn Database(comptime kind: DatabaseKind) type {
 
                 pub const IterKind = enum {
                     list,
+                    map,
                 };
                 pub const IterCore = union(IterKind) {
                     list: struct {
-                        index_maybe: ?u64,
+                        index: u64,
                     },
+                    map: struct {
+                        stack: std.ArrayList(MapLevel),
+                    },
+
+                    pub const MapLevel = struct {
+                        position: u64,
+                        block: [SLOT_COUNT]u64,
+                        index: u32,
+                    };
                 };
 
                 pub fn init(cursor: *Cursor, iter_kind: IterKind) !Iter {
                     const core: IterCore = switch (iter_kind) {
                         .list => .{
                             .list = .{
-                                .index_maybe = null,
+                                .index = 0,
+                            },
+                        },
+                        .map => .{
+                            .map = .{
+                                .stack = blk: {
+                                    const reader = cursor.db.core.reader();
+                                    const position = switch (cursor.read_slot_cursor) {
+                                        .index_start => cursor.read_slot_cursor.index_start,
+                                        .slot_ptr => pos_blk: {
+                                            const ptr = getPointerValue(cursor.read_slot_cursor.slot_ptr.slot);
+                                            const ptr_type = getPointerType(cursor.read_slot_cursor.slot_ptr.slot);
+                                            if (ptr_type != .map) {
+                                                return error.UnexpectedPointerType;
+                                            }
+                                            break :pos_blk ptr;
+                                        },
+                                    };
+                                    try cursor.db.core.seekTo(position);
+                                    var map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                                    try reader.readNoEof(&map_index_block);
+                                    var stack = std.ArrayList(IterCore.MapLevel).init(cursor.db.allocator);
+                                    try stack.append(IterCore.MapLevel{
+                                        .position = position,
+                                        .block = std.mem.bytesAsValue([SLOT_COUNT]u64, &map_index_block).*,
+                                        .index = 0,
+                                    });
+                                    break :blk stack;
+                                },
                             },
                         },
                     };
@@ -349,15 +428,17 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     };
                 }
 
+                pub fn deinit(self: *Iter) void {
+                    switch (self.core) {
+                        .list => {},
+                        .map => self.core.map.stack.deinit(),
+                    }
+                }
+
                 pub fn next(self: *Iter) !?Cursor {
                     switch (self.core) {
                         .list => {
-                            if (self.core.list.index_maybe) |*index| {
-                                index.* += 1;
-                            } else {
-                                self.core.list.index_maybe = 0;
-                            }
-                            const index = self.core.list.index_maybe.?;
+                            const index = self.core.list.index;
                             const path = &[_]PathPart{.{ .list_get = .{ .index = .{ .index = index, .reverse = false } } }};
                             const slot_ptr = self.cursor.db.readSlot(path, false, self.cursor.read_slot_cursor) catch |err| {
                                 switch (err) {
@@ -365,12 +446,56 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                     else => return err,
                                 }
                             };
+                            self.core.list.index += 1;
                             return Cursor{
                                 .read_slot_cursor = ReadSlotCursor{
                                     .slot_ptr = slot_ptr,
                                 },
                                 .db = self.cursor.db,
                             };
+                        },
+                        .map => {
+                            while (self.core.map.stack.items.len > 0) {
+                                const level = self.core.map.stack.items[self.core.map.stack.items.len - 1];
+                                if (level.index == level.block.len) {
+                                    _ = self.core.map.stack.pop();
+                                    if (self.core.map.stack.items.len > 0) {
+                                        self.core.map.stack.items[self.core.map.stack.items.len - 1].index += 1;
+                                    }
+                                    continue;
+                                } else {
+                                    const slot = level.block[level.index];
+                                    if (slot == 0) {
+                                        self.core.map.stack.items[self.core.map.stack.items.len - 1].index += 1;
+                                        continue;
+                                    } else {
+                                        const ptr_type = getPointerType(slot);
+                                        if (ptr_type == .index) {
+                                            const next_pos = getPointerValue(slot);
+                                            const reader = self.cursor.db.core.reader();
+                                            try self.cursor.db.core.seekTo(next_pos);
+                                            var map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                                            try reader.readNoEof(&map_index_block);
+                                            try self.core.map.stack.append(IterCore.MapLevel{
+                                                .position = next_pos,
+                                                .block = std.mem.bytesAsValue([SLOT_COUNT]u64, &map_index_block).*,
+                                                .index = 0,
+                                            });
+                                            continue;
+                                        } else {
+                                            self.core.map.stack.items[self.core.map.stack.items.len - 1].index += 1;
+                                            const position = level.position + (level.index * POINTER_SIZE);
+                                            return Cursor{
+                                                .read_slot_cursor = ReadSlotCursor{
+                                                    .slot_ptr = SlotPointer{ .position = position, .slot = slot },
+                                                },
+                                                .db = self.cursor.db,
+                                            };
+                                        }
+                                    }
+                                }
+                            }
+                            return null;
                         },
                     }
                 }
@@ -733,7 +858,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 },
                 else => {
                     if (ptr_type != .hash) {
-                        return error.UnexpectedValueType;
+                        return error.UnexpectedPointerType;
                     }
                     try self.core.seekTo(ptr);
                     const existing_key_hash = blk: {
