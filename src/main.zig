@@ -37,7 +37,7 @@ const PointerType = enum(u64) {
     list = 0b0100 << 60,
     hash = 0b0010 << 60,
     bytes = 0b0001 << 60,
-    int = 0b1100 << 60,
+    uint = 0b1100 << 60,
 };
 
 const POINTER_TYPE_MASK: u64 = 0b1111 << 60;
@@ -59,7 +59,7 @@ pub const PathPart = union(enum) {
     },
     value: union(enum) {
         none,
-        int: u60,
+        uint: u60,
         bytes: []const u8,
     },
     path: []const PathPart,
@@ -345,13 +345,13 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 const ptr_type = getPointerType(slot);
 
                 const value = switch (ptr_type) {
-                    .int => ptr,
+                    .uint => ptr,
                     .hash => blk: {
                         const reader = self.db.core.reader();
                         try self.db.core.seekTo(ptr + HASH_SIZE);
                         const value_slot = try reader.readIntLittle(u64);
                         const value_ptr_type = getPointerType(value_slot);
-                        if (value_ptr_type != .int) {
+                        if (value_ptr_type != .uint) {
                             return error.UnexpectedPointerType;
                         }
                         break :blk getPointerValue(value_slot);
@@ -796,7 +796,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
 
                     const ptr: u64 = switch (part.value) {
                         .none => 0,
-                        .int => setType(part.value.int, .int),
+                        .uint => setType(part.value.uint, .uint),
                         .bytes => setType(try self.writeValue(hash_buffer(part.value.bytes), part.value.bytes), .bytes),
                     };
 

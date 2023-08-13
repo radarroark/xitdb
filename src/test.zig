@@ -198,7 +198,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try cursor.writePath(&[_]PathPart{
             .{ .list_get = .append_copy },
             .{ .map_get = .{ .hash = foo_key } },
-            .{ .value = .{ .int = 42 } },
+            .{ .value = .{ .uint = 42 } },
         });
 
         // read foo
@@ -399,7 +399,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try cursor.writePath(&[_]PathPart{
             .{ .list_get = .append_copy },
             .{ .map_get = .{ .bytes = "foo" } },
-            .{ .value = .{ .int = 42 } },
+            .{ .value = .{ .uint = 42 } },
         });
 
         var inner_cursor = (try cursor.readCursor(&[_]PathPart{
