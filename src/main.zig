@@ -377,7 +377,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
             }
 
             pub const Iter = struct {
-                cursor: *Cursor,
+                cursor: Cursor,
                 core: IterCore,
 
                 pub const IterKind = enum {
@@ -399,7 +399,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     };
                 };
 
-                pub fn init(cursor: *Cursor, iter_kind: IterKind) !Iter {
+                pub fn init(cursor: Cursor, iter_kind: IterKind) !Iter {
                     const core: IterCore = switch (iter_kind) {
                         .list => .{
                             .list = .{
@@ -538,7 +538,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 }
             };
 
-            pub fn iter(self: *Cursor, iter_kind: Iter.IterKind) !Iter {
+            pub fn iter(self: Cursor, iter_kind: Iter.IterKind) !Iter {
                 return try Iter.init(self, iter_kind);
             }
         };
