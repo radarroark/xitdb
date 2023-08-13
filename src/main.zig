@@ -266,7 +266,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 _ = try self.db.readSlot(path, true, self.read_slot_cursor);
             }
 
-            pub fn readBytes(self: Cursor, path: []const PathPart) !?[]u8 {
+            pub fn readBytes(self: Cursor, allocator: std.mem.Allocator, path: []const PathPart) !?[]u8 {
                 const reader = self.db.core.reader();
 
                 const slot_ptr = self.db.readSlot(path, false, self.read_slot_cursor) catch |err| {
@@ -296,14 +296,14 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 try self.db.core.seekTo(position);
                 const value_size = try reader.readIntLittle(u64);
 
-                var value = try self.db.allocator.alloc(u8, value_size);
-                errdefer self.db.allocator.free(value);
+                var value = try allocator.alloc(u8, value_size);
+                errdefer allocator.free(value);
 
                 try reader.readNoEof(value);
                 return value;
             }
 
-            pub fn readKeyBytes(self: Cursor, path: []const PathPart) !?[]u8 {
+            pub fn readKeyBytes(self: Cursor, allocator: std.mem.Allocator, path: []const PathPart) !?[]u8 {
                 const reader = self.db.core.reader();
 
                 const slot_ptr = self.db.readSlot(path, false, self.read_slot_cursor) catch |err| {
@@ -330,7 +330,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     },
                     .db = self.db,
                 };
-                return value_cursor.readBytes(&[_]PathPart{.{ .map_get = .{ .hash = std.mem.bytesToValue(Hash, &hash) } }});
+                return value_cursor.readBytes(allocator, &[_]PathPart{.{ .map_get = .{ .hash = std.mem.bytesToValue(Hash, &hash) } }});
             }
 
             pub fn readInt(self: Cursor, path: []const PathPart) !?u60 {
