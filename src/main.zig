@@ -92,7 +92,6 @@ pub const DatabaseError = error{
     UnexpectedPointerType,
     WriteNotAllowed,
     ValueMustBeAtEnd,
-    EmptyPath,
 };
 
 pub const DatabaseKind = enum {
@@ -575,7 +574,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
 
         fn readSlot(self: *Database(kind), path: []const PathPart, allow_write: bool, cursor: ReadSlotCursor) !SlotPointer {
             const part = if (path.len > 0) path[0] else switch (cursor) {
-                .index_start => return error.EmptyPath,
+                .index_start => return SlotPointer{ .position = 0, .slot = 0 },
                 .slot_ptr => {
                     if (!allow_write and cursor.slot_ptr.slot == 0) {
                         return error.KeyNotFound;
