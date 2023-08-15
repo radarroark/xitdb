@@ -77,8 +77,8 @@ fn setType(ptr: u64, ptr_type: PointerType) u64 {
     return ptr | @intFromEnum(ptr_type);
 }
 
-fn getPointerType(ptr: u64) PointerType {
-    return @enumFromInt(ptr & POINTER_TYPE_MASK);
+fn getPointerType(ptr: u64) !PointerType {
+    return std.meta.intToEnum(PointerType, ptr & POINTER_TYPE_MASK);
 }
 
 fn getPointerValue(ptr: u64) u60 {
@@ -278,14 +278,14 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 };
                 const slot = slot_ptr.slot;
                 const ptr = getPointerValue(slot);
-                const ptr_type = getPointerType(slot);
+                const ptr_type = try getPointerType(slot);
 
                 const position = switch (ptr_type) {
                     .bytes => ptr,
                     .hash => blk: {
                         try self.db.core.seekTo(ptr + HASH_SIZE);
                         const value_slot = try reader.readIntLittle(u64);
-                        const value_ptr_type = getPointerType(value_slot);
+                        const value_ptr_type = try getPointerType(value_slot);
                         if (value_ptr_type != .bytes) {
                             return error.UnexpectedPointerType;
                         }
@@ -315,7 +315,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 };
                 const slot = slot_ptr.slot;
                 const ptr = getPointerValue(slot);
-                const ptr_type = getPointerType(slot);
+                const ptr_type = try getPointerType(slot);
 
                 if (ptr_type != .hash) {
                     return error.UnexpectedPointerType;
@@ -343,7 +343,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 };
                 const slot = slot_ptr.slot;
                 const ptr = getPointerValue(slot);
-                const ptr_type = getPointerType(slot);
+                const ptr_type = try getPointerType(slot);
 
                 const value = switch (ptr_type) {
                     .uint => ptr,
@@ -351,7 +351,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         const reader = self.db.core.reader();
                         try self.db.core.seekTo(ptr + HASH_SIZE);
                         const value_slot = try reader.readIntLittle(u64);
-                        const value_ptr_type = getPointerType(value_slot);
+                        const value_ptr_type = try getPointerType(value_slot);
                         if (value_ptr_type != .uint) {
                             return error.UnexpectedPointerType;
                         }
@@ -415,7 +415,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                         .index_start => cursor.read_slot_cursor.index_start,
                                         .slot_ptr => pos_blk: {
                                             const ptr = getPointerValue(cursor.read_slot_cursor.slot_ptr.slot);
-                                            const ptr_type = getPointerType(cursor.read_slot_cursor.slot_ptr.slot);
+                                            const ptr_type = try getPointerType(cursor.read_slot_cursor.slot_ptr.slot);
                                             if (ptr_type != .map) {
                                                 return error.UnexpectedPointerType;
                                             }
@@ -495,7 +495,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                                         self.core.map.stack.items[self.core.map.stack.items.len - 1].index += 1;
                                         continue;
                                     } else {
-                                        const ptr_type = getPointerType(slot);
+                                        const ptr_type = try getPointerType(slot);
                                         if (ptr_type == .index) {
                                             // find the block
                                             const next_pos = getPointerValue(slot);
@@ -608,7 +608,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         try writer.writeIntLittle(u64, next_slot_ptr.slot);
                         return self.readSlot(path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                     } else {
-                        const ptr_type = getPointerType(cursor.slot_ptr.slot);
+                        const ptr_type = try getPointerType(cursor.slot_ptr.slot);
                         if (ptr_type != .map) {
                             return error.UnexpectedPointerType;
                         }
@@ -651,7 +651,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         try writer.writeIntLittle(u64, next_slot_ptr.slot);
                         return self.readSlot(path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                     } else {
-                        const ptr_type = getPointerType(cursor.slot_ptr.slot);
+                        const ptr_type = try getPointerType(cursor.slot_ptr.slot);
                         if (ptr_type != .list) {
                             return error.UnexpectedPointerType;
                         }
@@ -686,7 +686,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                             if (cursor.slot_ptr.slot == 0) {
                                 return error.KeyNotFound;
                             } else {
-                                const ptr_type = getPointerType(cursor.slot_ptr.slot);
+                                const ptr_type = try getPointerType(cursor.slot_ptr.slot);
                                 if (ptr_type != .map) {
                                     return error.UnexpectedPointerType;
                                 }
@@ -715,7 +715,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                             if (cursor.slot_ptr.slot == 0) {
                                 return error.KeyNotFound;
                             } else {
-                                const ptr_type = getPointerType(cursor.slot_ptr.slot);
+                                const ptr_type = try getPointerType(cursor.slot_ptr.slot);
                                 if (ptr_type != .list) {
                                     return error.UnexpectedPointerType;
                                 }
@@ -842,7 +842,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 try self.core.seekTo(slot_pos);
                 try writer.writeIntLittle(u64, setType(value_pos, .bytes));
             } else {
-                const ptr_type = getPointerType(slot);
+                const ptr_type = try getPointerType(slot);
                 if (ptr_type != .bytes) {
                     return error.UnexpectedPointerType;
                 }
@@ -886,7 +886,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 }
             }
 
-            const ptr_type = getPointerType(slot);
+            const ptr_type = try getPointerType(slot);
             const ptr = getPointerValue(slot);
 
             switch (ptr_type) {
@@ -1024,7 +1024,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     return error.KeyNotFound;
                 }
             } else {
-                const ptr_type = getPointerType(slot);
+                const ptr_type = try getPointerType(slot);
                 const ptr = getPointerValue(slot);
                 if (shift == 0) {
                     return SlotPointer{ .position = slot_pos, .slot = slot };
@@ -1056,7 +1056,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
 
 test "get/set pointer type" {
     const ptr_value = setType(42, .map);
-    try std.testing.expectEqual(PointerType.map, getPointerType(ptr_value));
+    try std.testing.expectEqual(PointerType.map, try getPointerType(ptr_value));
     const ptr_index = setType(42, .index);
-    try std.testing.expectEqual(PointerType.index, getPointerType(ptr_index));
+    try std.testing.expectEqual(PointerType.index, try getPointerType(ptr_index));
 }
