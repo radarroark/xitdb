@@ -595,8 +595,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
 
                     if (cursor != .slot_ptr) return error.NotImplemented;
 
-                    const next_pos = getPointerValue(cursor.slot_ptr.slot);
-                    if (next_pos == 0) {
+                    if (cursor.slot_ptr.slot == 0) {
                         // if slot was empty, insert the new map
                         const writer = self.core.writer();
                         try self.core.seekFromEnd(0);
@@ -613,6 +612,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         if (ptr_type != .map) {
                             return error.UnexpectedPointerType;
                         }
+                        const next_pos = getPointerValue(cursor.slot_ptr.slot);
                         // read existing block
                         const reader = self.core.reader();
                         try self.core.seekTo(next_pos);
@@ -635,8 +635,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
 
                     if (cursor != .slot_ptr) return error.NotImplemented;
 
-                    const next_pos = getPointerValue(cursor.slot_ptr.slot);
-                    if (next_pos == 0) {
+                    if (cursor.slot_ptr.slot == 0) {
                         // if slot was empty, insert the new list
                         const writer = self.core.writer();
                         try self.core.seekFromEnd(0);
@@ -656,6 +655,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                         if (ptr_type != .list) {
                             return error.UnexpectedPointerType;
                         }
+                        const next_pos = getPointerValue(cursor.slot_ptr.slot);
                         // read existing block
                         const reader = self.core.reader();
                         try self.core.seekTo(next_pos);
@@ -683,15 +683,14 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     const next_map_start = switch (cursor) {
                         .index_start => cursor.index_start,
                         .slot_ptr => blk: {
-                            const next_pos = getPointerValue(cursor.slot_ptr.slot);
-                            if (next_pos == 0) {
+                            if (cursor.slot_ptr.slot == 0) {
                                 return error.KeyNotFound;
                             } else {
                                 const ptr_type = getPointerType(cursor.slot_ptr.slot);
                                 if (ptr_type != .map) {
                                     return error.UnexpectedPointerType;
                                 }
-                                break :blk next_pos;
+                                break :blk getPointerValue(cursor.slot_ptr.slot);
                             }
                         },
                     };
@@ -713,15 +712,14 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     const next_list_start = switch (cursor) {
                         .index_start => cursor.index_start,
                         .slot_ptr => blk: {
-                            const next_pos = getPointerValue(cursor.slot_ptr.slot);
-                            if (next_pos == 0) {
+                            if (cursor.slot_ptr.slot == 0) {
                                 return error.KeyNotFound;
                             } else {
                                 const ptr_type = getPointerType(cursor.slot_ptr.slot);
                                 if (ptr_type != .list) {
                                     return error.UnexpectedPointerType;
                                 }
-                                break :blk next_pos;
+                                break :blk getPointerValue(cursor.slot_ptr.slot);
                             }
                         },
                     };
