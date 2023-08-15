@@ -40,6 +40,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         const foo_key = main.hash_buffer("foo");
         try cursor.writePath(&[_]PathPart{
             .{ .list_get = .append_copy },
+            .map_create,
             .{ .map_get = .{ .hash = foo_key } },
             .{ .value = .{ .bytes = "bar" } },
         });
@@ -55,6 +56,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         // overwrite foo
         try cursor.writePath(&[_]PathPart{
             .{ .list_get = .append_copy },
+            .map_create,
             .{ .map_get = .{ .hash = foo_key } },
             .{ .value = .{ .bytes = "baz" } },
         });
@@ -85,6 +87,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         conflict_key = (conflict_key & ~main.MASK) | (foo_key & main.MASK);
         try cursor.writePath(&[_]PathPart{
             .{ .list_get = .append_copy },
+            .map_create,
             .{ .map_get = .{ .hash = conflict_key } },
             .{ .value = .{ .bytes = "hello" } },
         });
@@ -108,6 +111,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         // overwrite conflicting key
         try cursor.writePath(&[_]PathPart{
             .{ .list_get = .append_copy },
+            .map_create,
             .{ .map_get = .{ .hash = conflict_key } },
             .{ .value = .{ .bytes = "goodbye" } },
         });
@@ -130,7 +134,9 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         const fruits_key = main.hash_buffer("fruits");
         try cursor.writePath(&[_]PathPart{
             .{ .list_get = .append_copy },
+            .map_create,
             .{ .map_get = .{ .hash = fruits_key } },
+            .list_create,
             .{ .list_get = .append },
             .{ .value = .{ .bytes = "apple" } },
         });
@@ -147,7 +153,9 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         // write banana
         try cursor.writePath(&[_]PathPart{
             .{ .list_get = .append_copy },
+            .map_create,
             .{ .map_get = .{ .hash = fruits_key } },
+            .list_create,
             .{ .list_get = .append },
             .{ .value = .{ .bytes = "banana" } },
         });
@@ -171,7 +179,9 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         // write pear and grape
         try cursor.writePath(&[_]PathPart{
             .{ .list_get = .append_copy },
+            .map_create,
             .{ .map_get = .{ .hash = fruits_key } },
+            .list_create,
             .{ .path = &[_]PathPart{ .{ .list_get = .append }, .{ .value = .{ .bytes = "pear" } } } },
             .{ .path = &[_]PathPart{ .{ .list_get = .append }, .{ .value = .{ .bytes = "grape" } } } },
         });
@@ -197,6 +207,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         // overwrite foo with an int
         try cursor.writePath(&[_]PathPart{
             .{ .list_get = .append_copy },
+            .map_create,
             .{ .map_get = .{ .hash = foo_key } },
             .{ .value = .{ .uint = 42 } },
         });
@@ -211,6 +222,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         // remove foo
         try cursor.writePath(&[_]PathPart{
             .{ .list_get = .append_copy },
+            .map_create,
             .{ .map_get = .{ .hash = foo_key } },
             .{ .value = .none },
         });
@@ -240,6 +252,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             defer allocator.free(value);
             try cursor.writePath(&[_]PathPart{
                 .{ .list_get = .append_copy },
+                .map_create,
                 .{ .map_get = .{ .hash = wat_key } },
                 .{ .value = .{ .bytes = value } },
             });
@@ -270,6 +283,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             defer allocator.free(value);
             try cursor.writePath(&[_]PathPart{
                 .{ .list_get = .append_copy },
+                .list_create,
                 .{ .list_get = .append },
                 .{ .value = .{ .bytes = value } },
             });
@@ -285,6 +299,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         // overwrite last value with hello
         try cursor.writePath(&[_]PathPart{
             .{ .list_get = .append_copy },
+            .list_create,
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .value = .{ .bytes = "hello" } },
         });
@@ -300,6 +315,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         // overwrite last value with goodbye
         try cursor.writePath(&[_]PathPart{
             .{ .list_get = .append_copy },
+            .list_create,
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .value = .{ .bytes = "goodbye" } },
         });
@@ -338,6 +354,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             defer allocator.free(value);
             try cursor.writePath(&[_]PathPart{
                 .{ .list_get = .append_copy },
+                .list_create,
                 .{ .list_get = .append },
                 .{ .value = .{ .bytes = value } },
             });
@@ -384,6 +401,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             defer allocator.free(value);
             try cursor.writePath(&[_]PathPart{
                 .{ .list_get = .append_copy },
+                .map_create,
                 .{ .map_get = .{ .bytes = value } },
                 .{ .value = .{ .bytes = value } },
             });
@@ -398,6 +416,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
         try cursor.writePath(&[_]PathPart{
             .{ .list_get = .append_copy },
+            .map_create,
             .{ .map_get = .{ .bytes = "foo" } },
             .{ .value = .{ .uint = 42 } },
         });
