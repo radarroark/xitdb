@@ -104,12 +104,12 @@ pub const SlotPointer = struct {
     slot: u64,
 };
 
-pub fn Database(comptime kind: DatabaseKind) type {
+pub fn Database(comptime db_kind: DatabaseKind) type {
     return struct {
         allocator: std.mem.Allocator,
         core: Core,
 
-        pub const Core = switch (kind) {
+        pub const Core = switch (db_kind) {
             .memory => struct {
                 buffer: std.ArrayList(u8),
                 size: u64,
@@ -209,7 +209,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
             },
         };
 
-        pub const InitOpts = switch (kind) {
+        pub const InitOpts = switch (db_kind) {
             .memory => struct {
                 capacity: usize,
             },
@@ -218,13 +218,13 @@ pub fn Database(comptime kind: DatabaseKind) type {
             },
         };
 
-        pub fn init(allocator: std.mem.Allocator, opts: InitOpts) !Database(kind) {
-            switch (kind) {
+        pub fn init(allocator: std.mem.Allocator, opts: InitOpts) !Database(db_kind) {
+            switch (db_kind) {
                 .memory => {
                     var buffer = try std.ArrayList(u8).initCapacity(allocator, opts.capacity);
                     buffer.expandToCapacity();
 
-                    var self = Database(kind){
+                    var self = Database(db_kind){
                         .allocator = allocator,
                         .core = .{
                             .buffer = buffer,
@@ -238,7 +238,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     return self;
                 },
                 .file => {
-                    var self = Database(kind){
+                    var self = Database(db_kind){
                         .allocator = allocator,
                         .core = .{ .file = opts.file },
                     };
@@ -255,13 +255,13 @@ pub fn Database(comptime kind: DatabaseKind) type {
             }
         }
 
-        pub fn deinit(self: *Database(kind)) void {
+        pub fn deinit(self: *Database(db_kind)) void {
             self.core.deinit();
         }
 
         pub const Cursor = struct {
             read_slot_cursor: ReadSlotCursor,
-            db: *Database(kind),
+            db: *Database(db_kind),
 
             pub fn writePath(self: Cursor, path: []const PathPart) !void {
                 _ = try self.db.readSlot(path, true, self.read_slot_cursor);
@@ -400,8 +400,8 @@ pub fn Database(comptime kind: DatabaseKind) type {
                     };
                 };
 
-                pub fn init(cursor: Cursor, iter_kind: IterKind) !Iter {
-                    const core: IterCore = switch (iter_kind) {
+                pub fn init(cursor: Cursor, iter_db_kind: IterKind) !Iter {
+                    const core: IterCore = switch (iter_db_kind) {
                         .list => .{
                             .list = .{
                                 .index = 0,
@@ -539,19 +539,19 @@ pub fn Database(comptime kind: DatabaseKind) type {
                 }
             };
 
-            pub fn iter(self: Cursor, iter_kind: Iter.IterKind) !Iter {
-                return try Iter.init(self, iter_kind);
+            pub fn iter(self: Cursor, iter_db_kind: Iter.IterKind) !Iter {
+                return try Iter.init(self, iter_db_kind);
             }
         };
 
-        pub fn rootCursor(self: *Database(kind)) Cursor {
+        pub fn rootCursor(self: *Database(db_kind)) Cursor {
             return Cursor{
                 .read_slot_cursor = .{ .index_start = KEY_INDEX_START },
                 .db = self,
             };
         }
 
-        fn writeHeader(self: *Database(kind)) !void {
+        fn writeHeader(self: *Database(db_kind)) !void {
             const writer = self.core.writer();
 
             var header_block = [_]u8{0} ** HEADER_BLOCK_SIZE;
@@ -572,7 +572,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
             slot_ptr: SlotPointer,
         };
 
-        fn readSlot(self: *Database(kind), path: []const PathPart, allow_write: bool, cursor: ReadSlotCursor) !SlotPointer {
+        fn readSlot(self: *Database(db_kind), path: []const PathPart, allow_write: bool, cursor: ReadSlotCursor) !SlotPointer {
             const part = if (path.len > 0) path[0] else switch (cursor) {
                 .index_start => return SlotPointer{ .position = 0, .slot = 0 },
                 .slot_ptr => {
@@ -824,7 +824,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
             }
         }
 
-        fn writeValue(self: *Database(kind), value_hash: Hash, value: []const u8) !u64 {
+        fn writeValue(self: *Database(db_kind), value_hash: Hash, value: []const u8) !u64 {
             const next_slot_ptr = try self.readMapSlot(VALUE_INDEX_START, value_hash, 0, .write);
             const slot_pos = next_slot_ptr.position;
             const slot = next_slot_ptr.slot;
@@ -855,7 +855,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
 
         // maps
 
-        fn readMapSlot(self: *Database(kind), index_pos: u64, key_hash: Hash, key_offset: u8, write_mode: WriteMode) !SlotPointer {
+        fn readMapSlot(self: *Database(db_kind), index_pos: u64, key_hash: Hash, key_offset: u8, write_mode: WriteMode) !SlotPointer {
             if (key_offset >= (HASH_SIZE * 8) / BIT_COUNT) {
                 return error.KeyOffsetExceeded;
             }
@@ -968,7 +968,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
             slot_ptr: SlotPointer,
         };
 
-        fn readListSlotAppend(self: *Database(kind), index_start: u64, write_mode: WriteMode) !AppendResult {
+        fn readListSlotAppend(self: *Database(db_kind), index_start: u64, write_mode: WriteMode) !AppendResult {
             const reader = self.core.reader();
             const writer = self.core.writer();
 
@@ -998,7 +998,7 @@ pub fn Database(comptime kind: DatabaseKind) type {
             return AppendResult{ .list_size = key + 1, .list_ptr = index_pos, .slot_ptr = slot_ptr };
         }
 
-        fn readListSlot(self: *Database(kind), index_pos: u64, key: u64, shift: u6, write_mode: WriteMode) !SlotPointer {
+        fn readListSlot(self: *Database(db_kind), index_pos: u64, key: u64, shift: u6, write_mode: WriteMode) !SlotPointer {
             const reader = self.core.reader();
 
             const i = (key >> (shift * BIT_COUNT)) & MASK;
