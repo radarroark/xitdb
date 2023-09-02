@@ -267,7 +267,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 _ = try self.db.readSlot(path, true, self.read_slot_cursor);
             }
 
-            pub fn readBytes(self: Cursor, allocator: std.mem.Allocator, path: []const PathPart) !?[]u8 {
+            pub fn readBytesAlloc(self: Cursor, allocator: std.mem.Allocator, path: []const PathPart) !?[]u8 {
                 const reader = self.db.core.reader();
 
                 const slot_ptr = self.db.readSlot(path, false, self.read_slot_cursor) catch |err| {
@@ -304,7 +304,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 return value;
             }
 
-            pub fn readByteBuffer(self: Cursor, buffer: []u8, path: []const PathPart) !?[]u8 {
+            pub fn readBytes(self: Cursor, buffer: []u8, path: []const PathPart) !?[]u8 {
                 const reader = self.db.core.reader();
 
                 const slot_ptr = self.db.readSlot(path, false, self.read_slot_cursor) catch |err| {
@@ -339,7 +339,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 return buffer[0..size];
             }
 
-            pub fn readKeyBytes(self: Cursor, allocator: std.mem.Allocator, path: []const PathPart) !?[]u8 {
+            pub fn readKeyBytesAlloc(self: Cursor, allocator: std.mem.Allocator, path: []const PathPart) !?[]u8 {
                 const reader = self.db.core.reader();
 
                 const slot_ptr = self.db.readSlot(path, false, self.read_slot_cursor) catch |err| {
@@ -366,7 +366,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     },
                     .db = self.db,
                 };
-                return value_cursor.readBytes(allocator, &[_]PathPart{.{ .map_get = .{ .hash = std.mem.bytesToValue(Hash, &hash) } }});
+                return value_cursor.readBytesAlloc(allocator, &[_]PathPart{.{ .map_get = .{ .hash = std.mem.bytesToValue(Hash, &hash) } }});
             }
 
             pub fn readInt(self: Cursor, path: []const PathPart) !?u60 {
