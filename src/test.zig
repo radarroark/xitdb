@@ -53,6 +53,14 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         defer allocator.free(bar_value);
         try std.testing.expectEqualStrings("bar", bar_value);
 
+        // read foo into stack-allocated buffer
+        var bar_buffer = [_]u8{0} ** 3;
+        const bar_buffer_value = (try cursor.readByteBuffer(&bar_buffer, &[_]PathPart{
+            .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+            .{ .map_get = .{ .hash = foo_key } },
+        })).?;
+        try std.testing.expectEqualStrings("bar", bar_buffer_value);
+
         // overwrite foo
         try cursor.writePath(&[_]PathPart{
             .{ .list_get = .append_copy },

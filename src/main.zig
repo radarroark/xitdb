@@ -304,6 +304,41 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 return value;
             }
 
+            pub fn readByteBuffer(self: Cursor, buffer: []u8, path: []const PathPart) !?[]u8 {
+                const reader = self.db.core.reader();
+
+                const slot_ptr = self.db.readSlot(path, false, self.read_slot_cursor) catch |err| {
+                    switch (err) {
+                        error.KeyNotFound => return null,
+                        else => return err,
+                    }
+                };
+                const slot = slot_ptr.slot;
+                const ptr = getPointerValue(slot);
+                const ptr_type = try getPointerType(slot);
+
+                const position = switch (ptr_type) {
+                    .bytes => ptr,
+                    .hash => blk: {
+                        try self.db.core.seekTo(ptr + HASH_SIZE);
+                        const value_slot = try reader.readIntLittle(u64);
+                        const value_ptr_type = try getPointerType(value_slot);
+                        if (value_ptr_type != .bytes) {
+                            return error.UnexpectedPointerType;
+                        }
+                        break :blk getPointerValue(value_slot);
+                    },
+                    else => return error.UnexpectedPointerType,
+                };
+
+                try self.db.core.seekTo(position);
+                const value_size = try reader.readIntLittle(u64);
+                const size = @min(buffer.len, value_size);
+
+                try reader.readNoEof(buffer[0..size]);
+                return buffer[0..size];
+            }
+
             pub fn readKeyBytes(self: Cursor, allocator: std.mem.Allocator, path: []const PathPart) !?[]u8 {
                 const reader = self.db.core.reader();
 
