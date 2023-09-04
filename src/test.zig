@@ -38,7 +38,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
         // write foo
         const foo_key = main.hash_buffer("foo");
-        try root_cursor.writePath(void, &[_]PathPart(void){
+        try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .map_create,
             .{ .map_get = .{ .hash = foo_key } },
@@ -65,7 +65,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 try std.testing.expectEqualStrings("bar", value);
             }
         };
-        try root_cursor.writePath(UpdateCtx, &[_]PathPart(UpdateCtx){
+        try root_cursor.execute(UpdateCtx, &[_]PathPart(UpdateCtx){
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .update = UpdateCtx{ .allocator = allocator } },
         });
@@ -79,7 +79,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try std.testing.expectEqualStrings("bar", bar_buffer_value);
 
         // overwrite foo
-        try root_cursor.writePath(void, &[_]PathPart(void){
+        try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .map_create,
             .{ .map_get = .{ .hash = foo_key } },
@@ -110,7 +110,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         // write key that conflicts with foo
         var conflict_key = main.hash_buffer("conflict");
         conflict_key = (conflict_key & ~main.MASK) | (foo_key & main.MASK);
-        try root_cursor.writePath(void, &[_]PathPart(void){
+        try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .map_create,
             .{ .map_get = .{ .hash = conflict_key } },
@@ -134,7 +134,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try std.testing.expectEqualStrings("baz", baz_value2);
 
         // overwrite conflicting key
-        try root_cursor.writePath(void, &[_]PathPart(void){
+        try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .map_create,
             .{ .map_get = .{ .hash = conflict_key } },
@@ -157,7 +157,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
         // write apple
         const fruits_key = main.hash_buffer("fruits");
-        try root_cursor.writePath(void, &[_]PathPart(void){
+        try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .map_create,
             .{ .map_get = .{ .hash = fruits_key } },
@@ -176,7 +176,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try std.testing.expectEqualStrings("apple", apple_value);
 
         // write banana
-        try root_cursor.writePath(void, &[_]PathPart(void){
+        try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .map_create,
             .{ .map_get = .{ .hash = fruits_key } },
@@ -202,7 +202,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         }));
 
         // write pear and grape
-        try root_cursor.writePath(void, &[_]PathPart(void){
+        try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .map_create,
             .{ .map_get = .{ .hash = fruits_key } },
@@ -230,7 +230,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try std.testing.expectEqualStrings("grape", grape_value);
 
         // overwrite foo with an int
-        try root_cursor.writePath(void, &[_]PathPart(void){
+        try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .map_create,
             .{ .map_get = .{ .hash = foo_key } },
@@ -245,7 +245,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try expectEqual(42, int_value);
 
         // remove foo
-        try root_cursor.writePath(void, &[_]PathPart(void){
+        try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .map_create,
             .{ .map_get = .{ .hash = foo_key } },
@@ -275,7 +275,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         for (0..main.SLOT_COUNT + 1) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
-            try root_cursor.writePath(void, &[_]PathPart(void){
+            try root_cursor.execute(void, &[_]PathPart(void){
                 .{ .list_get = .append_copy },
                 .map_create,
                 .{ .map_get = .{ .hash = wat_key } },
@@ -306,7 +306,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         for (0..main.SLOT_COUNT + 1) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
-            try root_cursor.writePath(void, &[_]PathPart(void){
+            try root_cursor.execute(void, &[_]PathPart(void){
                 .{ .list_get = .append_copy },
                 .list_create,
                 .{ .list_get = .append },
@@ -322,7 +322,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         }
 
         // overwrite last value with hello
-        try root_cursor.writePath(void, &[_]PathPart(void){
+        try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .list_create,
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
@@ -338,7 +338,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try std.testing.expectEqualStrings("hello", value);
 
         // overwrite last value with goodbye
-        try root_cursor.writePath(void, &[_]PathPart(void){
+        try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .list_create,
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
@@ -377,7 +377,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         for (0..10) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
-            try root_cursor.writePath(void, &[_]PathPart(void){
+            try root_cursor.execute(void, &[_]PathPart(void){
                 .{ .list_get = .append_copy },
                 .list_create,
                 .{ .list_get = .append },
@@ -424,7 +424,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         for (0..10) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
-            try root_cursor.writePath(void, &[_]PathPart(void){
+            try root_cursor.execute(void, &[_]PathPart(void){
                 .{ .list_get = .append_copy },
                 .map_create,
                 .{ .map_get = .{ .bytes = value } },
@@ -439,7 +439,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             try std.testing.expectEqualStrings(value, value2);
         }
 
-        try root_cursor.writePath(void, &[_]PathPart(void){
+        try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .map_create,
             .{ .map_get = .{ .bytes = "foo" } },

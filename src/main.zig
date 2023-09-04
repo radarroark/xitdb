@@ -266,7 +266,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             read_slot_cursor: ReadSlotCursor,
             db: *Database(db_kind),
 
-            pub fn writePath(self: Cursor, comptime UpdateCtx: type, path: []const PathPart(UpdateCtx)) !void {
+            pub fn execute(self: Cursor, comptime UpdateCtx: type, path: []const PathPart(UpdateCtx)) !void {
                 _ = try self.db.readSlot(UpdateCtx, path, true, self.read_slot_cursor);
             }
 
