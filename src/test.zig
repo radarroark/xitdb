@@ -57,12 +57,13 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         const UpdateCtx = struct {
             allocator: std.mem.Allocator,
 
-            pub fn update(self: @This(), cursor: Database(kind).Cursor) !void {
+            pub fn update(self: @This(), cursor: Database(kind).Cursor, is_empty: bool) !void {
                 const value = (try cursor.readBytesAlloc(self.allocator, void, &[_]PathPart(void){
                     .{ .map_get = .{ .bytes = "foo" } },
                 })).?;
                 defer self.allocator.free(value);
                 try std.testing.expectEqualStrings("bar", value);
+                try expectEqual(false, is_empty);
             }
         };
         try root_cursor.execute(UpdateCtx, &[_]PathPart(UpdateCtx){

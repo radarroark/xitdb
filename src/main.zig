@@ -864,12 +864,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     if (@TypeOf(part.update) == void) {
                         return error.NotImplmented;
                     } else {
-                        try part.update.update(Cursor{
+                        const next_cursor = Cursor{
                             .read_slot_cursor = ReadSlotCursor{
                                 .slot_ptr = cursor.slot_ptr,
                             },
                             .db = self,
-                        });
+                        };
+                        try part.update.update(next_cursor, cursor.slot_ptr.slot == 0);
                         return cursor.slot_ptr;
                     }
                 },
