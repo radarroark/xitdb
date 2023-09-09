@@ -53,23 +53,53 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         defer allocator.free(bar_value);
         try std.testing.expectEqualStrings("bar", bar_value);
 
-        // read foo from update ctx
-        const UpdateCtx = struct {
-            allocator: std.mem.Allocator,
+        // read foo from ctx
+        {
+            const Ctx = struct {
+                allocator: std.mem.Allocator,
 
-            pub fn update(self: @This(), cursor: Database(kind).Cursor, is_empty: bool) !void {
-                const value = (try cursor.readBytesAlloc(self.allocator, void, &[_]PathPart(void){
-                    .{ .map_get = .{ .bytes = "foo" } },
-                })).?;
-                defer self.allocator.free(value);
-                try std.testing.expectEqualStrings("bar", value);
-                try expectEqual(false, is_empty);
-            }
-        };
-        try root_cursor.execute(UpdateCtx, &[_]PathPart(UpdateCtx){
-            .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .update = UpdateCtx{ .allocator = allocator } },
-        });
+                pub fn update(self: @This(), cursor: Database(kind).Cursor, is_empty: bool) !void {
+                    const value = (try cursor.readBytesAlloc(self.allocator, void, &[_]PathPart(void){
+                        .{ .map_get = .{ .bytes = "foo" } },
+                    })).?;
+                    defer self.allocator.free(value);
+                    try std.testing.expectEqualStrings("bar", value);
+                    try expectEqual(false, is_empty);
+                }
+            };
+            try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
+                .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+                .{ .update = Ctx{ .allocator = allocator } },
+            });
+        }
+
+        // if error in ctx, db doesn't change
+        {
+            const Ctx = struct {
+                allocator: std.mem.Allocator,
+
+                pub fn update(_: @This(), cursor: Database(kind).Cursor, _: bool) !void {
+                    try cursor.execute(void, &[_]PathPart(void){
+                        .{ .map_get = .{ .bytes = "foo" } },
+                        .{ .value = .{ .bytes = "this value won't be visible" } },
+                    });
+                    return error.NotImplemented;
+                }
+            };
+            root_cursor.execute(Ctx, &[_]PathPart(Ctx){
+                .{ .list_get = .append_copy },
+                .map_create,
+                .{ .update = Ctx{ .allocator = allocator } },
+            }) catch {};
+
+            // read foo
+            const value = (try root_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){
+                .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+                .{ .map_get = .{ .hash = foo_key } },
+            })).?;
+            defer allocator.free(value);
+            try std.testing.expectEqualStrings("bar", value);
+        }
 
         // read foo into stack-allocated buffer
         var bar_buffer = [_]u8{0} ** 3;
