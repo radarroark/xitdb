@@ -60,8 +60,11 @@ pub fn PathPart(comptime UpdateCtx: type) type {
             append,
             append_copy,
         },
+        map_remove: union(enum) {
+            hash: Hash,
+            bytes: []const u8,
+        },
         value: union(enum) {
-            none,
             uint: u60,
             bytes: []const u8,
         },
@@ -72,6 +75,7 @@ pub fn PathPart(comptime UpdateCtx: type) type {
 
 const WriteMode = enum {
     read_only,
+    read_only_shallow,
     write,
     write_immutable,
 };
@@ -835,6 +839,37 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         },
                     }
                 },
+                .map_remove => {
+                    if (!allow_write) return error.WriteNotAllowed;
+
+                    if (path.len > 1) return error.ValueMustBeAtEnd;
+
+                    const next_map_start = switch (cursor) {
+                        .index_start => cursor.index_start,
+                        .slot_ptr => blk: {
+                            if (cursor.slot_ptr.slot == 0) {
+                                return error.KeyNotFound;
+                            } else {
+                                const ptr_type = try getPointerType(cursor.slot_ptr.slot);
+                                if (ptr_type != .map) {
+                                    return error.UnexpectedPointerType;
+                                }
+                                break :blk getPointerValue(cursor.slot_ptr.slot);
+                            }
+                        },
+                    };
+                    const hash = switch (part.map_remove) {
+                        .hash => part.map_remove.hash,
+                        .bytes => hash_buffer(part.map_remove.bytes),
+                    };
+                    const next_slot_ptr = try self.readMapSlot(next_map_start, hash, 0, .read_only_shallow);
+
+                    const writer = self.core.writer();
+                    try self.core.seekTo(next_slot_ptr.position);
+                    try writer.writeIntLittle(u64, 0);
+
+                    return next_slot_ptr;
+                },
                 .value => {
                     if (!allow_write) return error.WriteNotAllowed;
 
@@ -843,7 +878,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     if (cursor != .slot_ptr) return error.NotImplemented;
 
                     const ptr: u64 = switch (part.value) {
-                        .none => 0,
                         .uint => setType(part.value.uint, .uint),
                         .bytes => setType(try self.writeValue(hash_buffer(part.value.bytes), part.value.bytes), .bytes),
                     };
@@ -965,10 +999,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                     return self.readMapSlot(next_ptr, key_hash, key_offset + 1, write_mode);
                 },
-                else => {
-                    if (ptr_type != .hash) {
-                        return error.UnexpectedPointerType;
-                    }
+                .hash => {
                     try self.core.seekTo(ptr);
                     const existing_key_hash = blk: {
                         var hash = [_]u8{0} ** HASH_INT_SIZE;
@@ -976,9 +1007,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         break :blk std.mem.bytesToValue(Hash, &hash);
                     };
                     if (existing_key_hash == key_hash) {
-                        const value_slot_pos = try self.core.getPos();
-                        const value_slot = try reader.readIntLittle(u64);
                         if (write_mode == .write_immutable) {
+                            const value_slot = try reader.readIntLittle(u64);
                             try self.core.seekFromEnd(0);
                             // write hash
                             const hash_pos = try self.core.getPos();
@@ -990,7 +1020,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             try self.core.seekTo(slot_pos);
                             try writer.writeIntLittle(u64, setType(hash_pos, .hash));
                             return SlotPointer{ .position = next_value_slot_pos, .slot = value_slot };
+                        } else if (write_mode == .read_only_shallow) {
+                            return SlotPointer{ .position = slot_pos, .slot = slot };
                         } else {
+                            const value_slot_pos = try self.core.getPos();
+                            const value_slot = try reader.readIntLittle(u64);
                             return SlotPointer{ .position = value_slot_pos, .slot = value_slot };
                         }
                     } else {
@@ -1014,6 +1048,9 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             return error.KeyNotFound;
                         }
                     }
+                },
+                else => {
+                    return error.UnexpectedPointerType;
                 },
             }
         }

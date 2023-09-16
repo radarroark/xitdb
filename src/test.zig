@@ -279,8 +279,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .map_create,
-            .{ .map_get = .{ .hash = foo_key } },
-            .{ .value = .none },
+            .{ .map_remove = .{ .hash = foo_key } },
         });
 
         // read foo
@@ -405,6 +404,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         }
         var root_cursor = db.rootCursor();
 
+        // add wats
         for (0..10) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
@@ -423,6 +423,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             try std.testing.expectEqualStrings(value, value2);
         }
 
+        // iterate over list
         var inner_cursor = (try root_cursor.readCursor(void, &[_]PathPart(void){
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
         })).?;
@@ -452,6 +453,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         }
         var root_cursor = db.rootCursor();
 
+        // add wats
         for (0..10) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
@@ -470,6 +472,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             try std.testing.expectEqualStrings(value, value2);
         }
 
+        // add foo
         try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .map_create,
@@ -477,6 +480,14 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .value = .{ .uint = 42 } },
         });
 
+        // remove a wat
+        try root_cursor.execute(void, &[_]PathPart(void){
+            .{ .list_get = .append_copy },
+            .map_create,
+            .{ .map_remove = .{ .bytes = "wat0" } },
+        });
+
+        // iterate over map
         var inner_cursor = (try root_cursor.readCursor(void, &[_]PathPart(void){
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
         })).?;
@@ -496,7 +507,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             }
             i += 1;
         }
-        try expectEqual(11, i);
+        try expectEqual(10, i);
     }
 }
 
