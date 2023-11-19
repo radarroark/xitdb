@@ -365,7 +365,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             }
 
             pub fn execute(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !void {
-                _ = try self.db.readSlot(Ctx, path, self.allow_write, self.read_slot_cursor);
+                if (!self.allow_write) return error.WriteNotAllowed;
+                _ = try self.db.readSlot(Ctx, path, true, self.read_slot_cursor);
             }
 
             pub fn readBytesAlloc(self: Cursor, allocator: std.mem.Allocator, comptime Ctx: type, path: []const PathPart(Ctx)) !?[]u8 {
