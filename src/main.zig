@@ -174,6 +174,14 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     self.position = offset;
                 }
 
+                pub fn seekBy(self: *Core, offset: i64) !void {
+                    if (offset > 0) {
+                        self.position +|= std.math.absCast(offset);
+                    } else {
+                        self.position -|= std.math.absCast(offset);
+                    }
+                }
+
                 pub fn seekFromEnd(self: *Core, offset: i64) !void {
                     if (offset > 0) {
                         self.position = self.size +| std.math.absCast(offset);
@@ -203,6 +211,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                 pub fn seekTo(self: Core, offset: u64) !void {
                     try self.file.seekTo(offset);
+                }
+
+                pub fn seekBy(self: Core, offset: i64) !void {
+                    try self.file.seekBy(offset);
                 }
 
                 pub fn seekFromEnd(self: Core, offset: i64) !void {
@@ -268,13 +280,91 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
         pub const Cursor = struct {
             read_slot_cursor: ReadSlotCursor,
             db: *Database(db_kind),
+            position: u64,
+
+            const Reader = struct {
+                parent: *Cursor,
+
+                fn readSize(self: Reader) !u64 {
+                    const core_reader = self.parent.db.core.reader();
+
+                    const slot_ptr = try self.parent.db.readSlot(void, &[_]PathPart(void){}, false, self.parent.read_slot_cursor);
+                    const slot = slot_ptr.slot;
+                    const ptr = getPointerValue(slot);
+                    const ptr_type = try getPointerType(slot);
+
+                    const position = switch (ptr_type) {
+                        .bytes => ptr,
+                        .hash => blk: {
+                            try self.parent.db.core.seekTo(ptr + HASH_SIZE);
+                            const value_slot = try core_reader.readIntLittle(u64);
+                            const value_ptr_type = try getPointerType(value_slot);
+                            if (value_ptr_type != .bytes) {
+                                return error.UnexpectedPointerType;
+                            }
+                            break :blk getPointerValue(value_slot);
+                        },
+                        else => return error.UnexpectedPointerType,
+                    };
+
+                    try self.parent.db.core.seekTo(position);
+                    const value_size = try core_reader.readIntLittle(u64);
+                    if (value_size < self.parent.position) return error.EndOfStream;
+                    return value_size;
+                }
+
+                pub fn readNoEof(self: Reader, buf: []u8) !void {
+                    const value_size = try self.readSize();
+                    if (value_size - self.parent.position < buf.len) return error.EndOfStream;
+
+                    const core_reader = self.parent.db.core.reader();
+                    try self.parent.db.core.seekBy(@intCast(self.parent.position));
+                    try core_reader.readNoEof(buf);
+                    self.parent.position += buf.len;
+                }
+
+                pub fn readIntLittle(self: Reader, comptime T: type) !T {
+                    const value_size = try self.readSize();
+                    if (value_size - self.parent.position < @sizeOf(T)) return error.EndOfStream;
+
+                    const core_reader = self.parent.db.core.reader();
+                    try self.parent.db.core.seekBy(@intCast(self.parent.position));
+                    const ret = try core_reader.readIntLittle(T);
+                    self.parent.position += @sizeOf(T);
+                    return ret;
+                }
+            };
+
+            pub fn reader(self: *Cursor) Reader {
+                return Reader{ .parent = self };
+            }
+
+            pub fn seekTo(self: *Cursor, offset: u64) !void {
+                self.position = offset;
+            }
+
+            pub fn seekBy(self: *Cursor, offset: i64) !void {
+                if (offset > 0) {
+                    self.position +|= std.math.absCast(offset);
+                } else {
+                    self.position -|= std.math.absCast(offset);
+                }
+            }
+
+            pub fn seekFromEnd(self: *Cursor, offset: i64) !void {
+                if (offset > 0) {
+                    self.position +|= std.math.absCast(offset);
+                } else {
+                    self.position -|= std.math.absCast(offset);
+                }
+            }
 
             pub fn execute(self: Cursor, comptime UpdateCtx: type, path: []const PathPart(UpdateCtx)) !void {
                 _ = try self.db.readSlot(UpdateCtx, path, true, self.read_slot_cursor);
             }
 
             pub fn readBytesAlloc(self: Cursor, allocator: std.mem.Allocator, comptime UpdateCtx: type, path: []const PathPart(UpdateCtx)) !?[]u8 {
-                const reader = self.db.core.reader();
+                const core_reader = self.db.core.reader();
 
                 const slot_ptr = self.db.readSlot(UpdateCtx, path, false, self.read_slot_cursor) catch |err| {
                     switch (err) {
@@ -290,7 +380,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     .bytes => ptr,
                     .hash => blk: {
                         try self.db.core.seekTo(ptr + HASH_SIZE);
-                        const value_slot = try reader.readIntLittle(u64);
+                        const value_slot = try core_reader.readIntLittle(u64);
                         const value_ptr_type = try getPointerType(value_slot);
                         if (value_ptr_type != .bytes) {
                             return error.UnexpectedPointerType;
@@ -301,17 +391,17 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 };
 
                 try self.db.core.seekTo(position);
-                const value_size = try reader.readIntLittle(u64);
+                const value_size = try core_reader.readIntLittle(u64);
 
                 var value = try allocator.alloc(u8, value_size);
                 errdefer allocator.free(value);
 
-                try reader.readNoEof(value);
+                try core_reader.readNoEof(value);
                 return value;
             }
 
             pub fn readBytes(self: Cursor, buffer: []u8, comptime UpdateCtx: type, path: []const PathPart(UpdateCtx)) !?[]u8 {
-                const reader = self.db.core.reader();
+                const core_reader = self.db.core.reader();
 
                 const slot_ptr = self.db.readSlot(UpdateCtx, path, false, self.read_slot_cursor) catch |err| {
                     switch (err) {
@@ -327,7 +417,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     .bytes => ptr,
                     .hash => blk: {
                         try self.db.core.seekTo(ptr + HASH_SIZE);
-                        const value_slot = try reader.readIntLittle(u64);
+                        const value_slot = try core_reader.readIntLittle(u64);
                         const value_ptr_type = try getPointerType(value_slot);
                         if (value_ptr_type != .bytes) {
                             return error.UnexpectedPointerType;
@@ -338,15 +428,15 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 };
 
                 try self.db.core.seekTo(position);
-                const value_size = try reader.readIntLittle(u64);
+                const value_size = try core_reader.readIntLittle(u64);
                 const size = @min(buffer.len, value_size);
 
-                try reader.readNoEof(buffer[0..size]);
+                try core_reader.readNoEof(buffer[0..size]);
                 return buffer[0..size];
             }
 
             pub fn readKeyBytesAlloc(self: Cursor, allocator: std.mem.Allocator, comptime UpdateCtx: type, path: []const PathPart(UpdateCtx)) !?[]u8 {
-                const reader = self.db.core.reader();
+                const core_reader = self.db.core.reader();
 
                 const slot_ptr = self.db.readSlot(UpdateCtx, path, false, self.read_slot_cursor) catch |err| {
                     switch (err) {
@@ -364,13 +454,14 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                 try self.db.core.seekTo(ptr);
                 var hash = [_]u8{0} ** HASH_INT_SIZE;
-                try reader.readNoEof(hash[0..HASH_SIZE]);
+                try core_reader.readNoEof(hash[0..HASH_SIZE]);
 
                 const value_cursor = Cursor{
                     .read_slot_cursor = ReadSlotCursor{
                         .index_start = VALUE_INDEX_START,
                     },
                     .db = self.db,
+                    .position = 0,
                 };
                 return value_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){.{ .map_get = .{ .hash = std.mem.bytesToValue(Hash, &hash) } }});
             }
@@ -389,9 +480,9 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 const value = switch (ptr_type) {
                     .uint => ptr,
                     .hash => blk: {
-                        const reader = self.db.core.reader();
+                        const core_reader = self.db.core.reader();
                         try self.db.core.seekTo(ptr + HASH_SIZE);
-                        const value_slot = try reader.readIntLittle(u64);
+                        const value_slot = try core_reader.readIntLittle(u64);
                         const value_ptr_type = try getPointerType(value_slot);
                         if (value_ptr_type != .uint) {
                             return error.UnexpectedPointerType;
@@ -415,6 +506,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         .slot_ptr = slot_ptr,
                     },
                     .db = self.db,
+                    .position = 0,
                 };
             }
 
@@ -465,9 +557,9 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                     };
                                     try cursor.db.core.seekTo(position);
                                     // read the block
-                                    const reader = cursor.db.core.reader();
+                                    const core_reader = cursor.db.core.reader();
                                     var map_index_block_bytes = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                    try reader.readNoEof(&map_index_block_bytes);
+                                    try core_reader.readNoEof(&map_index_block_bytes);
                                     // convert the block into 64-bit little endian ints
                                     var map_index_block = [_]u64{0} ** SLOT_COUNT;
                                     {
@@ -519,6 +611,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                     .slot_ptr = slot_ptr,
                                 },
                                 .db = self.cursor.db,
+                                .position = 0,
                             };
                         },
                         .map => {
@@ -542,9 +635,9 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                             const next_pos = getPointerValue(slot);
                                             try self.cursor.db.core.seekTo(next_pos);
                                             // read the block
-                                            const reader = self.cursor.db.core.reader();
+                                            const core_reader = self.cursor.db.core.reader();
                                             var map_index_block_bytes = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                            try reader.readNoEof(&map_index_block_bytes);
+                                            try core_reader.readNoEof(&map_index_block_bytes);
                                             // convert the block into 64-bit little endian ints
                                             var map_index_block = [_]u64{0} ** SLOT_COUNT;
                                             {
@@ -569,6 +662,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                                     .slot_ptr = SlotPointer{ .position = position, .slot = slot },
                                                 },
                                                 .db = self.cursor.db,
+                                                .position = 0,
                                             };
                                         }
                                     }
@@ -589,6 +683,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             return Cursor{
                 .read_slot_cursor = .{ .index_start = KEY_INDEX_START },
                 .db = self,
+                .position = 0,
             };
         }
 
@@ -897,13 +992,14 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     if (@TypeOf(part.update) == void) {
                         return error.NotImplmented;
                     } else {
-                        const next_cursor = Cursor{
+                        var next_cursor = Cursor{
                             .read_slot_cursor = ReadSlotCursor{
                                 .slot_ptr = cursor.slot_ptr,
                             },
                             .db = self,
+                            .position = 0,
                         };
-                        try part.update.update(next_cursor, cursor.slot_ptr.slot == 0);
+                        try part.update.update(&next_cursor, cursor.slot_ptr.slot == 0);
                         return cursor.slot_ptr;
                     }
                 },

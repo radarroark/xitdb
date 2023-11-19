@@ -58,7 +58,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn update(self: @This(), cursor: Database(kind).Cursor, is_empty: bool) !void {
+                pub fn update(self: @This(), cursor: *Database(kind).Cursor, is_empty: bool) !void {
                     const value = (try cursor.readBytesAlloc(self.allocator, void, &[_]PathPart(void){
                         .{ .map_get = .{ .bytes = "foo" } },
                     })).?;
@@ -73,12 +73,47 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             });
         }
 
+        // read foo from ctx with reader
+        {
+            const Ctx = struct {
+                pub fn update(_: @This(), cursor: *Database(kind).Cursor, is_empty: bool) !void {
+                    const reader = cursor.reader();
+                    var char = [_]u8{0} ** 1;
+
+                    try reader.readNoEof(&char);
+                    try std.testing.expectEqualStrings("b", &char);
+
+                    try reader.readNoEof(&char);
+                    try std.testing.expectEqualStrings("a", &char);
+
+                    try reader.readNoEof(&char);
+                    try std.testing.expectEqualStrings("r", &char);
+
+                    try expectEqual(error.EndOfStream, reader.readNoEof(&char));
+
+                    try cursor.seekTo(2);
+                    try cursor.seekBy(-1);
+                    try expectEqual('a', try reader.readIntLittle(u8));
+
+                    try cursor.seekFromEnd(-2);
+                    try expectEqual('b', try reader.readIntLittle(u8));
+
+                    try expectEqual(false, is_empty);
+                }
+            };
+            try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
+                .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+                .{ .map_get = .{ .bytes = "foo" } },
+                .{ .update = Ctx{} },
+            });
+        }
+
         // if error in ctx, db doesn't change
         {
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn update(_: @This(), cursor: Database(kind).Cursor, _: bool) !void {
+                pub fn update(_: @This(), cursor: *Database(kind).Cursor, _: bool) !void {
                     try cursor.execute(void, &[_]PathPart(void){
                         .{ .map_get = .{ .bytes = "foo" } },
                         .{ .value = .{ .bytes = "this value won't be visible" } },
