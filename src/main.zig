@@ -284,6 +284,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             read_slot_cursor: ReadSlotCursor,
             db: *Database(db_kind),
             allow_write: bool,
+            is_new: bool,
             position: u64,
 
             const Reader = struct {
@@ -466,6 +467,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     },
                     .db = self.db,
                     .allow_write = false,
+                    .is_new = false,
                     .position = 0,
                 };
                 return value_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){.{ .map_get = .{ .hash = std.mem.bytesToValue(Hash, &hash) } }});
@@ -512,6 +514,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     },
                     .db = self.db,
                     .allow_write = false,
+                    .is_new = false,
                     .position = 0,
                 };
             }
@@ -618,6 +621,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 },
                                 .db = self.cursor.db,
                                 .allow_write = true,
+                                .is_new = false,
                                 .position = 0,
                             };
                         },
@@ -670,6 +674,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                                 },
                                                 .db = self.cursor.db,
                                                 .allow_write = true,
+                                                .is_new = false,
                                                 .position = 0,
                                             };
                                         }
@@ -692,6 +697,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 .read_slot_cursor = .{ .index_start = KEY_INDEX_START },
                 .db = self,
                 .allow_write = true,
+                .is_new = false,
                 .position = 0,
             };
         }
@@ -1008,9 +1014,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             },
                             .db = self,
                             .allow_write = part.ctx.write,
+                            .is_new = cursor.slot_ptr.slot == 0,
                             .position = 0,
                         };
-                        try part.ctx.ctx.run(&next_cursor, cursor.slot_ptr.slot == 0);
+                        try part.ctx.ctx.run(&next_cursor);
                         return cursor.slot_ptr;
                     }
                 },

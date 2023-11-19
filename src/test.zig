@@ -58,13 +58,13 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn run(self: @This(), cursor: *Database(kind).Cursor, is_empty: bool) !void {
+                pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
                     const value = (try cursor.readBytesAlloc(self.allocator, void, &[_]PathPart(void){
                         .{ .map_get = .{ .bytes = "foo" } },
                     })).?;
                     defer self.allocator.free(value);
                     try std.testing.expectEqualStrings("bar", value);
-                    try expectEqual(false, is_empty);
+                    try expectEqual(false, cursor.is_new);
                 }
             };
             try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
@@ -76,7 +76,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         // read foo from ctx with reader
         {
             const Ctx = struct {
-                pub fn run(_: @This(), cursor: *Database(kind).Cursor, is_empty: bool) !void {
+                pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
                     const reader = cursor.reader();
                     var char = [_]u8{0} ** 1;
 
@@ -98,7 +98,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                     try cursor.seekFromEnd(-2);
                     try expectEqual('b', try reader.readIntLittle(u8));
 
-                    try expectEqual(false, is_empty);
+                    try expectEqual(false, cursor.is_new);
                 }
             };
             try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
@@ -113,7 +113,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn run(_: @This(), cursor: *Database(kind).Cursor, _: bool) !void {
+                pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
                     try cursor.execute(void, &[_]PathPart(void){
                         .{ .map_get = .{ .bytes = "foo" } },
                         .{ .value = .{ .bytes = "this value won't be visible" } },
@@ -133,7 +133,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn run(_: @This(), cursor: *Database(kind).Cursor, _: bool) !void {
+                pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
                     try cursor.execute(void, &[_]PathPart(void){
                         .{ .map_get = .{ .bytes = "foo" } },
                         .{ .value = .{ .bytes = "this value won't be visible" } },
