@@ -58,7 +58,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn update(self: @This(), cursor: *Database(kind).Cursor, is_empty: bool) !void {
+                pub fn run(self: @This(), cursor: *Database(kind).Cursor, is_empty: bool) !void {
                     const value = (try cursor.readBytesAlloc(self.allocator, void, &[_]PathPart(void){
                         .{ .map_get = .{ .bytes = "foo" } },
                     })).?;
@@ -69,14 +69,14 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             };
             try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
                 .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .update = Ctx{ .allocator = allocator } },
+                .{ .ctx = .{ .write = false, .ctx = Ctx{ .allocator = allocator } } },
             });
         }
 
         // read foo from ctx with reader
         {
             const Ctx = struct {
-                pub fn update(_: @This(), cursor: *Database(kind).Cursor, is_empty: bool) !void {
+                pub fn run(_: @This(), cursor: *Database(kind).Cursor, is_empty: bool) !void {
                     const reader = cursor.reader();
                     var char = [_]u8{0} ** 1;
 
@@ -104,8 +104,28 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
                 .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
                 .{ .map_get = .{ .bytes = "foo" } },
-                .{ .update = Ctx{} },
+                .{ .ctx = .{ .write = false, .ctx = Ctx{} } },
             });
+        }
+
+        // can't execute a write if ctx is read-only
+        {
+            const Ctx = struct {
+                allocator: std.mem.Allocator,
+
+                pub fn run(_: @This(), cursor: *Database(kind).Cursor, _: bool) !void {
+                    try cursor.execute(void, &[_]PathPart(void){
+                        .{ .map_get = .{ .bytes = "foo" } },
+                        .{ .value = .{ .bytes = "this value won't be visible" } },
+                    });
+                }
+            };
+            const err = root_cursor.execute(Ctx, &[_]PathPart(Ctx){
+                .{ .list_get = .append_copy },
+                .map_create,
+                .{ .ctx = .{ .write = false, .ctx = Ctx{ .allocator = allocator } } },
+            });
+            try expectEqual(error.WriteNotAllowed, err);
         }
 
         // if error in ctx, db doesn't change
@@ -113,7 +133,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn update(_: @This(), cursor: *Database(kind).Cursor, _: bool) !void {
+                pub fn run(_: @This(), cursor: *Database(kind).Cursor, _: bool) !void {
                     try cursor.execute(void, &[_]PathPart(void){
                         .{ .map_get = .{ .bytes = "foo" } },
                         .{ .value = .{ .bytes = "this value won't be visible" } },
@@ -124,7 +144,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             root_cursor.execute(Ctx, &[_]PathPart(Ctx){
                 .{ .list_get = .append_copy },
                 .map_create,
-                .{ .update = Ctx{ .allocator = allocator } },
+                .{ .ctx = .{ .write = true, .ctx = Ctx{ .allocator = allocator } } },
             }) catch {};
 
             // read foo
