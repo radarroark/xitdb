@@ -68,10 +68,7 @@ pub fn PathPart(comptime Ctx: type) type {
             uint: u60,
             bytes: []const u8,
         },
-        ctx: struct {
-            write: bool,
-            ctx: Ctx,
-        },
+        ctx: Ctx,
         path: []const PathPart(Ctx),
     };
 }
@@ -283,7 +280,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
         pub const Cursor = struct {
             read_slot_cursor: ReadSlotCursor,
             db: *Database(db_kind),
-            allow_write: bool,
             is_new: bool,
             position: u64,
 
@@ -365,7 +361,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             }
 
             pub fn execute(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !void {
-                if (!self.allow_write) return error.WriteNotAllowed;
                 _ = try self.db.readSlot(Ctx, path, true, self.read_slot_cursor);
             }
 
@@ -467,7 +462,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         .index_start = VALUE_INDEX_START,
                     },
                     .db = self.db,
-                    .allow_write = false,
                     .is_new = false,
                     .position = 0,
                 };
@@ -514,7 +508,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         .slot_ptr = slot_ptr,
                     },
                     .db = self.db,
-                    .allow_write = false,
                     .is_new = false,
                     .position = 0,
                 };
@@ -621,7 +614,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                     .slot_ptr = slot_ptr,
                                 },
                                 .db = self.cursor.db,
-                                .allow_write = true,
                                 .is_new = false,
                                 .position = 0,
                             };
@@ -674,7 +666,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                                     .slot_ptr = SlotPointer{ .position = position, .slot = slot },
                                                 },
                                                 .db = self.cursor.db,
-                                                .allow_write = true,
                                                 .is_new = false,
                                                 .position = 0,
                                             };
@@ -697,7 +688,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             return Cursor{
                 .read_slot_cursor = .{ .index_start = KEY_INDEX_START },
                 .db = self,
-                .allow_write = true,
                 .is_new = false,
                 .position = 0,
             };
@@ -999,14 +989,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     return cursor.slot_ptr;
                 },
                 .ctx => {
-                    if (part.ctx.write) {
-                        if (!allow_write) return error.WriteNotAllowed;
-                        if (path.len > 1) return error.ValueMustBeAtEnd;
-                    }
+                    if (path.len > 1) return error.ValueMustBeAtEnd;
 
                     if (cursor != .slot_ptr) return error.NotImplemented;
 
-                    if (@TypeOf(part.ctx.ctx) == void) {
+                    if (@TypeOf(part.ctx) == void) {
                         return error.NotImplmented;
                     } else {
                         var next_cursor = Cursor{
@@ -1014,11 +1001,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 .slot_ptr = cursor.slot_ptr,
                             },
                             .db = self,
-                            .allow_write = part.ctx.write,
                             .is_new = cursor.slot_ptr.slot == 0,
                             .position = 0,
                         };
-                        try part.ctx.ctx.run(&next_cursor);
+                        try part.ctx.run(&next_cursor);
                         return cursor.slot_ptr;
                     }
                 },

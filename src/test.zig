@@ -69,7 +69,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             };
             try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
                 .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .ctx = .{ .write = false, .ctx = Ctx{ .allocator = allocator } } },
+                .{ .ctx = Ctx{ .allocator = allocator } },
             });
         }
 
@@ -104,28 +104,8 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
                 .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
                 .{ .map_get = .{ .bytes = "foo" } },
-                .{ .ctx = .{ .write = false, .ctx = Ctx{} } },
+                .{ .ctx = Ctx{} },
             });
-        }
-
-        // can't execute a write if ctx is read-only
-        {
-            const Ctx = struct {
-                allocator: std.mem.Allocator,
-
-                pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
-                    try cursor.execute(void, &[_]PathPart(void){
-                        .{ .map_get = .{ .bytes = "foo" } },
-                        .{ .value = .{ .bytes = "this value won't be visible" } },
-                    });
-                }
-            };
-            const err = root_cursor.execute(Ctx, &[_]PathPart(Ctx){
-                .{ .list_get = .append_copy },
-                .map_create,
-                .{ .ctx = .{ .write = false, .ctx = Ctx{ .allocator = allocator } } },
-            });
-            try expectEqual(error.WriteNotAllowed, err);
         }
 
         // if error in ctx, db doesn't change
@@ -144,7 +124,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             root_cursor.execute(Ctx, &[_]PathPart(Ctx){
                 .{ .list_get = .append_copy },
                 .map_create,
-                .{ .ctx = .{ .write = true, .ctx = Ctx{ .allocator = allocator } } },
+                .{ .ctx = Ctx{ .allocator = allocator } },
             }) catch {};
 
             // read foo
