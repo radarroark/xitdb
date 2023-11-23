@@ -279,31 +279,22 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
         const Reader = struct {
             parent: *Database(db_kind),
+            size: u60,
             start_position: u60,
             relative_position: u60,
 
             pub fn readNoEof(self: *Reader, buf: []u8) !void {
+                if (self.size < self.relative_position or self.size - self.relative_position < buf.len) return error.EndOfStream;
+                try self.parent.core.seekTo(self.start_position + @sizeOf(u64) + self.relative_position);
                 const core_reader = self.parent.core.reader();
-
-                try self.parent.core.seekTo(self.start_position);
-                const value_size = try core_reader.readIntLittle(u64);
-                if (value_size < self.relative_position) return error.EndOfStream;
-                if (value_size - self.relative_position < buf.len) return error.EndOfStream;
-
-                try self.parent.core.seekBy(self.relative_position);
                 try core_reader.readNoEof(buf);
                 self.relative_position += @truncate(buf.len);
             }
 
             pub fn readIntLittle(self: *Reader, comptime T: type) !T {
+                if (self.size < self.relative_position or self.size - self.relative_position < @sizeOf(T)) return error.EndOfStream;
+                try self.parent.core.seekTo(self.start_position + @sizeOf(u64) + self.relative_position);
                 const core_reader = self.parent.core.reader();
-
-                try self.parent.core.seekTo(self.start_position);
-                const value_size = try core_reader.readIntLittle(u64);
-                if (value_size < self.relative_position) return error.EndOfStream;
-                if (value_size - self.relative_position < @sizeOf(T)) return error.EndOfStream;
-
-                try self.parent.core.seekBy(self.relative_position);
                 const ret = try core_reader.readIntLittle(T);
                 self.relative_position += @sizeOf(T);
                 return ret;
@@ -341,10 +332,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             const ptr = getPointerValue(slot);
             const ptr_type = try getPointerType(slot);
 
+            const core_reader = self.core.reader();
             const position = switch (ptr_type) {
                 .bytes => ptr,
                 .hash => blk: {
-                    const core_reader = self.core.reader();
                     try self.core.seekTo(ptr + HASH_SIZE);
                     const value_slot = try core_reader.readIntLittle(u64);
                     const value_ptr_type = try getPointerType(value_slot);
@@ -355,8 +346,15 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 },
                 else => return error.UnexpectedPointerType,
             };
+            try self.core.seekTo(position);
+            const size: u60 = @truncate(try core_reader.readIntLittle(u64));
 
-            return Reader{ .parent = self, .start_position = position, .relative_position = 0 };
+            return Reader{
+                .parent = self,
+                .size = size,
+                .start_position = position,
+                .relative_position = 0,
+            };
         }
 
         pub const Cursor = struct {
