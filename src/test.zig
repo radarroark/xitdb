@@ -77,7 +77,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         {
             const Ctx = struct {
                 pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
-                    const reader = cursor.reader();
+                    const reader = try cursor.reader();
                     var char = [_]u8{0} ** 1;
 
                     try reader.readNoEof(&char);
