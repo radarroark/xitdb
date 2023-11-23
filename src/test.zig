@@ -73,39 +73,28 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             });
         }
 
-        // read foo from ctx with reader
+        // read bar with reader
         {
-            const Ctx = struct {
-                pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
-                    const reader = try cursor.reader();
-                    var char = [_]u8{0} ** 1;
+            var reader = try db.readerAtHash(main.hash_buffer("bar"));
+            var char = [_]u8{0} ** 1;
 
-                    try reader.readNoEof(&char);
-                    try std.testing.expectEqualStrings("b", &char);
+            try reader.readNoEof(&char);
+            try std.testing.expectEqualStrings("b", &char);
 
-                    try reader.readNoEof(&char);
-                    try std.testing.expectEqualStrings("a", &char);
+            try reader.readNoEof(&char);
+            try std.testing.expectEqualStrings("a", &char);
 
-                    try reader.readNoEof(&char);
-                    try std.testing.expectEqualStrings("r", &char);
+            try reader.readNoEof(&char);
+            try std.testing.expectEqualStrings("r", &char);
 
-                    try expectEqual(error.EndOfStream, reader.readNoEof(&char));
+            try expectEqual(error.EndOfStream, reader.readNoEof(&char));
 
-                    try cursor.seekTo(2);
-                    try cursor.seekBy(-1);
-                    try expectEqual('a', try reader.readIntLittle(u8));
+            try reader.seekTo(2);
+            try reader.seekBy(-1);
+            try expectEqual('a', try reader.readIntLittle(u8));
 
-                    try cursor.seekFromEnd(-2);
-                    try expectEqual('b', try reader.readIntLittle(u8));
-
-                    try expectEqual(false, cursor.is_new);
-                }
-            };
-            try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
-                .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .map_get = .{ .bytes = "foo" } },
-                .{ .ctx = Ctx{} },
-            });
+            try reader.seekFromEnd(-2);
+            try expectEqual('b', try reader.readIntLittle(u8));
         }
 
         // if error in ctx, db doesn't change
