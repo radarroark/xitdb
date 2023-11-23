@@ -58,7 +58,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
+                pub fn run(self: @This(), cursor: Database(kind).Cursor) !void {
                     const value = (try cursor.readBytesAlloc(self.allocator, void, &[_]PathPart(void){
                         .{ .map_get = .{ .bytes = "foo" } },
                     })).?;
@@ -102,7 +102,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
+                pub fn run(_: @This(), cursor: Database(kind).Cursor) !void {
                     try cursor.execute(void, &[_]PathPart(void){
                         .{ .map_get = .{ .bytes = "foo" } },
                         .{ .value = .{ .bytes = "this value won't be visible" } },

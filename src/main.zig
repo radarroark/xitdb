@@ -990,14 +990,14 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     if (@TypeOf(part.ctx) == void) {
                         return error.NotImplmented;
                     } else {
-                        var next_cursor = Cursor{
+                        const next_cursor = Cursor{
                             .read_slot_cursor = ReadSlotCursor{
                                 .slot_ptr = cursor.slot_ptr,
                             },
                             .db = self,
                             .is_new = cursor.slot_ptr.slot == 0,
                         };
-                        try part.ctx.run(&next_cursor);
+                        try part.ctx.run(next_cursor);
                         return cursor.slot_ptr;
                     }
                 },
