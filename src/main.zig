@@ -330,8 +330,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             }
         };
 
-        pub fn readerAtHash(self: *Database(db_kind), hash: Hash) !Reader {
-            const slot_ptr = try self.readMapSlot(VALUE_INDEX_START, hash, 0, .read_only, true);
+        pub fn readerAtHash(self: *Database(db_kind), hash: Hash) !?Reader {
+            const slot_ptr = self.readMapSlot(VALUE_INDEX_START, hash, 0, .read_only, true) catch |err| {
+                switch (err) {
+                    error.KeyNotFound => return null,
+                    else => return err,
+                }
+            };
             const slot = slot_ptr.slot;
             const ptr = getPointerValue(slot);
             const ptr_type = try getPointerType(slot);

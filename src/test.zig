@@ -75,7 +75,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
         // read bar with reader
         {
-            var reader = try db.readerAtHash(main.hash_buffer("bar"));
+            var reader = (try db.readerAtHash(main.hash_buffer("bar"))).?;
             var char = [_]u8{0} ** 1;
 
             try reader.readNoEof(&char);
