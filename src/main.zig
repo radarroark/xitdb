@@ -42,11 +42,6 @@ const PointerType = enum(u64) {
 
 const POINTER_TYPE_MASK: u64 = 0b1111 << 60;
 
-const Index = struct {
-    index: u60,
-    reverse: bool,
-};
-
 pub fn PathPart(comptime Ctx: type) type {
     return union(enum) {
         map_create,
@@ -56,7 +51,10 @@ pub fn PathPart(comptime Ctx: type) type {
             bytes: []const u8,
         },
         list_get: union(enum) {
-            index: Index,
+            index: struct {
+                index: u60,
+                reverse: bool,
+            },
             append,
             append_copy,
         },
