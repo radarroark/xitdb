@@ -281,16 +281,16 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             read_slot_cursor: ReadSlotCursor,
             db: *Database(db_kind),
             is_new: bool,
-            position: u60, // relative position from Reader.position
+            position: u60, // relative position from start_position
 
             const Reader = struct {
                 parent: *Cursor,
-                position: u60, // absolute position
+                start_position: u60,
 
                 pub fn readNoEof(self: Reader, buf: []u8) !void {
                     const core_reader = self.parent.db.core.reader();
 
-                    try self.parent.db.core.seekTo(self.position);
+                    try self.parent.db.core.seekTo(self.start_position);
                     const value_size = try core_reader.readIntLittle(u64);
                     if (value_size < self.parent.position) return error.EndOfStream;
                     if (value_size - self.parent.position < buf.len) return error.EndOfStream;
@@ -303,7 +303,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 pub fn readIntLittle(self: Reader, comptime T: type) !T {
                     const core_reader = self.parent.db.core.reader();
 
-                    try self.parent.db.core.seekTo(self.position);
+                    try self.parent.db.core.seekTo(self.start_position);
                     const value_size = try core_reader.readIntLittle(u64);
                     if (value_size < self.parent.position) return error.EndOfStream;
                     if (value_size - self.parent.position < @sizeOf(T)) return error.EndOfStream;
@@ -336,7 +336,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     },
                     else => return error.UnexpectedPointerType,
                 };
-                return Reader{ .parent = self, .position = position };
+
+                return Reader{ .parent = self, .start_position = position };
             }
 
             pub fn seekTo(self: *Cursor, offset: u60) !void {
