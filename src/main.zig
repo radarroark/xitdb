@@ -22,12 +22,12 @@ pub fn hash_buffer(buffer: []const u8) Hash {
     return std.mem.bytesToValue(Hash, &hash);
 }
 
-const POINTER_SIZE = @sizeOf(u64);
+const SLOT_SIZE: u60 = @sizeOf(u64);
 const HEADER_BLOCK_SIZE = 2;
 const BIT_COUNT = 4;
 pub const SLOT_COUNT = 1 << BIT_COUNT;
-pub const MASK: u64 = SLOT_COUNT - 1;
-const INDEX_BLOCK_SIZE = POINTER_SIZE * SLOT_COUNT;
+pub const MASK: u60 = SLOT_COUNT - 1;
+const INDEX_BLOCK_SIZE = SLOT_SIZE * SLOT_COUNT;
 const VALUE_INDEX_START = HEADER_BLOCK_SIZE;
 const KEY_INDEX_START = VALUE_INDEX_START + INDEX_BLOCK_SIZE;
 
@@ -43,7 +43,7 @@ const PointerType = enum(u64) {
 const POINTER_TYPE_MASK: u64 = 0b1111 << 60;
 
 const Index = struct {
-    index: u64,
+    index: u60,
     reverse: bool,
 };
 
@@ -79,16 +79,16 @@ const WriteMode = enum {
     write_immutable,
 };
 
-fn setType(ptr: u64, ptr_type: PointerType) u64 {
+fn setType(ptr: u60, ptr_type: PointerType) u64 {
     return ptr | @intFromEnum(ptr_type);
 }
 
-fn getPointerType(ptr: u64) !PointerType {
-    return std.meta.intToEnum(PointerType, ptr & POINTER_TYPE_MASK);
+fn getPointerType(slot: u64) !PointerType {
+    return std.meta.intToEnum(PointerType, slot & POINTER_TYPE_MASK);
 }
 
-fn getPointerValue(ptr: u64) u60 {
-    return @intCast(ptr & (~POINTER_TYPE_MASK));
+fn getPointerValue(slot: u64) u60 {
+    return @truncate(slot & (~POINTER_TYPE_MASK));
 }
 
 pub const DatabaseError = error{
@@ -106,7 +106,7 @@ pub const DatabaseKind = enum {
 };
 
 pub const SlotPointer = struct {
-    position: u64,
+    position: u60,
     slot: u64,
 };
 
@@ -118,14 +118,14 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
         pub const Core = switch (db_kind) {
             .memory => struct {
                 buffer: std.ArrayList(u8),
-                size: u64,
-                position: u64,
+                size: u60,
+                position: u60,
 
                 const Reader = struct {
                     parent: *Core,
 
                     pub fn readNoEof(self: Reader, buf: []u8) !void {
-                        const new_position = self.parent.position + buf.len;
+                        const new_position = self.parent.position + @as(u60, @truncate(buf.len));
                         if (new_position > self.parent.size) return error.EndOfStream;
                         @memcpy(buf, self.parent.buffer.items[self.parent.position..new_position]);
                         self.parent.position = new_position;
@@ -144,7 +144,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     parent: *Core,
 
                     pub fn writeAll(self: Writer, bytes: []const u8) !void {
-                        const new_position = self.parent.position + bytes.len;
+                        const new_position = self.parent.position + @as(u60, @truncate(bytes.len));
                         @memcpy(self.parent.buffer.items[self.parent.position..new_position], bytes);
                         self.parent.size = @max(self.parent.size, new_position);
                         self.parent.position = new_position;
@@ -170,27 +170,27 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     return Core.Writer{ .parent = self };
                 }
 
-                pub fn seekTo(self: *Core, offset: u64) !void {
+                pub fn seekTo(self: *Core, offset: u60) !void {
                     self.position = offset;
                 }
 
-                pub fn seekBy(self: *Core, offset: i64) !void {
+                pub fn seekBy(self: *Core, offset: i61) !void {
                     if (offset > 0) {
-                        self.position +|= std.math.absCast(offset);
+                        self.position +|= @truncate(std.math.absCast(offset));
                     } else {
-                        self.position -|= std.math.absCast(offset);
+                        self.position -|= @truncate(std.math.absCast(offset));
                     }
                 }
 
-                pub fn seekFromEnd(self: *Core, offset: i64) !void {
+                pub fn seekFromEnd(self: *Core, offset: i61) !void {
                     if (offset > 0) {
-                        self.position = self.size +| std.math.absCast(offset);
+                        self.position = self.size +| @as(u60, @truncate(std.math.absCast(offset)));
                     } else {
-                        self.position = self.size -| std.math.absCast(offset);
+                        self.position = self.size -| @as(u60, @truncate(std.math.absCast(offset)));
                     }
                 }
 
-                pub fn getPos(self: Core) !u64 {
+                pub fn getPos(self: Core) !u60 {
                     return self.position;
                 }
             },
@@ -209,11 +209,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     return self.file.writer();
                 }
 
-                pub fn seekTo(self: Core, offset: u64) !void {
+                pub fn seekTo(self: Core, offset: u60) !void {
                     try self.file.seekTo(offset);
                 }
 
-                pub fn seekBy(self: Core, offset: i64) !void {
+                pub fn seekBy(self: Core, offset: i61) !void {
                     try self.file.seekBy(offset);
                 }
 
@@ -221,8 +221,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     try self.file.seekFromEnd(offset);
                 }
 
-                pub fn getPos(self: Core) !u64 {
-                    return try self.file.getPos();
+                pub fn getPos(self: Core) !u60 {
+                    return @truncate(try self.file.getPos());
                 }
             },
         };
@@ -281,11 +281,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             read_slot_cursor: ReadSlotCursor,
             db: *Database(db_kind),
             is_new: bool,
-            position: u64, // relative position from Reader.position
+            position: u60, // relative position from Reader.position
 
             const Reader = struct {
                 parent: *Cursor,
-                position: u64, // absolute position
+                position: u60, // absolute position
 
                 pub fn readNoEof(self: Reader, buf: []u8) !void {
                     const core_reader = self.parent.db.core.reader();
@@ -295,9 +295,9 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     if (value_size < self.parent.position) return error.EndOfStream;
                     if (value_size - self.parent.position < buf.len) return error.EndOfStream;
 
-                    try self.parent.db.core.seekBy(@intCast(self.parent.position));
+                    try self.parent.db.core.seekBy(self.parent.position);
                     try core_reader.readNoEof(buf);
-                    self.parent.position += buf.len;
+                    self.parent.position += @truncate(buf.len);
                 }
 
                 pub fn readIntLittle(self: Reader, comptime T: type) !T {
@@ -308,7 +308,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     if (value_size < self.parent.position) return error.EndOfStream;
                     if (value_size - self.parent.position < @sizeOf(T)) return error.EndOfStream;
 
-                    try self.parent.db.core.seekBy(@intCast(self.parent.position));
+                    try self.parent.db.core.seekBy(self.parent.position);
                     const ret = try core_reader.readIntLittle(T);
                     self.parent.position += @sizeOf(T);
                     return ret;
@@ -339,23 +339,23 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 return Reader{ .parent = self, .position = position };
             }
 
-            pub fn seekTo(self: *Cursor, offset: u64) !void {
+            pub fn seekTo(self: *Cursor, offset: u60) !void {
                 self.position = offset;
             }
 
-            pub fn seekBy(self: *Cursor, offset: i64) !void {
+            pub fn seekBy(self: *Cursor, offset: i60) !void {
                 if (offset > 0) {
-                    self.position +|= std.math.absCast(offset);
+                    self.position +|= @truncate(std.math.absCast(offset));
                 } else {
-                    self.position -|= std.math.absCast(offset);
+                    self.position -|= @truncate(std.math.absCast(offset));
                 }
             }
 
-            pub fn seekFromEnd(self: *Cursor, offset: i64) !void {
+            pub fn seekFromEnd(self: *Cursor, offset: i61) !void {
                 if (offset > 0) {
-                    self.position +|= std.math.absCast(offset);
+                    self.position +|= @truncate(std.math.absCast(offset));
                 } else {
-                    self.position -|= std.math.absCast(offset);
+                    self.position -|= @truncate(std.math.absCast(offset));
                 }
             }
 
@@ -522,14 +522,14 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 };
                 pub const IterCore = union(IterKind) {
                     list: struct {
-                        index: u64,
+                        index: u60,
                     },
                     map: struct {
                         stack: std.ArrayList(MapLevel),
                     },
 
                     pub const MapLevel = struct {
-                        position: u64,
+                        position: u60,
                         block: [SLOT_COUNT]u64,
                         index: u16,
                     };
@@ -659,7 +659,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                             continue;
                                         } else {
                                             self.core.map.stack.items[self.core.map.stack.items.len - 1].index += 1;
-                                            const position = level.position + (level.index * POINTER_SIZE);
+                                            const position = level.position + (level.index * SLOT_SIZE);
                                             return Cursor{
                                                 .read_slot_cursor = ReadSlotCursor{
                                                     .slot_ptr = SlotPointer{ .position = position, .slot = slot },
@@ -703,13 +703,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
             const list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
             try writer.writeIntLittle(u64, 0); // list size
-            const list_ptr = try self.core.getPos() + POINTER_SIZE;
+            const list_ptr = try self.core.getPos() + SLOT_SIZE;
             try writer.writeIntLittle(u64, list_ptr);
             try writer.writeAll(&list_index_block);
         }
 
         const ReadSlotCursor = union(enum) {
-            index_start: u64,
+            index_start: u60,
             slot_ptr: SlotPointer,
         };
 
@@ -783,7 +783,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         const list_start = try self.core.getPos();
                         const list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                         try writer.writeIntLittle(u64, 0); // list size
-                        const list_ptr = try self.core.getPos() + POINTER_SIZE;
+                        const list_ptr = try self.core.getPos() + SLOT_SIZE;
                         try writer.writeIntLittle(u64, list_ptr);
                         try writer.writeAll(&list_index_block);
                         // make slot point to list
@@ -801,7 +801,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         const reader = self.core.reader();
                         try self.core.seekTo(next_pos);
                         const list_size = try reader.readIntLittle(u64);
-                        const list_ptr = try reader.readIntLittle(u64);
+                        const list_ptr: u60 = @truncate(try reader.readIntLittle(u64));
                         try self.core.seekTo(list_ptr);
                         var list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                         try reader.readNoEof(&list_index_block);
@@ -810,7 +810,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         try self.core.seekFromEnd(0);
                         const list_start = try self.core.getPos();
                         try writer.writeIntLittle(u64, list_size);
-                        const next_list_ptr = try self.core.getPos() + POINTER_SIZE;
+                        const next_list_ptr = try self.core.getPos() + SLOT_SIZE;
                         try writer.writeIntLittle(u64, next_list_ptr);
                         try writer.writeAll(&list_index_block);
                         // make slot point to map
@@ -869,8 +869,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             const index = part.list_get.index;
                             try self.core.seekTo(next_list_start);
                             const reader = self.core.reader();
-                            const list_size = try reader.readIntLittle(u64);
-                            var key: u64 = 0;
+                            const list_size: u60 = @truncate(try reader.readIntLittle(u64));
+                            var key: u60 = 0;
                             if (index.reverse) {
                                 if (index.index >= list_size) {
                                     return error.KeyNotFound;
@@ -885,8 +885,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 }
                             }
                             const last_key = list_size - 1;
-                            const list_ptr = try reader.readIntLittle(u64);
-                            const shift: u6 = @truncate(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
+                            const list_ptr: u60 = @truncate(try reader.readIntLittle(u64));
+                            const shift: u6 = @truncate(if (last_key < SLOT_COUNT) 0 else std.math.log(u60, SLOT_COUNT, last_key));
                             const final_slot_ptr = try self.readListSlot(list_ptr, key, shift, write_mode);
                             return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = final_slot_ptr });
                         },
@@ -910,13 +910,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             const writer = self.core.writer();
 
                             try self.core.seekTo(next_list_start);
-                            const list_size = try reader.readIntLittle(u64);
+                            const list_size: u60 = @truncate(try reader.readIntLittle(u64));
                             // read the last slot in the list
                             var last_slot: u64 = 0;
                             if (list_size > 0) {
                                 const key = list_size - 1;
-                                const list_ptr = try reader.readIntLittle(u64);
-                                const shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
+                                const list_ptr: u60 = @truncate(try reader.readIntLittle(u64));
+                                const shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u60, SLOT_COUNT, key));
                                 const last_slot_ptr = try self.readListSlot(list_ptr, key, shift, .read_only);
                                 last_slot = last_slot_ptr.slot;
                             }
@@ -1015,13 +1015,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             }
         }
 
-        fn writeValue(self: *Database(db_kind), value_hash: Hash, value: []const u8) !u64 {
+        fn writeValue(self: *Database(db_kind), value_hash: Hash, value: []const u8) !u60 {
             const next_slot_ptr = try self.readMapSlot(VALUE_INDEX_START, value_hash, 0, .write, true);
             const slot_pos = next_slot_ptr.position;
             const slot = next_slot_ptr.slot;
             const ptr = getPointerValue(slot);
 
-            var value_pos: u64 = undefined;
+            var value_pos: u60 = undefined;
 
             if (ptr == 0) {
                 const writer = self.core.writer();
@@ -1046,7 +1046,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
         // maps
 
-        fn readMapSlot(self: *Database(db_kind), index_pos: u64, key_hash: Hash, key_offset: u8, write_mode: WriteMode, return_value_slot: bool) !SlotPointer {
+        fn readMapSlot(self: *Database(db_kind), index_pos: u60, key_hash: Hash, key_offset: u8, write_mode: WriteMode, return_value_slot: bool) !SlotPointer {
             if (key_offset >= (HASH_SIZE * 8) / BIT_COUNT) {
                 return error.KeyOffsetExceeded;
             }
@@ -1054,8 +1054,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             const reader = self.core.reader();
             const writer = self.core.writer();
 
-            const i = @as(u64, @truncate((key_hash >> key_offset * BIT_COUNT))) & MASK;
-            const slot_pos = index_pos + (POINTER_SIZE * i);
+            const i = @as(u60, @truncate((key_hash >> key_offset * BIT_COUNT))) & MASK;
+            const slot_pos = index_pos + (SLOT_SIZE * i);
             try self.core.seekTo(slot_pos);
             const slot = try reader.readIntLittle(u64);
 
@@ -1090,7 +1090,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         try reader.readNoEof(&index_block);
                         // copy it to the end
                         try self.core.seekFromEnd(0);
-                        next_ptr = @intCast(try self.core.getPos());
+                        next_ptr = try self.core.getPos();
                         try writer.writeAll(&index_block);
                         // make slot point to block
                         try self.core.seekTo(slot_pos);
@@ -1134,12 +1134,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             if (key_offset + 1 >= (HASH_SIZE * 8) / BIT_COUNT) {
                                 return error.KeyOffsetExceeded;
                             }
-                            const next_i = @as(u64, @truncate((existing_key_hash >> (key_offset + 1) * BIT_COUNT))) & MASK;
+                            const next_i = @as(u60, @truncate((existing_key_hash >> (key_offset + 1) * BIT_COUNT))) & MASK;
                             try self.core.seekFromEnd(0);
                             const next_index_pos = try self.core.getPos();
                             var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                             try writer.writeAll(&index_block);
-                            try self.core.seekTo(next_index_pos + (POINTER_SIZE * next_i));
+                            try self.core.seekTo(next_index_pos + (SLOT_SIZE * next_i));
                             try writer.writeIntLittle(u64, slot);
                             const next_slot_ptr = try self.readMapSlot(next_index_pos, key_hash, key_offset + 1, write_mode, return_value_slot);
                             try self.core.seekTo(slot_pos);
@@ -1159,21 +1159,21 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
         // lists
 
         const AppendResult = struct {
-            list_size: u64,
-            list_ptr: u64,
+            list_size: u60,
+            list_ptr: u60,
             slot_ptr: SlotPointer,
         };
 
-        fn readListSlotAppend(self: *Database(db_kind), index_start: u64, write_mode: WriteMode) !AppendResult {
+        fn readListSlotAppend(self: *Database(db_kind), index_start: u60, write_mode: WriteMode) !AppendResult {
             const reader = self.core.reader();
             const writer = self.core.writer();
 
             try self.core.seekTo(index_start);
-            const key = try reader.readIntLittle(u64);
-            var index_pos = try reader.readIntLittle(u64);
+            const key: u60 = @truncate(try reader.readIntLittle(u64));
+            var index_pos: u60 = @truncate(try reader.readIntLittle(u64));
 
-            const prev_shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key - 1));
-            const next_shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
+            const prev_shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u60, SLOT_COUNT, key - 1));
+            const next_shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u60, SLOT_COUNT, key));
 
             var slot_ptr: SlotPointer = undefined;
 
@@ -1194,11 +1194,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             return AppendResult{ .list_size = key + 1, .list_ptr = index_pos, .slot_ptr = slot_ptr };
         }
 
-        fn readListSlot(self: *Database(db_kind), index_pos: u64, key: u64, shift: u6, write_mode: WriteMode) !SlotPointer {
+        fn readListSlot(self: *Database(db_kind), index_pos: u60, key: u60, shift: u6, write_mode: WriteMode) !SlotPointer {
             const reader = self.core.reader();
 
-            const i = (key >> (shift * BIT_COUNT)) & MASK;
-            const slot_pos = index_pos + (POINTER_SIZE * i);
+            const i = @as(u60, @truncate(key >> (shift * BIT_COUNT))) & MASK;
+            const slot_pos = index_pos + (SLOT_SIZE * i);
             try self.core.seekTo(slot_pos);
             const slot = try reader.readIntLittle(u64);
 
@@ -1237,7 +1237,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         // copy it to the end
                         const writer = self.core.writer();
                         try self.core.seekFromEnd(0);
-                        next_ptr = @intCast(try self.core.getPos());
+                        next_ptr = try self.core.getPos();
                         try writer.writeAll(&index_block);
                         // make slot point to block
                         try self.core.seekTo(slot_pos);
