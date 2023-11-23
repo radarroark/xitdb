@@ -986,6 +986,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     return cursor.slot_ptr;
                 },
                 .ctx => {
+                    if (!allow_write) return error.WriteNotAllowed;
+
                     if (path.len > 1) return error.ValueMustBeAtEnd;
 
                     if (cursor != .slot_ptr) return error.NotImplemented;
