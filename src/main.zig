@@ -353,7 +353,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             };
         }
 
-        pub fn writeValue(self: *Database(db_kind), value_hash: Hash, value: []const u8) !u60 {
+        pub fn writeOnce(self: *Database(db_kind), value_hash: Hash, value: []const u8) !u60 {
             const next_slot_ptr = try self.readMapSlot(VALUE_INDEX_START, value_hash, 0, .write, true);
             const slot_pos = next_slot_ptr.position;
             const slot = next_slot_ptr.slot;
