@@ -46,10 +46,7 @@ pub fn PathPart(comptime Ctx: type) type {
     return union(enum) {
         map_create,
         list_create,
-        map_get: union(enum) {
-            hash: Hash,
-            bytes: []const u8,
-        },
+        map_get: Hash,
         list_get: union(enum) {
             index: struct {
                 index: u60,
@@ -58,13 +55,10 @@ pub fn PathPart(comptime Ctx: type) type {
             append,
             append_copy,
         },
-        map_remove: union(enum) {
-            hash: Hash,
-            bytes: []const u8,
-        },
+        map_remove: Hash,
         value: union(enum) {
             uint: u60,
-            bytes: []const u8,
+            pointer: u60,
         },
         ctx: Ctx,
         path: []const PathPart(Ctx),
@@ -225,6 +219,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             },
         };
 
+        // init
+
         pub const InitOpts = switch (db_kind) {
             .memory => struct {
                 capacity: usize,
@@ -274,6 +270,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
         pub fn deinit(self: *Database(db_kind)) void {
             self.core.deinit();
         }
+
+        // read/write to value map
 
         const Reader = struct {
             parent: *Database(db_kind),
@@ -354,6 +352,37 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 .relative_position = 0,
             };
         }
+
+        pub fn writeValue(self: *Database(db_kind), value_hash: Hash, value: []const u8) !u60 {
+            const next_slot_ptr = try self.readMapSlot(VALUE_INDEX_START, value_hash, 0, .write, true);
+            const slot_pos = next_slot_ptr.position;
+            const slot = next_slot_ptr.slot;
+            const ptr = getPointerValue(slot);
+
+            var value_pos: u60 = undefined;
+
+            if (ptr == 0) {
+                const writer = self.core.writer();
+                // if slot was empty, insert the new value
+                try self.core.seekFromEnd(0);
+                value_pos = try self.core.getPos();
+                try writer.writeIntLittle(u64, value.len);
+                try writer.writeAll(value);
+                try self.core.seekTo(slot_pos);
+                try writer.writeIntLittle(u64, setType(value_pos, .bytes));
+            } else {
+                const ptr_type = try getPointerType(slot);
+                if (ptr_type != .bytes) {
+                    return error.UnexpectedPointerType;
+                }
+                // get the existing value
+                value_pos = ptr;
+            }
+
+            return value_pos;
+        }
+
+        // cursor
 
         pub const Cursor = struct {
             read_slot_cursor: ReadSlotCursor,
@@ -464,7 +493,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     .db = self.db,
                     .is_new = false,
                 };
-                return value_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){.{ .map_get = .{ .hash = std.mem.bytesToValue(Hash, &hash) } }});
+                return value_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){.{ .map_get = std.mem.bytesToValue(Hash, &hash) }});
             }
 
             pub fn readInt(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?u60 {
@@ -688,6 +717,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             };
         }
 
+        // private
+
         fn writeHeader(self: *Database(db_kind)) !void {
             const writer = self.core.writer();
 
@@ -831,18 +862,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             }
                         },
                     };
-                    const hash = switch (part.map_get) {
-                        .hash => part.map_get.hash,
-                        .bytes => blk: {
-                            const value_hash = hash_buffer(part.map_get.bytes);
-                            // write key so we can retrieve it when iterating over map
-                            if (allow_write) {
-                                _ = try self.writeValue(value_hash, part.map_get.bytes);
-                            }
-                            break :blk value_hash;
-                        },
-                    };
-                    const next_slot_ptr = try self.readMapSlot(next_map_start, hash, 0, write_mode, true);
+                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.map_get, 0, write_mode, true);
                     return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                 },
                 .list_get => {
@@ -953,11 +973,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             }
                         },
                     };
-                    const hash = switch (part.map_remove) {
-                        .hash => part.map_remove.hash,
-                        .bytes => hash_buffer(part.map_remove.bytes),
-                    };
-                    const next_slot_ptr = try self.readMapSlot(next_map_start, hash, 0, .read_only, false);
+                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.map_remove, 0, .read_only, false);
 
                     const writer = self.core.writer();
                     try self.core.seekTo(next_slot_ptr.position);
@@ -974,7 +990,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     const ptr: u64 = switch (part.value) {
                         .uint => setType(part.value.uint, .uint),
-                        .bytes => setType(try self.writeValue(hash_buffer(part.value.bytes), part.value.bytes), .bytes),
+                        .pointer => setType(part.value.pointer, .bytes),
                     };
 
                     const writer = self.core.writer();
@@ -1010,35 +1026,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     return try self.readSlot(Ctx, path[1..], allow_write, cursor);
                 },
             }
-        }
-
-        fn writeValue(self: *Database(db_kind), value_hash: Hash, value: []const u8) !u60 {
-            const next_slot_ptr = try self.readMapSlot(VALUE_INDEX_START, value_hash, 0, .write, true);
-            const slot_pos = next_slot_ptr.position;
-            const slot = next_slot_ptr.slot;
-            const ptr = getPointerValue(slot);
-
-            var value_pos: u60 = undefined;
-
-            if (ptr == 0) {
-                const writer = self.core.writer();
-                // if slot was empty, insert the new value
-                try self.core.seekFromEnd(0);
-                value_pos = try self.core.getPos();
-                try writer.writeIntLittle(u64, value.len);
-                try writer.writeAll(value);
-                try self.core.seekTo(slot_pos);
-                try writer.writeIntLittle(u64, setType(value_pos, .bytes));
-            } else {
-                const ptr_type = try getPointerType(slot);
-                if (ptr_type != .bytes) {
-                    return error.UnexpectedPointerType;
-                }
-                // get the existing value
-                value_pos = ptr;
-            }
-
-            return value_pos;
         }
 
         // maps
