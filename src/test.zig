@@ -93,8 +93,31 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             try reader.seekBy(-1);
             try expectEqual('a', try reader.readIntLittle(u8));
 
-            try reader.seekFromEnd(-2);
+            try reader.seekFromEnd(-3);
             try expectEqual('b', try reader.readIntLittle(u8));
+        }
+
+        // write baz with writer
+        {
+            const Ctx = struct {
+                pub fn run(_: @This(), writer: *Database(kind).Writer) !void {
+                    try writer.writeAll("x");
+                    try writer.writeAll("x");
+                    try writer.writeAll("x");
+                    try writer.seekBy(-3);
+                    try writer.writeAll("b");
+                    try writer.seekTo(2);
+                    try writer.writeAll("z");
+                    try writer.seekFromEnd(-2);
+                    try writer.writeAll("a");
+                }
+            };
+            _ = try db.writerAtHash(main.hash_buffer("baz"), Ctx, Ctx{}, .once);
+
+            var reader = (try db.readerAtHash(main.hash_buffer("baz"))).?;
+            var buf = [_]u8{0} ** 3;
+            try reader.readNoEof(&buf);
+            try std.testing.expectEqualStrings("baz", &buf);
         }
 
         // if error in ctx, db doesn't change

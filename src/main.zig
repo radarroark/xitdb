@@ -175,9 +175,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
 
                 pub fn seekFromEnd(self: *Core, offset: i61) !void {
-                    if (offset > 0) {
-                        self.position = self.size +| @as(u60, @truncate(std.math.absCast(offset)));
-                    } else {
+                    if (offset <= 0) {
                         self.position = self.size -| @as(u60, @truncate(std.math.absCast(offset)));
                     }
                 }
@@ -273,7 +271,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
         // read/write to value map
 
-        const Reader = struct {
+        pub const Reader = struct {
             parent: *Database(db_kind),
             size: u60,
             start_position: u60,
@@ -297,22 +295,71 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             }
 
             pub fn seekTo(self: *Reader, offset: u60) !void {
-                self.relative_position = offset;
+                if (offset <= self.size) {
+                    self.relative_position = offset;
+                }
             }
 
-            pub fn seekBy(self: *Reader, offset: i60) !void {
+            pub fn seekBy(self: *Reader, offset: i61) !void {
                 if (offset > 0) {
-                    self.relative_position +|= @truncate(std.math.absCast(offset));
+                    self.relative_position = @min(self.size, self.relative_position +| @as(u60, @truncate(std.math.absCast(offset))));
                 } else {
                     self.relative_position -|= @truncate(std.math.absCast(offset));
                 }
             }
 
             pub fn seekFromEnd(self: *Reader, offset: i61) !void {
+                if (offset <= 0) {
+                    self.relative_position = self.size -| @as(u60, @truncate(std.math.absCast(offset)));
+                }
+            }
+        };
+
+        pub const Writer = struct {
+            parent: *Database(db_kind),
+            size: u60,
+            start_position: u60,
+            relative_position: u60,
+
+            pub fn writeAll(self: *Writer, bytes: []const u8) !void {
+                if (self.size < self.relative_position) return error.EndOfStream;
+                try self.parent.core.seekTo(self.start_position + @sizeOf(u64) + self.relative_position);
+                const core_writer = self.parent.core.writer();
+                try core_writer.writeAll(bytes);
+                self.relative_position += @truncate(bytes.len);
+                if (self.relative_position > self.size) {
+                    self.size = self.relative_position;
+                }
+            }
+
+            pub fn writeIntLittle(self: *Writer, comptime T: type, value: T) !void {
+                if (self.size < self.relative_position) return error.EndOfStream;
+                try self.parent.core.seekTo(self.start_position + @sizeOf(u64) + self.relative_position);
+                const core_writer = self.parent.core.writer();
+                try core_writer.writeIntLittle(T, value);
+                self.relative_position += @sizeOf(T);
+                if (self.relative_position > self.size) {
+                    self.size = self.relative_position;
+                }
+            }
+
+            pub fn seekTo(self: *Writer, offset: u60) !void {
+                if (offset <= self.size) {
+                    self.relative_position = offset;
+                }
+            }
+
+            pub fn seekBy(self: *Writer, offset: i61) !void {
                 if (offset > 0) {
-                    self.relative_position +|= @truncate(std.math.absCast(offset));
+                    self.relative_position = @min(self.size, self.relative_position +| @as(u60, @truncate(std.math.absCast(offset))));
                 } else {
                     self.relative_position -|= @truncate(std.math.absCast(offset));
+                }
+            }
+
+            pub fn seekFromEnd(self: *Writer, offset: i61) !void {
+                if (offset <= 0) {
+                    self.relative_position = self.size -| @as(u60, @truncate(std.math.absCast(offset)));
                 }
             }
         };
@@ -351,6 +398,43 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 .start_position = position,
                 .relative_position = 0,
             };
+        }
+
+        pub fn writerAtHash(self: *Database(db_kind), hash: Hash, comptime Ctx: type, ctx: Ctx, mode: enum { once, replace }) !u60 {
+            const next_slot_ptr = try self.readMapSlot(VALUE_INDEX_START, hash, 0, .write, true);
+            const slot_pos = next_slot_ptr.position;
+            const slot = next_slot_ptr.slot;
+            const ptr = getPointerValue(slot);
+
+            var value_pos: u60 = undefined;
+
+            if (ptr == 0 or mode == .replace) {
+                const core_writer = self.core.writer();
+                // if slot was empty, insert the new value
+                try self.core.seekFromEnd(0);
+                value_pos = try self.core.getPos();
+                try core_writer.writeIntLittle(u64, 0);
+                var writer = Writer{
+                    .parent = self,
+                    .size = 0,
+                    .start_position = value_pos,
+                    .relative_position = 0,
+                };
+                try ctx.run(&writer);
+                try self.core.seekTo(value_pos);
+                try core_writer.writeIntLittle(u64, writer.size);
+                try self.core.seekTo(slot_pos);
+                try core_writer.writeIntLittle(u64, setType(value_pos, .bytes));
+            } else {
+                const ptr_type = try getPointerType(slot);
+                if (ptr_type != .bytes) {
+                    return error.UnexpectedPointerType;
+                }
+                // get the existing value
+                value_pos = ptr;
+            }
+
+            return value_pos;
         }
 
         pub fn writeAtHash(self: *Database(db_kind), hash: Hash, value: []const u8, mode: enum { once, replace }) !u60 {
