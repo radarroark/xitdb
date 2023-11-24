@@ -38,11 +38,12 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
         // write foo
         const foo_key = main.hash_buffer("foo");
+        const bar_key = main.hash_buffer("bar");
         try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .map_create,
             .{ .map_get = foo_key },
-            .{ .value = .{ .pointer = try db.writeAtHash(main.hash_buffer("bar"), "bar", .once) } },
+            .{ .value = .{ .pointer = try db.writeAtHash(bar_key, "bar", .once) } },
         });
 
         // read foo
@@ -52,6 +53,16 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         })).?;
         defer allocator.free(bar_value);
         try std.testing.expectEqualStrings("bar", bar_value);
+
+        // read foo hash
+        const bar_ptr = (try root_cursor.readBytesPointer(void, &[_]PathPart(void){
+            .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+            .{ .map_get = foo_key },
+        })).?;
+        var bar_reader = (try db.readerAtPointer(bar_ptr)).?;
+        var bar_bytes = [_]u8{0} ** 3;
+        try bar_reader.readNoEof(&bar_bytes);
+        try std.testing.expectEqualStrings("bar", &bar_bytes);
 
         // read foo from ctx
         {

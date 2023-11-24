@@ -400,6 +400,18 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             };
         }
 
+        pub fn readerAtPointer(self: *Database(db_kind), ptr: u60) !?Reader {
+            const core_reader = self.core.reader();
+            try self.core.seekTo(ptr);
+            const size: u60 = @truncate(try core_reader.readIntLittle(u64));
+            return Reader{
+                .parent = self,
+                .size = size,
+                .start_position = ptr,
+                .relative_position = 0,
+            };
+        }
+
         pub fn writerAtHash(self: *Database(db_kind), hash: Hash, comptime Ctx: type, ctx: Ctx, mode: enum { once, replace }) !u60 {
             const next_slot_ptr = try self.readMapSlot(VALUE_INDEX_START, hash, 0, .write, true);
             const slot_pos = next_slot_ptr.position;
@@ -578,6 +590,22 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     .is_new = false,
                 };
                 return value_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){.{ .map_get = std.mem.bytesToValue(Hash, &hash) }});
+            }
+
+            pub fn readBytesPointer(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?u60 {
+                const slot_ptr = self.db.readSlot(Ctx, path, false, self.read_slot_cursor) catch |err| {
+                    switch (err) {
+                        error.KeyNotFound => return null,
+                        else => return err,
+                    }
+                };
+                const slot = slot_ptr.slot;
+                const ptr = getPointerValue(slot);
+                const ptr_type = try getPointerType(slot);
+
+                if (ptr_type != .bytes) return error.UnexpectedPointerType;
+
+                return ptr;
             }
 
             pub fn readInt(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?u60 {
