@@ -116,6 +116,15 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 const Reader = struct {
                     parent: *Core,
 
+                    pub fn read(self: Core.Reader, buf: []u8) !u60 {
+                        const new_position = self.parent.position + @min(@as(u60, @truncate(buf.len)), self.parent.size - self.parent.position);
+                        if (new_position > self.parent.size) return error.EndOfStream;
+                        @memcpy(buf, self.parent.buffer.items[self.parent.position..new_position]);
+                        const size = new_position - self.parent.position;
+                        self.parent.position = new_position;
+                        return size;
+                    }
+
                     pub fn readNoEof(self: Core.Reader, buf: []u8) !void {
                         const new_position = self.parent.position + @as(u60, @truncate(buf.len));
                         if (new_position > self.parent.size) return error.EndOfStream;
@@ -276,6 +285,15 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             size: u60,
             start_position: u60,
             relative_position: u60,
+
+            pub fn read(self: *Reader, buf: []u8) !u60 {
+                if (self.size < self.relative_position) return error.EndOfStream;
+                try self.parent.core.seekTo(self.start_position + @sizeOf(u64) + self.relative_position);
+                const core_reader = self.parent.core.reader();
+                const size = try core_reader.read(buf[0..@min(buf.len, self.size - self.relative_position)]);
+                self.relative_position += @truncate(size);
+                return @truncate(size);
+            }
 
             pub fn readNoEof(self: *Reader, buf: []u8) !void {
                 if (self.size < self.relative_position or self.size - self.relative_position < buf.len) return error.EndOfStream;
