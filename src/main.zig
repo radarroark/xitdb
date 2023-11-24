@@ -353,15 +353,15 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             };
         }
 
-        pub fn writeOnce(self: *Database(db_kind), value_hash: Hash, value: []const u8) !u60 {
-            const next_slot_ptr = try self.readMapSlot(VALUE_INDEX_START, value_hash, 0, .write, true);
+        pub fn writeAtHash(self: *Database(db_kind), hash: Hash, value: []const u8, mode: enum { once, replace }) !u60 {
+            const next_slot_ptr = try self.readMapSlot(VALUE_INDEX_START, hash, 0, .write, true);
             const slot_pos = next_slot_ptr.position;
             const slot = next_slot_ptr.slot;
             const ptr = getPointerValue(slot);
 
             var value_pos: u60 = undefined;
 
-            if (ptr == 0) {
+            if (ptr == 0 or mode == .replace) {
                 const writer = self.core.writer();
                 // if slot was empty, insert the new value
                 try self.core.seekFromEnd(0);
