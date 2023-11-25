@@ -59,7 +59,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .map_get = foo_key },
         })).?;
-        var bar_reader = (try db.readerAtPointer(bar_ptr)).?;
+        var bar_reader = try db.readerAtPointer(bar_ptr);
         var bar_bytes = [_]u8{0} ** 10;
         try bar_reader.readNoEof(bar_bytes[0..3]);
         try std.testing.expectEqualStrings("bar", bar_bytes[0..3]);

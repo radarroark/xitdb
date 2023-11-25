@@ -418,7 +418,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             };
         }
 
-        pub fn readerAtPointer(self: *Database(db_kind), ptr: u60) !?Reader {
+        pub fn readerAtPointer(self: *Database(db_kind), ptr: u60) !Reader {
             const core_reader = self.core.reader();
             try self.core.seekTo(ptr);
             const size: u60 = @truncate(try core_reader.readIntLittle(u64));
