@@ -54,61 +54,58 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         defer allocator.free(bar_value);
         try std.testing.expectEqualStrings("bar", bar_value);
 
-        // read foo hash
-        const bar_ptr = (try root_cursor.readBytesPointer(void, &[_]PathPart(void){
-            .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .map_get = foo_key },
-        })).?;
-        var bar_reader = try db.readerAtPointer(bar_ptr);
-        var bar_bytes = [_]u8{0} ** 10;
-        try bar_reader.readNoEof(bar_bytes[0..3]);
-        try std.testing.expectEqualStrings("bar", bar_bytes[0..3]);
-        try bar_reader.seekTo(0);
-        try expectEqual(3, try bar_reader.read(&bar_bytes));
-        try std.testing.expectEqualStrings("bar", bar_bytes[0..3]);
-
         // read foo from ctx
         {
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn run(self: @This(), cursor: Database(kind).Cursor) !void {
-                    const value = (try cursor.readBytesAlloc(self.allocator, void, &[_]PathPart(void){
-                        .{ .map_get = main.hash_buffer("foo") },
-                    })).?;
+                pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
+                    const value = (try cursor.readBytesAlloc(self.allocator, void, &[_]PathPart(void){})).?;
                     defer self.allocator.free(value);
                     try std.testing.expectEqualStrings("bar", value);
+
+                    var bar_reader = try cursor.reader();
+
+                    // read into buffer
+                    var bar_bytes = [_]u8{0} ** 10;
+                    try bar_reader.readNoEof(bar_bytes[0..3]);
+                    try std.testing.expectEqualStrings("bar", bar_bytes[0..3]);
+                    try bar_reader.seekTo(0);
+                    try expectEqual(3, try bar_reader.read(&bar_bytes));
+                    try std.testing.expectEqualStrings("bar", bar_bytes[0..3]);
+
+                    // read one char at a time
+                    {
+                        var char = [_]u8{0} ** 1;
+                        try bar_reader.seekTo(0);
+
+                        try bar_reader.readNoEof(&char);
+                        try std.testing.expectEqualStrings("b", &char);
+
+                        try bar_reader.readNoEof(&char);
+                        try std.testing.expectEqualStrings("a", &char);
+
+                        try bar_reader.readNoEof(&char);
+                        try std.testing.expectEqualStrings("r", &char);
+
+                        try expectEqual(error.EndOfStream, bar_reader.readNoEof(&char));
+
+                        try bar_reader.seekTo(2);
+                        try bar_reader.seekBy(-1);
+                        try expectEqual('a', try bar_reader.readIntLittle(u8));
+
+                        try bar_reader.seekFromEnd(-3);
+                        try expectEqual('b', try bar_reader.readIntLittle(u8));
+                    }
+
                     try expectEqual(false, cursor.is_new);
                 }
             };
             try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
                 .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+                .{ .map_get = main.hash_buffer("foo") },
                 .{ .ctx = Ctx{ .allocator = allocator } },
             });
-        }
-
-        // read bar with reader
-        {
-            var reader = (try db.readerAtHash(main.hash_buffer("bar"))).?;
-            var char = [_]u8{0} ** 1;
-
-            try reader.readNoEof(&char);
-            try std.testing.expectEqualStrings("b", &char);
-
-            try reader.readNoEof(&char);
-            try std.testing.expectEqualStrings("a", &char);
-
-            try reader.readNoEof(&char);
-            try std.testing.expectEqualStrings("r", &char);
-
-            try expectEqual(error.EndOfStream, reader.readNoEof(&char));
-
-            try reader.seekTo(2);
-            try reader.seekBy(-1);
-            try expectEqual('a', try reader.readIntLittle(u8));
-
-            try reader.seekFromEnd(-3);
-            try expectEqual('b', try reader.readIntLittle(u8));
         }
 
         // write baz with writer
@@ -127,11 +124,6 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 }
             };
             _ = try db.writerAtHash(main.hash_buffer("baz"), Ctx, Ctx{}, .once);
-
-            var reader = (try db.readerAtHash(main.hash_buffer("baz"))).?;
-            var buf = [_]u8{0} ** 3;
-            try reader.readNoEof(&buf);
-            try std.testing.expectEqualStrings("baz", &buf);
         }
 
         // if error in ctx, db doesn't change
@@ -139,7 +131,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn run(_: @This(), cursor: Database(kind).Cursor) !void {
+                pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
                     const value = "this value won't be visible";
                     try cursor.execute(void, &[_]PathPart(void){
                         .{ .map_get = main.hash_buffer("foo") },
