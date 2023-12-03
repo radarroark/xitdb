@@ -57,6 +57,7 @@ pub fn PathPart(comptime Ctx: type) type {
         map_remove: Hash,
         value: union(enum) {
             uint: u60,
+            bytes_ptr: u60,
             bytes: []const u8,
         },
         ctx: Ctx,
@@ -406,8 +407,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
             };
 
-            pub fn execute(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !void {
-                _ = try self.db.readSlot(Ctx, path, true, self.read_slot_cursor);
+            pub fn execute(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !u60 {
+                return getPointerValue((try self.db.readSlot(Ctx, path, true, self.read_slot_cursor)).slot);
             }
 
             pub fn reader(self: *Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !Reader {
@@ -1065,8 +1066,9 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     const core_writer = self.core.writer();
 
-                    const ptr: u64 = switch (part.value) {
+                    const slot: u64 = switch (part.value) {
                         .uint => setType(part.value.uint, .uint),
+                        .bytes_ptr => setType(part.value.bytes_ptr, .bytes),
                         .bytes => blk: {
                             var next_cursor = Cursor{
                                 .read_slot_cursor = ReadSlotCursor{
@@ -1083,9 +1085,9 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     };
 
                     try self.core.seekTo(cursor.slot_ptr.position);
-                    try core_writer.writeIntLittle(u64, ptr);
+                    try core_writer.writeIntLittle(u64, slot);
 
-                    return cursor.slot_ptr;
+                    return .{ .position = cursor.slot_ptr.position, .slot = slot };
                 },
                 .ctx => {
                     if (!allow_write) return error.WriteNotAllowed;
