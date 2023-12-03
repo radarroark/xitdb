@@ -49,10 +49,9 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         {
             const Ctx = struct {
                 pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
-                    try expectEqual(true, cursor.is_new);
+                    try std.testing.expect(cursor.getPointer() == null);
                     var writer = try cursor.writer(void, &[_]PathPart(void){});
                     try writer.writeAll("bar");
-                    try expectEqual(true, cursor.is_new);
                     try writer.finish();
                 }
             };
@@ -78,6 +77,8 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 allocator: std.mem.Allocator,
 
                 pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
+                    try std.testing.expect(cursor.getPointer() != null);
+
                     const value = (try cursor.readBytesAlloc(self.allocator, void, &[_]PathPart(void){})).?;
                     defer self.allocator.free(value);
                     try std.testing.expectEqualStrings("bar", value);
@@ -115,8 +116,6 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                         try bar_reader.seekFromEnd(-3);
                         try expectEqual('b', try bar_reader.readIntLittle(u8));
                     }
-
-                    try expectEqual(false, cursor.is_new);
                 }
             };
             _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
@@ -132,7 +131,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 allocator: std.mem.Allocator,
 
                 pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
-                    try expectEqual(false, cursor.is_new);
+                    try std.testing.expect(cursor.getPointer() != null);
 
                     var writer = try cursor.writer(void, &[_]PathPart(void){});
                     try writer.writeAll("x");

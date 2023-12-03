@@ -276,7 +276,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
         pub const Cursor = struct {
             read_slot_cursor: ReadSlotCursor,
             db: *Database(db_kind),
-            is_new: bool,
 
             pub const Reader = struct {
                 parent: *Database(db_kind).Cursor,
@@ -597,7 +596,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         .slot_ptr = slot_ptr,
                     },
                     .db = self.db,
-                    .is_new = false,
                 };
             }
 
@@ -610,6 +608,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 } else {
                     return getPointerValue(cursor_writer.slot_ptr.slot);
                 }
+            }
+
+            pub fn getPointer(self: Cursor) ?u60 {
+                return if (self.read_slot_cursor == .slot_ptr and self.read_slot_cursor.slot_ptr.slot != 0) getPointerValue(self.read_slot_cursor.slot_ptr.slot) else null;
             }
 
             pub const Iter = struct {
@@ -713,7 +715,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                     .slot_ptr = slot_ptr,
                                 },
                                 .db = self.cursor.db,
-                                .is_new = false,
                             };
                         },
                         .map => {
@@ -764,7 +765,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                                     .slot_ptr = SlotPointer{ .position = position, .slot = slot },
                                                 },
                                                 .db = self.cursor.db,
-                                                .is_new = false,
                                             };
                                         }
                                     }
@@ -785,7 +785,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             return Cursor{
                 .read_slot_cursor = .{ .index_start = INDEX_START },
                 .db = self,
-                .is_new = false,
             };
         }
 
@@ -1068,7 +1067,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                     .slot_ptr = cursor.slot_ptr,
                                 },
                                 .db = self,
-                                .is_new = cursor.slot_ptr.slot == 0,
                             };
                             var writer = try next_cursor.writer(void, &[_]PathPart(void){});
                             try writer.writeAll(part.value.bytes);
@@ -1097,7 +1095,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 .slot_ptr = cursor.slot_ptr,
                             },
                             .db = self,
-                            .is_new = cursor.slot_ptr.slot == 0,
                         };
                         try part.ctx.run(&next_cursor);
                         return cursor.slot_ptr;
