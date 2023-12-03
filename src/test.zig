@@ -36,15 +36,25 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         }
         var root_cursor = db.rootCursor();
 
-        // write foo
+        // write foo -> bar
         const foo_key = main.hash_buffer("foo");
-        const bar_key = main.hash_buffer("bar");
-        try root_cursor.execute(void, &[_]PathPart(void){
-            .{ .list_get = .append_copy },
-            .map_create,
-            .{ .map_get = foo_key },
-            .{ .value = .{ .pointer = try db.writeAtHash(bar_key, "bar", .once) } },
-        });
+        {
+            const Ctx = struct {
+                pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
+                    try expectEqual(true, cursor.is_new);
+                    var writer = try cursor.writer();
+                    try writer.writeAll("bar");
+                    try expectEqual(true, cursor.is_new);
+                    try writer.finish();
+                }
+            };
+            try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
+                .{ .list_get = .append_copy },
+                .map_create,
+                .{ .map_get = foo_key },
+                .{ .ctx = Ctx{} },
+            });
+        }
 
         // read foo
         const bar_value = (try root_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){
@@ -108,10 +118,15 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             });
         }
 
-        // write baz with writer
+        // overwrite foo -> baz
         {
             const Ctx = struct {
-                pub fn run(_: @This(), writer: *Database(kind).Writer) !void {
+                allocator: std.mem.Allocator,
+
+                pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
+                    try expectEqual(false, cursor.is_new);
+
+                    var writer = try cursor.writer();
                     try writer.writeAll("x");
                     try writer.writeAll("x");
                     try writer.writeAll("x");
@@ -121,9 +136,19 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                     try writer.writeAll("z");
                     try writer.seekFromEnd(-2);
                     try writer.writeAll("a");
+                    try writer.finish();
+
+                    const value = (try cursor.readBytesAlloc(self.allocator, void, &[_]PathPart(void){})).?;
+                    defer self.allocator.free(value);
+                    try std.testing.expectEqualStrings("baz", value);
                 }
             };
-            _ = try db.writerAtHash(main.hash_buffer("baz"), Ctx, Ctx{}, .once);
+            try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
+                .{ .list_get = .append_copy },
+                .map_create,
+                .{ .map_get = foo_key },
+                .{ .ctx = Ctx{ .allocator = allocator } },
+            });
         }
 
         // if error in ctx, db doesn't change
@@ -132,17 +157,16 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 allocator: std.mem.Allocator,
 
                 pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
-                    const value = "this value won't be visible";
-                    try cursor.execute(void, &[_]PathPart(void){
-                        .{ .map_get = main.hash_buffer("foo") },
-                        .{ .value = .{ .pointer = try cursor.db.writeAtHash(main.hash_buffer(value), value, .once) } },
-                    });
+                    var writer = try cursor.writer();
+                    try writer.writeAll("this value won't be visible");
+                    try writer.finish();
                     return error.NotImplemented;
                 }
             };
             root_cursor.execute(Ctx, &[_]PathPart(Ctx){
                 .{ .list_get = .append_copy },
                 .map_create,
+                .{ .map_get = main.hash_buffer("foo") },
                 .{ .ctx = Ctx{ .allocator = allocator } },
             }) catch {};
 
@@ -152,7 +176,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 .{ .map_get = foo_key },
             })).?;
             defer allocator.free(value);
-            try std.testing.expectEqualStrings("bar", value);
+            try std.testing.expectEqualStrings("baz", value);
         }
 
         // read foo into stack-allocated buffer
@@ -161,29 +185,29 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .map_get = foo_key },
         })).?;
-        try std.testing.expectEqualStrings("bar", bar_buffer_value);
+        try std.testing.expectEqualStrings("baz", bar_buffer_value);
 
-        // overwrite foo
+        // overwrite foo -> bar
         try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .map_create,
             .{ .map_get = foo_key },
-            .{ .value = .{ .pointer = try db.writeAtHash(main.hash_buffer("baz"), "baz", .once) } },
+            .{ .value = .{ .bytes = "bar" } },
         });
         const baz_value = (try root_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .map_get = foo_key },
         })).?;
         defer allocator.free(baz_value);
-        try std.testing.expectEqualStrings("baz", baz_value);
+        try std.testing.expectEqualStrings("bar", baz_value);
 
         // can still read the old value
-        const bar_value2 = (try root_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){
+        const baz_value2 = (try root_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){
             .{ .list_get = .{ .index = .{ .index = 1, .reverse = true } } },
             .{ .map_get = foo_key },
         })).?;
-        defer allocator.free(bar_value2);
-        try std.testing.expectEqualStrings("bar", bar_value2);
+        defer allocator.free(baz_value2);
+        try std.testing.expectEqualStrings("baz", baz_value2);
 
         // key not found
         const not_found_key = main.hash_buffer("this doesn't exist");
@@ -199,7 +223,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .list_get = .append_copy },
             .map_create,
             .{ .map_get = conflict_key },
-            .{ .value = .{ .pointer = try db.writeAtHash(main.hash_buffer("hello"), "hello", .once) } },
+            .{ .value = .{ .bytes = "hello" } },
         });
 
         // read conflicting key
@@ -211,19 +235,19 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try std.testing.expectEqualStrings("hello", hello_value);
 
         // we can still read foo
-        const baz_value2 = (try root_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){
+        const bar_value2 = (try root_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .map_get = foo_key },
         })).?;
-        defer allocator.free(baz_value2);
-        try std.testing.expectEqualStrings("baz", baz_value2);
+        defer allocator.free(bar_value2);
+        try std.testing.expectEqualStrings("bar", bar_value2);
 
         // overwrite conflicting key
         try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .map_create,
             .{ .map_get = conflict_key },
-            .{ .value = .{ .pointer = try db.writeAtHash(main.hash_buffer("goodbye"), "goodbye", .once) } },
+            .{ .value = .{ .bytes = "goodbye" } },
         });
         const goodbye_value = (try root_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
@@ -248,7 +272,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .map_get = fruits_key },
             .list_create,
             .{ .list_get = .append },
-            .{ .value = .{ .pointer = try db.writeAtHash(main.hash_buffer("apple"), "apple", .once) } },
+            .{ .value = .{ .bytes = "apple" } },
         });
 
         // read apple
@@ -267,7 +291,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .map_get = fruits_key },
             .list_create,
             .{ .list_get = .append },
-            .{ .value = .{ .pointer = try db.writeAtHash(main.hash_buffer("banana"), "banana", .once) } },
+            .{ .value = .{ .bytes = "banana" } },
         });
 
         // read banana
@@ -294,11 +318,11 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .list_create,
             .{ .path = &[_]PathPart(void){
                 .{ .list_get = .append },
-                .{ .value = .{ .pointer = try db.writeAtHash(main.hash_buffer("pear"), "pear", .once) } },
+                .{ .value = .{ .bytes = "pear" } },
             } },
             .{ .path = &[_]PathPart(void){
                 .{ .list_get = .append },
-                .{ .value = .{ .pointer = try db.writeAtHash(main.hash_buffer("grape"), "grape", .once) } },
+                .{ .value = .{ .bytes = "grape" } },
             } },
         });
 
@@ -369,7 +393,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 .{ .list_get = .append_copy },
                 .map_create,
                 .{ .map_get = wat_key },
-                .{ .value = .{ .pointer = try db.writeAtHash(main.hash_buffer(value), value, .once) } },
+                .{ .value = .{ .bytes = value } },
             });
 
             const value2 = (try root_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){
@@ -400,7 +424,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 .{ .list_get = .append_copy },
                 .list_create,
                 .{ .list_get = .append },
-                .{ .value = .{ .pointer = try db.writeAtHash(main.hash_buffer(value), value, .once) } },
+                .{ .value = .{ .bytes = value } },
             });
 
             const value2 = (try root_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){
@@ -416,7 +440,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .list_get = .append_copy },
             .list_create,
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .value = .{ .pointer = try db.writeAtHash(main.hash_buffer("hello"), "hello", .once) } },
+            .{ .value = .{ .bytes = "hello" } },
         });
 
         // read last value
@@ -432,7 +456,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .list_get = .append_copy },
             .list_create,
             .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .value = .{ .pointer = try db.writeAtHash(main.hash_buffer("goodbye"), "goodbye", .once) } },
+            .{ .value = .{ .bytes = "goodbye" } },
         });
 
         // read last value
@@ -472,7 +496,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 .{ .list_get = .append_copy },
                 .list_create,
                 .{ .list_get = .append },
-                .{ .value = .{ .pointer = try db.writeAtHash(main.hash_buffer(value), value, .once) } },
+                .{ .value = .{ .bytes = value } },
             });
 
             const value2 = (try root_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){
@@ -522,7 +546,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 .{ .list_get = .append_copy },
                 .map_create,
                 .{ .map_get = wat_key },
-                .{ .value = .{ .pointer = try db.writeAtHash(wat_key, value, .once) } },
+                .{ .value = .{ .bytes = value } },
             });
 
             const value2 = (try root_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){
@@ -535,7 +559,6 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
         // add foo
         const foo_key = main.hash_buffer("foo");
-        _ = try db.writeAtHash(foo_key, "foo", .once);
         try root_cursor.execute(void, &[_]PathPart(void){
             .{ .list_get = .append_copy },
             .map_create,
@@ -558,15 +581,14 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         defer iter.deinit();
         var i: u64 = 0;
         while (try iter.next()) |*next_cursor| {
-            const value = (try next_cursor.readKeyBytesAlloc(allocator, void, &[_]PathPart(void){})).?;
-            defer allocator.free(value);
-            if (std.mem.eql(u8, "foo", value)) {
-                const value2 = (try next_cursor.readInt(void, &[_]PathPart(void){})).?;
-                try expectEqual(42, value2);
+            const hash = (try next_cursor.readHash(void, &[_]PathPart(void){})).?;
+            if (hash == foo_key) {
+                const value = (try next_cursor.readInt(void, &[_]PathPart(void){})).?;
+                try expectEqual(42, value);
             } else {
-                const value2 = (try next_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){})).?;
-                defer allocator.free(value2);
-                try std.testing.expectEqualStrings(value, value2);
+                const value = (try next_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){})).?;
+                defer allocator.free(value);
+                try expectEqual(hash, main.hash_buffer(value));
             }
             i += 1;
         }
