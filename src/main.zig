@@ -411,10 +411,15 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 return getPointerValue((try self.db.readSlot(Ctx, path, true, self.read_slot_cursor)).slot);
             }
 
-            pub fn reader(self: *Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !Reader {
+            pub fn reader(self: *Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?Reader {
                 const core_reader = self.db.core.reader();
 
-                const slot_ptr = try self.db.readSlot(Ctx, path, false, self.read_slot_cursor);
+                const slot_ptr = self.db.readSlot(Ctx, path, false, self.read_slot_cursor) catch |err| {
+                    switch (err) {
+                        error.KeyNotFound => return null,
+                        else => return err,
+                    }
+                };
                 const slot = slot_ptr.slot;
                 const ptr = getPointerValue(slot);
                 const ptr_type = try getPointerType(slot);

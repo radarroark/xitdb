@@ -74,7 +74,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                     defer self.allocator.free(value);
                     try std.testing.expectEqualStrings("bar", value);
 
-                    var bar_reader = try cursor.reader(void, &[_]PathPart(void){});
+                    var bar_reader = (try cursor.reader(void, &[_]PathPart(void){})).?;
 
                     // read into buffer
                     var bar_bytes = [_]u8{0} ** 10;
