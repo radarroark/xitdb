@@ -44,7 +44,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         }
         var root_cursor = db.rootCursor();
 
-        // write foo -> bar
+        // write foo -> bar with a writer
         const foo_key = hash_buffer("foo");
         {
             const Ctx = struct {
@@ -121,7 +121,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             };
             _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
                 .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .map_get = hash_buffer("foo") },
+                .{ .map_get = foo_key },
                 .{ .ctx = Ctx{ .allocator = allocator } },
             });
         }
@@ -158,6 +158,32 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 .{ .ctx = Ctx{ .allocator = allocator } },
             });
         }
+
+        // write bar -> foo with writeBytes
+        const bar_key = hash_buffer("bar");
+        const foo_ptr = try root_cursor.writeBytes("foo", .once, void, &[_]PathPart(void){
+            .{ .list_get = .append_copy },
+            .map_create,
+            .{ .map_get = bar_key },
+        });
+        try expectEqual(foo_ptr, try root_cursor.writeBytes("foo", .once, void, &[_]PathPart(void){
+            .{ .list_get = .append_copy },
+            .map_create,
+            .{ .map_get = bar_key },
+        }));
+        try std.testing.expect(foo_ptr != try root_cursor.writeBytes("foo", .replace, void, &[_]PathPart(void){
+            .{ .list_get = .append_copy },
+            .map_create,
+            .{ .map_get = bar_key },
+        }));
+
+        // read bar
+        const foo_value = (try root_cursor.readBytesAlloc(allocator, void, &[_]PathPart(void){
+            .{ .list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+            .{ .map_get = bar_key },
+        })).?;
+        defer allocator.free(foo_value);
+        try std.testing.expectEqualStrings("foo", foo_value);
 
         // if error in ctx, db doesn't change
         {

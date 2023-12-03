@@ -352,7 +352,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     // if the cursor is directly pointing to the slot we are updating,
                     // make sure it is updated as well, so subsequent reads with the
                     // cursor will see the new value.
-                    if (self.parent.read_slot_cursor.slot_ptr.position == self.slot_ptr.position) {
+                    if (self.parent.read_slot_cursor == .slot_ptr and self.parent.read_slot_cursor.slot_ptr.position == self.slot_ptr.position) {
                         self.parent.read_slot_cursor.slot_ptr.slot = slot;
                     }
                 }
@@ -599,6 +599,17 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     .db = self.db,
                     .is_new = false,
                 };
+            }
+
+            pub fn writeBytes(self: *Cursor, buffer: []const u8, mode: enum { once, replace }, comptime Ctx: type, path: []const PathPart(Ctx)) !u60 {
+                var cursor_writer = try self.writer(Ctx, path);
+                if (mode == .replace or cursor_writer.slot_ptr.slot == 0) {
+                    try cursor_writer.writeAll(buffer);
+                    try cursor_writer.finish();
+                    return cursor_writer.ptr_position;
+                } else {
+                    return getPointerValue(cursor_writer.slot_ptr.slot);
+                }
             }
 
             pub const Iter = struct {
