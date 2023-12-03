@@ -339,6 +339,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
             pub const Writer = struct {
                 parent: *Database(db_kind).Cursor,
+                slot_ptr: SlotPointer,
                 size: u60,
                 ptr_position: u60,
                 start_position: u60,
@@ -350,11 +351,16 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     try self.parent.db.core.seekTo(self.ptr_position);
                     try core_writer.writeIntLittle(u64, self.size);
 
-                    const slot_ptr = try self.parent.db.readSlot(void, &[_]PathPart(void){}, true, self.parent.read_slot_cursor);
-                    try self.parent.db.core.seekTo(slot_ptr.position);
+                    try self.parent.db.core.seekTo(self.slot_ptr.position);
                     const slot = setType(self.ptr_position, .bytes);
                     try core_writer.writeIntLittle(u64, slot);
-                    self.parent.read_slot_cursor.slot_ptr.slot = slot;
+
+                    // if the cursor is directly pointing to the slot we are updating,
+                    // make sure it is updated as well, so subsequent reads with the
+                    // cursor will see the new value.
+                    if (self.parent.read_slot_cursor.slot_ptr.position == self.slot_ptr.position) {
+                        self.parent.read_slot_cursor.slot_ptr.slot = slot;
+                    }
                 }
 
                 pub fn writeAll(self: *Writer, bytes: []const u8) !void {
@@ -404,10 +410,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 _ = try self.db.readSlot(Ctx, path, true, self.read_slot_cursor);
             }
 
-            pub fn reader(self: *Cursor) !Reader {
+            pub fn reader(self: *Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !Reader {
                 const core_reader = self.db.core.reader();
 
-                const slot_ptr = try self.db.readSlot(void, &[_]PathPart(void){}, false, self.read_slot_cursor);
+                const slot_ptr = try self.db.readSlot(Ctx, path, false, self.read_slot_cursor);
                 const slot = slot_ptr.slot;
                 const ptr = getPointerValue(slot);
                 const ptr_type = try getPointerType(slot);
@@ -438,14 +444,18 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 };
             }
 
-            pub fn writer(self: *Cursor) !Writer {
+            pub fn writer(self: *Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !Writer {
+                const slot_ptr = try self.db.readSlot(Ctx, path, true, self.read_slot_cursor);
+
                 const core_writer = self.db.core.writer();
                 try self.db.core.seekFromEnd(0);
                 const ptr_pos = try self.db.core.getPos();
                 try core_writer.writeIntLittle(u64, 0);
                 const start_position = try self.db.core.getPos();
+
                 return Writer{
                     .parent = self,
+                    .slot_ptr = slot_ptr,
                     .size = 0,
                     .ptr_position = ptr_pos,
                     .start_position = start_position,
@@ -805,7 +815,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             slot_ptr: SlotPointer,
         };
 
-        fn readSlot(self: *Database(db_kind), comptime Ctx: type, path: []const PathPart(Ctx), allow_write: bool, cursor: ReadSlotCursor) !SlotPointer {
+        fn readSlot(self: *Database(db_kind), comptime Ctx: type, path: []const PathPart(Ctx), allow_write: bool, cursor: ReadSlotCursor) anyerror!SlotPointer {
             const part = if (path.len > 0) path[0] else switch (cursor) {
                 .index_start => return SlotPointer{ .position = 0, .slot = 0 },
                 .slot_ptr => {
@@ -1065,12 +1075,9 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 .db = self,
                                 .is_new = cursor.slot_ptr.slot == 0,
                             };
-                            var writer = try next_cursor.writer();
+                            var writer = try next_cursor.writer(void, &[_]PathPart(void){});
                             try writer.writeAll(part.value.bytes);
-
-                            try self.core.seekTo(writer.ptr_position);
-                            try core_writer.writeIntLittle(u64, writer.size);
-
+                            try writer.finish();
                             break :blk setType(writer.ptr_position, .bytes);
                         },
                     };

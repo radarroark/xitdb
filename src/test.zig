@@ -42,7 +42,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             const Ctx = struct {
                 pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
                     try expectEqual(true, cursor.is_new);
-                    var writer = try cursor.writer();
+                    var writer = try cursor.writer(void, &[_]PathPart(void){});
                     try writer.writeAll("bar");
                     try expectEqual(true, cursor.is_new);
                     try writer.finish();
@@ -74,7 +74,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                     defer self.allocator.free(value);
                     try std.testing.expectEqualStrings("bar", value);
 
-                    var bar_reader = try cursor.reader();
+                    var bar_reader = try cursor.reader(void, &[_]PathPart(void){});
 
                     // read into buffer
                     var bar_bytes = [_]u8{0} ** 10;
@@ -126,7 +126,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
                     try expectEqual(false, cursor.is_new);
 
-                    var writer = try cursor.writer();
+                    var writer = try cursor.writer(void, &[_]PathPart(void){});
                     try writer.writeAll("x");
                     try writer.writeAll("x");
                     try writer.writeAll("x");
@@ -157,7 +157,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 allocator: std.mem.Allocator,
 
                 pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
-                    var writer = try cursor.writer();
+                    var writer = try cursor.writer(void, &[_]PathPart(void){});
                     try writer.writeAll("this value won't be visible");
                     try writer.finish();
                     return error.NotImplemented;
