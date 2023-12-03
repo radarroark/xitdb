@@ -564,22 +564,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 return std.mem.bytesToValue(Hash, &hash);
             }
 
-            pub fn readBytesPointer(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?u60 {
-                const slot_ptr = self.db.readSlot(Ctx, path, false, self.read_slot_cursor) catch |err| {
-                    switch (err) {
-                        error.KeyNotFound => return null,
-                        else => return err,
-                    }
-                };
-                const slot = slot_ptr.slot;
-                const ptr = getPointerValue(slot);
-                const ptr_type = try getPointerType(slot);
-
-                if (ptr_type != .bytes) return error.UnexpectedPointerType;
-
-                return ptr;
-            }
-
             pub fn readInt(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?u60 {
                 const slot_ptr = self.db.readSlot(Ctx, path, false, self.read_slot_cursor) catch |err| {
                     switch (err) {
