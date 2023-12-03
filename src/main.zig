@@ -14,13 +14,6 @@ comptime {
     std.debug.assert(@bitSizeOf(Hash) == HASH_SIZE * 8);
 }
 pub const HASH_INT_SIZE = @sizeOf(Hash);
-pub fn hash_buffer(buffer: []const u8) Hash {
-    var hash = [_]u8{0} ** HASH_INT_SIZE;
-    var h = std.crypto.hash.Sha1.init(.{});
-    h.update(buffer);
-    h.final(hash[0..HASH_SIZE]);
-    return std.mem.bytesToValue(Hash, &hash);
-}
 
 const SLOT_SIZE: u60 = @sizeOf(u64);
 const HEADER_BLOCK_SIZE = 2;
