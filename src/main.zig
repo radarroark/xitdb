@@ -610,7 +610,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
             }
 
-            pub fn getPointer(self: Cursor) ?u60 {
+            pub fn pointer(self: Cursor) ?u60 {
                 return if (self.read_slot_cursor == .slot_ptr and self.read_slot_cursor.slot_ptr.slot != 0) getPointerValue(self.read_slot_cursor.slot_ptr.slot) else null;
             }
 
