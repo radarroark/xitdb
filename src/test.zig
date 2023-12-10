@@ -111,10 +111,10 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
                         try bar_reader.seekTo(2);
                         try bar_reader.seekBy(-1);
-                        try expectEqual('a', try bar_reader.readIntLittle(u8));
+                        try expectEqual('a', try bar_reader.readInt(u8, .little));
 
                         try bar_reader.seekFromEnd(-3);
-                        try expectEqual('b', try bar_reader.readIntLittle(u8));
+                        try expectEqual('b', try bar_reader.readInt(u8, .little));
                     }
                 }
             };
@@ -654,8 +654,8 @@ test "read and write" {
         try db.core.seekTo(0);
         try writer.writeAll("Hello");
         try std.testing.expectEqualStrings("Hello", db.core.buffer.items[0..5]);
-        try writer.writeIntLittle(u64, 42);
-        const hello = try std.fmt.allocPrint(allocator, "Hello{s}", .{std.mem.asBytes(&std.mem.nativeToLittle(u64, 42))});
+        try writer.writeInt(u64, 42, .little);
+        const hello = try std.fmt.allocPrint(allocator, "Hello{s}", .{std.mem.asBytes(&std.mem.nativeTo(u64, 42, .little))});
         defer allocator.free(hello);
         try std.testing.expectEqualStrings(hello, db.core.buffer.items[0..13]);
 
@@ -664,6 +664,6 @@ test "read and write" {
         var block = [_]u8{0} ** 5;
         try reader.readNoEof(&block);
         try std.testing.expectEqualStrings("Hello", &block);
-        try expectEqual(42, reader.readIntLittle(u64));
+        try expectEqual(42, reader.readInt(u64, .little));
     }
 }
