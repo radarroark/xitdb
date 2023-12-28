@@ -971,13 +971,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             const last_key = array_list_size - 1;
                             const array_list_ptr: u60 = @truncate(try reader.readInt(u64, .little));
                             const shift: u6 = @truncate(if (last_key < SLOT_COUNT) 0 else std.math.log(u60, SLOT_COUNT, last_key));
-                            const final_slot_ptr = try self.readVectorSlot(array_list_ptr, key, shift, write_mode);
+                            const final_slot_ptr = try self.readArrayListSlot(array_list_ptr, key, shift, write_mode);
                             return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = final_slot_ptr });
                         },
                         .append => {
                             if (!allow_write) return error.WriteNotAllowed;
 
-                            const append_result = try self.readVectorSlotAppend(next_array_list_start, write_mode);
+                            const append_result = try self.readArrayListSlotAppend(next_array_list_start, write_mode);
                             const final_slot_ptr = try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = append_result.slot_ptr });
                             // update array_list size and ptr
                             try self.core.seekTo(next_array_list_start);
@@ -1001,11 +1001,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 const key = array_list_size - 1;
                                 const array_list_ptr: u60 = @truncate(try reader.readInt(u64, .little));
                                 const shift: u6 = @truncate(if (key < SLOT_COUNT) 0 else std.math.log(u60, SLOT_COUNT, key));
-                                const last_slot_ptr = try self.readVectorSlot(array_list_ptr, key, shift, .read_only);
+                                const last_slot_ptr = try self.readArrayListSlot(array_list_ptr, key, shift, .read_only);
                                 last_slot = last_slot_ptr.slot;
                             }
                             // make the next slot
-                            var append_result = try self.readVectorSlotAppend(next_array_list_start, write_mode);
+                            var append_result = try self.readArrayListSlotAppend(next_array_list_start, write_mode);
                             // set its value to the last slot
                             if (last_slot != 0) {
                                 try self.core.seekTo(append_result.slot_ptr.position);
@@ -1228,7 +1228,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             slot_ptr: SlotPointer,
         };
 
-        fn readVectorSlotAppend(self: *Database(db_kind), index_start: u60, write_mode: WriteMode) !AppendResult {
+        fn readArrayListSlotAppend(self: *Database(db_kind), index_start: u60, write_mode: WriteMode) !AppendResult {
             const reader = self.core.reader();
             const writer = self.core.writer();
 
@@ -1249,16 +1249,16 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 try writer.writeAll(&index_block);
                 try self.core.seekTo(next_index_pos);
                 try writer.writeInt(u64, index_pos, .little);
-                slot_ptr = try self.readVectorSlot(next_index_pos, key, next_shift, write_mode);
+                slot_ptr = try self.readArrayListSlot(next_index_pos, key, next_shift, write_mode);
                 index_pos = next_index_pos;
             } else {
-                slot_ptr = try self.readVectorSlot(index_pos, key, next_shift, write_mode);
+                slot_ptr = try self.readArrayListSlot(index_pos, key, next_shift, write_mode);
             }
 
             return AppendResult{ .array_list_size = key + 1, .array_list_ptr = index_pos, .slot_ptr = slot_ptr };
         }
 
-        fn readVectorSlot(self: *Database(db_kind), index_pos: u60, key: u60, shift: u6, write_mode: WriteMode) !SlotPointer {
+        fn readArrayListSlot(self: *Database(db_kind), index_pos: u60, key: u60, shift: u6, write_mode: WriteMode) !SlotPointer {
             const reader = self.core.reader();
 
             const i = @as(u60, @truncate(key >> (shift * BIT_COUNT))) & MASK;
@@ -1278,7 +1278,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         try writer.writeAll(&index_block);
                         try self.core.seekTo(slot_pos);
                         try writer.writeInt(u64, setType(next_index_pos, .index), .little);
-                        return try self.readVectorSlot(next_index_pos, key, shift - 1, write_mode);
+                        return try self.readArrayListSlot(next_index_pos, key, shift - 1, write_mode);
                     }
                 } else {
                     return error.KeyNotFound;
@@ -1307,7 +1307,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         try self.core.seekTo(slot_pos);
                         try writer.writeInt(u64, setType(next_ptr, .index), .little);
                     }
-                    return self.readVectorSlot(next_ptr, key, shift - 1, write_mode);
+                    return self.readArrayListSlot(next_ptr, key, shift - 1, write_mode);
                 }
             }
         }
