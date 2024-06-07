@@ -5,7 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const unit_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/test.zig" },
+        .root_source_file = .{ .src_path = .{ .owner = b, .sub_path = "src/test.zig" } },
         .target = target,
         .optimize = optimize,
     });
