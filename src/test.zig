@@ -1,19 +1,19 @@
 const std = @import("std");
-const main = @import("./main.zig");
-const Database = main.Database;
-const DatabaseKind = main.DatabaseKind;
-const PathPart = main.PathPart;
+const xitdb = @import("./lib.zig");
+const Database = xitdb.Database;
+const DatabaseKind = xitdb.DatabaseKind;
+const PathPart = xitdb.PathPart;
 
 fn expectEqual(expected: anytype, actual: anytype) !void {
     try std.testing.expectEqual(@as(@TypeOf(actual), expected), actual);
 }
 
-fn hash_buffer(buffer: []const u8) main.Hash {
-    var hash = [_]u8{0} ** main.HASH_INT_SIZE;
+fn hash_buffer(buffer: []const u8) xitdb.Hash {
+    var hash = [_]u8{0} ** xitdb.HASH_INT_SIZE;
     var h = std.crypto.hash.Sha1.init(.{});
     h.update(buffer);
-    h.final(hash[0..main.HASH_SIZE]);
-    return std.mem.bytesToValue(main.Hash, &hash);
+    h.final(hash[0..xitdb.HASH_SIZE]);
+    return std.mem.bytesToValue(xitdb.Hash, &hash);
 }
 
 fn initOpts(comptime kind: DatabaseKind, opts: anytype) !Database(kind).InitOpts {
@@ -259,7 +259,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
         // write key that conflicts with foo
         var conflict_key = hash_buffer("conflict");
-        conflict_key = (conflict_key & ~main.MASK) | (foo_key & main.MASK);
+        conflict_key = (conflict_key & ~xitdb.MASK) | (foo_key & xitdb.MASK);
         _ = try root_cursor.execute(void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_create,
@@ -427,7 +427,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         var root_cursor = db.rootCursor();
 
         const wat_key = hash_buffer("wat");
-        for (0..main.SLOT_COUNT + 1) |i| {
+        for (0..xitdb.SLOT_COUNT + 1) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
             _ = try root_cursor.execute(void, &[_]PathPart(void){
@@ -458,7 +458,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         }
         var root_cursor = db.rootCursor();
 
-        for (0..main.SLOT_COUNT + 1) |i| {
+        for (0..xitdb.SLOT_COUNT + 1) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
             _ = try root_cursor.execute(void, &[_]PathPart(void){
