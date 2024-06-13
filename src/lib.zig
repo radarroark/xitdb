@@ -461,7 +461,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 };
             }
 
-            pub fn readBytesAlloc(self: Cursor, allocator: std.mem.Allocator, comptime Ctx: type, path: []const PathPart(Ctx)) !?[]u8 {
+            pub fn readBytesAlloc(self: Cursor, allocator: std.mem.Allocator, max_size: usize, comptime Ctx: type, path: []const PathPart(Ctx)) !?[]u8 {
                 const core_reader = self.db.core.reader();
 
                 const slot_ptr = self.db.readSlot(Ctx, path, false, self.read_slot_cursor) catch |err| {
@@ -490,6 +490,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                 try self.db.core.seekTo(position);
                 const value_size = try core_reader.readInt(u64, .little);
+
+                if (value_size > max_size) {
+                    return error.MaxSizeExceeded;
+                }
 
                 const value = try allocator.alloc(u8, value_size);
                 errdefer allocator.free(value);
