@@ -309,6 +309,47 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     return ret;
                 }
 
+                pub fn readUntilDelimiter(self: *Reader, buf: []u8, delimiter: u8) ![]u8 {
+                    if (self.size < self.relative_position) return error.EndOfStream;
+                    try self.parent.db.core.seekTo(self.start_position + self.relative_position);
+                    const core_reader = self.parent.db.core.reader();
+                    const buf_slice = core_reader.readUntilDelimiter(buf[0..@min(buf.len, self.size - self.relative_position)], delimiter) catch |err| switch (err) {
+                        error.StreamTooLong => return error.EndOfStream,
+                        else => return err,
+                    };
+                    self.relative_position += @truncate(buf_slice.len);
+                    self.relative_position += 1; // for the delimiter
+                    return buf_slice;
+                }
+
+                pub fn readUntilDelimiterAlloc(self: *Reader, allocator: std.mem.Allocator, delimiter: u8, max_size: usize) ![]u8 {
+                    if (self.size < self.relative_position) return error.EndOfStream;
+                    try self.parent.db.core.seekTo(self.start_position + self.relative_position);
+                    const core_reader = self.parent.db.core.reader();
+                    const buf_slice = core_reader.readUntilDelimiterAlloc(allocator, delimiter, @min(max_size, self.size - self.relative_position)) catch |err| switch (err) {
+                        error.StreamTooLong => return error.EndOfStream,
+                        else => return err,
+                    };
+                    self.relative_position += @truncate(buf_slice.len);
+                    self.relative_position += 1; // for the delimiter
+                    return buf_slice;
+                }
+
+                pub fn readAllAlloc(self: *Reader, allocator: std.mem.Allocator, max_size: usize) ![]u8 {
+                    if (self.size < self.relative_position) return error.EndOfStream;
+                    if (self.size - self.relative_position > max_size) return error.StreamTooLong;
+                    const buffer = try allocator.alloc(u8, self.size - self.relative_position);
+                    errdefer allocator.free(buffer);
+                    try self.parent.db.core.seekTo(self.start_position + self.relative_position);
+                    const core_reader = self.parent.db.core.reader();
+                    const size = try core_reader.read(buffer);
+                    if (size != buffer.len) {
+                        return error.UnexpectedReadSize;
+                    }
+                    self.relative_position += @truncate(size);
+                    return buffer;
+                }
+
                 pub fn seekTo(self: *Reader, offset: u60) !void {
                     if (offset <= self.size) {
                         self.relative_position = offset;
