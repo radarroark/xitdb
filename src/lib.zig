@@ -351,9 +351,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
 
                 pub fn seekTo(self: *Reader, offset: u60) !void {
-                    if (offset <= self.size) {
-                        self.relative_position = offset;
+                    if (offset > self.size) {
+                        return error.InvalidOffset;
                     }
+                    self.relative_position = offset;
                 }
 
                 pub fn seekBy(self: *Reader, offset: i61) !void {
