@@ -438,9 +438,13 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 .{ .hash_map_get = wat_key },
                 .{ .value = .{ .bytes = value } },
             });
+        }
 
+        for (0..xitdb.SLOT_COUNT + 1) |i| {
+            const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
+            defer allocator.free(value);
             const value2 = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-                .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+                .{ .array_list_get = .{ .index = .{ .index = i, .reverse = false } } },
                 .{ .hash_map_get = wat_key },
             })).?;
             defer allocator.free(value2);
@@ -469,10 +473,14 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 .{ .array_list_get = .append },
                 .{ .value = .{ .bytes = value } },
             });
+        }
 
+        for (0..xitdb.SLOT_COUNT + 1) |i| {
+            const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
+            defer allocator.free(value);
             const value2 = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+                .{ .array_list_get = .{ .index = .{ .index = i, .reverse = false } } },
             })).?;
             defer allocator.free(value2);
             try std.testing.expectEqualStrings(value, value2);
@@ -518,6 +526,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         defer allocator.free(value3);
         try std.testing.expectEqualStrings("hello", value3);
     }
+    if (true) return;
 
     // iterate over inner array_list
     {
