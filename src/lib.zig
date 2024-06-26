@@ -127,11 +127,15 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
 
                     pub fn readInt(self: Core.Reader, comptime T: type, endian: std.builtin.Endian) !T {
-                        const new_position = self.parent.position + @sizeOf(T);
+                        if (@bitSizeOf(T) % 8 != 0) {
+                            return error.InvalidTypeSize;
+                        }
+                        const size = @bitSizeOf(T) / 8;
+                        const new_position = self.parent.position + size;
                         if (new_position > self.parent.size) return error.EndOfStream;
                         const bytes = self.parent.buffer.items[self.parent.position..new_position];
                         self.parent.position = new_position;
-                        return std.mem.toNative(T, std.mem.bytesToValue(T, bytes[0..@sizeOf(T)]), endian);
+                        return std.mem.toNative(T, std.mem.bytesToValue(T, bytes), endian);
                     }
                 };
 
@@ -146,8 +150,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
 
                     pub fn writeInt(self: Core.Writer, comptime T: type, value: T, endian: std.builtin.Endian) !void {
-                        const new_position = self.parent.position + @sizeOf(T);
-                        @memcpy(self.parent.buffer.items[self.parent.position..new_position], std.mem.asBytes(&std.mem.nativeTo(T, value, endian)));
+                        if (@bitSizeOf(T) % 8 != 0) {
+                            return error.InvalidTypeSize;
+                        }
+                        const size = @bitSizeOf(T) / 8;
+                        const new_position = self.parent.position + size;
+                        const bytes = std.mem.asBytes(&std.mem.nativeTo(T, value, endian));
+                        @memcpy(self.parent.buffer.items[self.parent.position..new_position], bytes[0..size]);
                         self.parent.size = @max(self.parent.size, new_position);
                         self.parent.position = new_position;
                     }
