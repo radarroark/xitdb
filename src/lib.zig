@@ -25,8 +25,8 @@ const INDEX_START = HEADER_BLOCK_SIZE;
 
 const SlotInt = u72;
 const Slot = packed struct {
-    val: u64,
-    tag: u8,
+    val: u64 = 0,
+    tag: u8 = 0,
 
     fn init(ptr: u64, tag: Tag) Slot {
         return .{
@@ -722,7 +722,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                     var map_index_block_bytes = [_]u8{0} ** INDEX_BLOCK_SIZE;
                                     try core_reader.readNoEof(&map_index_block_bytes);
                                     // convert the block into 72-bit little endian ints
-                                    var map_index_block = [_]Slot{.{ .val = 0, .tag = 0 }} ** SLOT_COUNT;
+                                    var map_index_block = [_]Slot{.{}} ** SLOT_COUNT;
                                     {
                                         var stream = std.io.fixedBufferStream(&map_index_block_bytes);
                                         var block_reader = stream.reader();
@@ -799,7 +799,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                             var map_index_block_bytes = [_]u8{0} ** INDEX_BLOCK_SIZE;
                                             try core_reader.readNoEof(&map_index_block_bytes);
                                             // convert the block into 72-bit little endian ints
-                                            var map_index_block = [_]Slot{.{ .val = 0, .tag = 0 }} ** SLOT_COUNT;
+                                            var map_index_block = [_]Slot{.{}} ** SLOT_COUNT;
                                             {
                                                 var stream = std.io.fixedBufferStream(&map_index_block_bytes);
                                                 var block_reader = stream.reader();
@@ -867,7 +867,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
         fn readSlot(self: *Database(db_kind), comptime Ctx: type, path: []const PathPart(Ctx), allow_write: bool, cursor: ReadSlotCursor) anyerror!SlotPointer {
             const part = if (path.len > 0) path[0] else switch (cursor) {
-                .index_start => return SlotPointer{ .position = 0, .slot = .{ .val = 0, .tag = 0 } },
+                .index_start => return SlotPointer{ .position = 0, .slot = .{} },
                 .slot_ptr => {
                     if (!allow_write and cursor.slot_ptr.slot.tag == 0) {
                         return error.KeyNotFound;
@@ -1053,7 +1053,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             try self.core.seekTo(next_array_list_start);
                             const array_list_size = try reader.readInt(u64, .little);
                             // read the last slot in the array_list
-                            var last_slot: Slot = .{ .val = 0, .tag = 0 };
+                            var last_slot: Slot = .{};
                             if (array_list_size > 0) {
                                 const key = array_list_size - 1;
                                 const array_list_ptr = try reader.readInt(u64, .little);
