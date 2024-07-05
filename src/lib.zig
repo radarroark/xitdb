@@ -25,12 +25,12 @@ const INDEX_START = HEADER_BLOCK_SIZE;
 
 const SlotInt = u72;
 const Slot = packed struct {
-    val: u64 = 0,
+    value: u64 = 0,
     tag: u8 = 0,
 
     fn init(ptr: u64, tag: Tag) Slot {
         return .{
-            .val = ptr,
+            .value = ptr,
             .tag = @intFromEnum(tag),
         };
     }
@@ -453,7 +453,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             };
 
             pub fn execute(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !u64 {
-                return (try self.db.readSlot(Ctx, path, true, self.read_slot_cursor)).slot.val;
+                return (try self.db.readSlot(Ctx, path, true, self.read_slot_cursor)).slot.value;
             }
 
             pub fn reader(self: *Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?Reader {
@@ -466,7 +466,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                 };
                 const slot = slot_ptr.slot;
-                const ptr = slot.val;
+                const ptr = slot.value;
                 const tag = try Tag.init(slot);
 
                 const position = switch (tag) {
@@ -478,7 +478,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         if (value_tag != .bytes) {
                             return error.UnexpectedTag;
                         }
-                        break :blk value_slot.val;
+                        break :blk value_slot.value;
                     },
                     else => return error.UnexpectedTag,
                 };
@@ -524,7 +524,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                 };
                 const slot = slot_ptr.slot;
-                const ptr = slot.val;
+                const ptr = slot.value;
                 const tag = try Tag.init(slot);
 
                 const position = switch (tag) {
@@ -536,7 +536,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         if (value_tag != .bytes) {
                             return error.UnexpectedTag;
                         }
-                        break :blk value_slot.val;
+                        break :blk value_slot.value;
                     },
                     else => return error.UnexpectedTag,
                 };
@@ -565,7 +565,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                 };
                 const slot = slot_ptr.slot;
-                const ptr = slot.val;
+                const ptr = slot.value;
                 const tag = try Tag.init(slot);
 
                 const position = switch (tag) {
@@ -577,7 +577,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         if (value_tag != .bytes) {
                             return error.UnexpectedTag;
                         }
-                        break :blk value_slot.val;
+                        break :blk value_slot.value;
                     },
                     else => return error.UnexpectedTag,
                 };
@@ -600,7 +600,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                 };
                 const slot = slot_ptr.slot;
-                const ptr = slot.val;
+                const ptr = slot.value;
                 const tag = try Tag.init(slot);
 
                 if (tag != .hash) {
@@ -621,7 +621,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                 };
                 const slot = slot_ptr.slot;
-                const ptr = slot.val;
+                const ptr = slot.value;
                 const tag = try Tag.init(slot);
 
                 const value = switch (tag) {
@@ -634,7 +634,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         if (value_tag != .uint) {
                             return error.UnexpectedTag;
                         }
-                        break :blk value_slot.val;
+                        break :blk value_slot.value;
                     },
                     else => return error.UnexpectedTag,
                 };
@@ -663,12 +663,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     try cursor_writer.finish();
                     return cursor_writer.ptr_position;
                 } else {
-                    return cursor_writer.slot_ptr.slot.val;
+                    return cursor_writer.slot_ptr.slot.value;
                 }
             }
 
             pub fn pointer(self: Cursor) ?u64 {
-                return if (self.read_slot_cursor == .slot_ptr and self.read_slot_cursor.slot_ptr.slot.tag != 0) self.read_slot_cursor.slot_ptr.slot.val else null;
+                return if (self.read_slot_cursor == .slot_ptr and self.read_slot_cursor.slot_ptr.slot.tag != 0) self.read_slot_cursor.slot_ptr.slot.value else null;
             }
 
             pub const Iter = struct {
@@ -708,7 +708,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                     const position = switch (cursor.read_slot_cursor) {
                                         .index_start => cursor.read_slot_cursor.index_start,
                                         .slot_ptr => pos_blk: {
-                                            const ptr = cursor.read_slot_cursor.slot_ptr.slot.val;
+                                            const ptr = cursor.read_slot_cursor.slot_ptr.slot.value;
                                             const tag = try Tag.init(cursor.read_slot_cursor.slot_ptr.slot);
                                             if (tag != .hash_map) {
                                                 return error.UnexpectedTag;
@@ -792,7 +792,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                         const tag = try Tag.init(slot);
                                         if (tag == .index) {
                                             // find the block
-                                            const next_pos = slot.val;
+                                            const next_pos = slot.value;
                                             try self.cursor.db.core.seekTo(next_pos);
                                             // read the block
                                             const core_reader = self.cursor.db.core.reader();
@@ -905,7 +905,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         if (tag != .hash_map) {
                             return error.UnexpectedTag;
                         }
-                        const next_pos = cursor.slot_ptr.slot.val;
+                        const next_pos = cursor.slot_ptr.slot.value;
                         // read existing block
                         const reader = self.core.reader();
                         try self.core.seekTo(next_pos);
@@ -948,7 +948,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         if (tag != .array_list) {
                             return error.UnexpectedTag;
                         }
-                        const next_pos = cursor.slot_ptr.slot.val;
+                        const next_pos = cursor.slot_ptr.slot.value;
                         // read existing block
                         const reader = self.core.reader();
                         try self.core.seekTo(next_pos);
@@ -983,7 +983,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 if (tag != .hash_map) {
                                     return error.UnexpectedTag;
                                 }
-                                break :blk cursor.slot_ptr.slot.val;
+                                break :blk cursor.slot_ptr.slot.value;
                             }
                         },
                     };
@@ -1001,7 +1001,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 if (tag != .array_list) {
                                     return error.UnexpectedTag;
                                 }
-                                break :blk cursor.slot_ptr.slot.val;
+                                break :blk cursor.slot_ptr.slot.value;
                             }
                         },
                     };
@@ -1094,7 +1094,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 if (tag != .hash_map) {
                                     return error.UnexpectedTag;
                                 }
-                                break :blk cursor.slot_ptr.slot.val;
+                                break :blk cursor.slot_ptr.slot.value;
                             }
                         },
                     };
@@ -1199,7 +1199,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             }
 
             const tag = try Tag.init(slot);
-            const ptr = slot.val;
+            const ptr = slot.value;
 
             switch (tag) {
                 .index => {
@@ -1340,7 +1340,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     return error.KeyNotFound;
                 }
             } else {
-                const ptr = slot.val;
+                const ptr = slot.value;
                 const tag = try Tag.init(slot);
                 if (shift == 0) {
                     return SlotPointer{ .position = slot_pos, .slot = slot };
