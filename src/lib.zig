@@ -36,12 +36,12 @@ const Slot = packed struct {
     }
 };
 const Tag = enum(u8) {
-    index = 0b1000_0000,
-    hash_map = 0b0100_0000,
-    array_list = 0b0010_0000,
-    hash = 0b0001_0000,
-    bytes = 0b1100_0000,
-    uint = 0b0110_0000,
+    index = 1,
+    hash_map = 2,
+    array_list = 3,
+    hash = 4,
+    bytes = 5,
+    uint = 6,
 
     fn init(slot: Slot) !Tag {
         return std.meta.intToEnum(Tag, slot.tag);
