@@ -15,7 +15,11 @@ comptime {
 }
 pub const HASH_INT_SIZE = @sizeOf(Hash);
 
-const SLOT_SIZE: u64 = @bitSizeOf(Slot) / 8;
+fn byteSizeOf(T: type) u64 {
+    return @bitSizeOf(T) / 8;
+}
+
+const SLOT_SIZE: u64 = byteSizeOf(Slot);
 const HEADER_BLOCK_SIZE = 2;
 const BIT_COUNT = 4;
 pub const SLOT_COUNT = 1 << BIT_COUNT;
@@ -318,11 +322,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
 
                 pub fn readInt(self: *Reader, comptime T: type, endian: std.builtin.Endian) !T {
-                    if (self.size < self.relative_position or self.size - self.relative_position < @sizeOf(T)) return error.EndOfStream;
+                    if (self.size < self.relative_position or self.size - self.relative_position < byteSizeOf(T)) return error.EndOfStream;
                     try self.parent.db.core.seekTo(self.start_position + self.relative_position);
                     const core_reader = self.parent.db.core.reader();
                     const ret = try core_reader.readInt(T, endian);
-                    self.relative_position += @sizeOf(T);
+                    self.relative_position += byteSizeOf(T);
                     return ret;
                 }
 
@@ -430,7 +434,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     try self.parent.db.core.seekTo(self.start_position + self.relative_position);
                     const core_writer = self.parent.db.core.writer();
                     try core_writer.writeInt(T, value, endian);
-                    self.relative_position += @sizeOf(T);
+                    self.relative_position += byteSizeOf(T);
                     if (self.relative_position > self.size) {
                         self.size = self.relative_position;
                     }
