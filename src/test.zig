@@ -162,21 +162,21 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
         // write bar -> foo with writeBytes
         const bar_key = hash_buffer("bar");
-        const foo_ptr = try root_cursor.writeBytes("foo", .once, void, &[_]PathPart(void){
+        const foo_slot = try root_cursor.writeBytes("foo", .once, void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_create,
             .{ .hash_map_get = bar_key },
         });
-        try expectEqual(foo_ptr, try root_cursor.writeBytes("foo", .once, void, &[_]PathPart(void){
+        try expectEqual(foo_slot, try root_cursor.writeBytes("foo", .once, void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_create,
             .{ .hash_map_get = bar_key },
         }));
-        try std.testing.expect(foo_ptr != try root_cursor.writeBytes("foo", .replace, void, &[_]PathPart(void){
+        try std.testing.expect(!foo_slot.eql(try root_cursor.writeBytes("foo", .replace, void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_create,
             .{ .hash_map_get = bar_key },
-        }));
+        })));
 
         // read bar
         const foo_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
@@ -223,7 +223,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try std.testing.expectEqualStrings("baz", bar_buffer_value);
 
         // write bar and get pointer to it
-        const bar_ptr = try root_cursor.execute(void, &[_]PathPart(void){
+        const bar_slot = try root_cursor.execute(void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_create,
             .{ .hash_map_get = hash_buffer("bar") },
@@ -235,7 +235,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .array_list_get = .append_copy },
             .hash_map_create,
             .{ .hash_map_get = foo_key },
-            .{ .value = .{ .bytes_ptr = bar_ptr } },
+            .{ .value = .{ .slot = bar_slot } },
         });
         const baz_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },

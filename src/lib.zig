@@ -24,18 +24,24 @@ const INDEX_BLOCK_SIZE = SLOT_SIZE * SLOT_COUNT;
 const INDEX_START = HEADER_BLOCK_SIZE;
 
 const SlotInt = u72;
-const Slot = packed struct {
+pub const Slot = packed struct {
     value: u64 = 0,
     tag: u8 = 0,
 
-    fn init(ptr: u64, tag: Tag) Slot {
+    pub fn init(ptr: u64, tag: Tag) Slot {
         return .{
             .value = ptr,
             .tag = @intFromEnum(tag),
         };
     }
+
+    pub fn eql(self: Slot, other: Slot) bool {
+        const self_int: SlotInt = @bitCast(self);
+        const other_int: SlotInt = @bitCast(other);
+        return self_int == other_int;
+    }
 };
-const Tag = enum(u8) {
+pub const Tag = enum(u8) {
     index = 1,
     hash_map = 2,
     array_list = 3,
@@ -43,7 +49,7 @@ const Tag = enum(u8) {
     bytes = 5,
     uint = 6,
 
-    fn init(slot: Slot) !Tag {
+    pub fn init(slot: Slot) !Tag {
         return std.meta.intToEnum(Tag, slot.tag);
     }
 };
@@ -63,8 +69,8 @@ pub fn PathPart(comptime Ctx: type) type {
         },
         hash_map_remove: Hash,
         value: union(enum) {
+            slot: Slot,
             uint: u64,
-            bytes_ptr: u64,
             bytes: []const u8,
         },
         ctx: Ctx,
@@ -387,25 +393,24 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 parent: *Database(db_kind).Cursor,
                 slot_ptr: SlotPointer,
                 size: u64,
-                ptr_position: u64,
+                slot: Slot,
                 start_position: u64,
                 relative_position: u64,
 
                 pub fn finish(self: Writer) !void {
                     const core_writer = self.parent.db.core.writer();
 
-                    try self.parent.db.core.seekTo(self.ptr_position);
+                    try self.parent.db.core.seekTo(self.slot.value);
                     try core_writer.writeInt(u64, self.size, .little);
 
                     try self.parent.db.core.seekTo(self.slot_ptr.position);
-                    const slot = Slot.init(self.ptr_position, .bytes);
-                    try core_writer.writeInt(SlotInt, @bitCast(slot), .little);
+                    try core_writer.writeInt(SlotInt, @bitCast(self.slot), .little);
 
                     // if the cursor is directly pointing to the slot we are updating,
                     // make sure it is updated as well, so subsequent reads with the
                     // cursor will see the new value.
                     if (self.parent.read_slot_cursor == .slot_ptr and self.parent.read_slot_cursor.slot_ptr.position == self.slot_ptr.position) {
-                        self.parent.read_slot_cursor.slot_ptr.slot = slot;
+                        self.parent.read_slot_cursor.slot_ptr.slot = self.slot;
                     }
                 }
 
@@ -452,8 +457,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
             };
 
-            pub fn execute(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !u64 {
-                return (try self.db.readSlot(Ctx, path, true, self.read_slot_cursor)).slot.value;
+            pub fn execute(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !Slot {
+                return (try self.db.readSlot(Ctx, path, true, self.read_slot_cursor)).slot;
             }
 
             pub fn reader(self: *Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?Reader {
@@ -508,7 +513,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     .parent = self,
                     .slot_ptr = slot_ptr,
                     .size = 0,
-                    .ptr_position = ptr_pos,
+                    .slot = Slot.init(ptr_pos, .bytes),
                     .start_position = start_position,
                     .relative_position = 0,
                 };
@@ -656,19 +661,19 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 };
             }
 
-            pub fn writeBytes(self: *Cursor, buffer: []const u8, mode: enum { once, replace }, comptime Ctx: type, path: []const PathPart(Ctx)) !u64 {
+            pub fn writeBytes(self: *Cursor, buffer: []const u8, mode: enum { once, replace }, comptime Ctx: type, path: []const PathPart(Ctx)) !Slot {
                 var cursor_writer = try self.writer(Ctx, path);
                 if (mode == .replace or cursor_writer.slot_ptr.slot.tag == 0) {
                     try cursor_writer.writeAll(buffer);
                     try cursor_writer.finish();
-                    return cursor_writer.ptr_position;
+                    return cursor_writer.slot;
                 } else {
-                    return cursor_writer.slot_ptr.slot.value;
+                    return cursor_writer.slot_ptr.slot;
                 }
             }
 
-            pub fn pointer(self: Cursor) ?u64 {
-                return if (self.read_slot_cursor == .slot_ptr and self.read_slot_cursor.slot_ptr.slot.tag != 0) self.read_slot_cursor.slot_ptr.slot.value else null;
+            pub fn pointer(self: Cursor) ?Slot {
+                return if (self.read_slot_cursor == .slot_ptr and self.read_slot_cursor.slot_ptr.slot.tag != 0) self.read_slot_cursor.slot_ptr.slot else null;
             }
 
             pub const Iter = struct {
@@ -1116,8 +1121,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     const core_writer = self.core.writer();
 
                     const slot: Slot = switch (part.value) {
+                        .slot => blk: {
+                            _ = try Tag.init(part.value.slot); // make sure tag is valid
+                            break :blk part.value.slot;
+                        },
                         .uint => Slot.init(part.value.uint, .uint),
-                        .bytes_ptr => Slot.init(part.value.bytes_ptr, .bytes),
                         .bytes => blk: {
                             var next_cursor = Cursor{
                                 .read_slot_cursor = ReadSlotCursor{
@@ -1128,7 +1136,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             var writer = try next_cursor.writer(void, &[_]PathPart(void){});
                             try writer.writeAll(part.value.bytes);
                             try writer.finish();
-                            break :blk Slot.init(writer.ptr_position, .bytes);
+                            break :blk writer.slot;
                         },
                     };
 
