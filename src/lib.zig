@@ -61,8 +61,9 @@ pub const Tag = enum(u8) {
 pub fn PathPart(comptime Ctx: type) type {
     return union(enum) {
         hash_map_create,
-        array_list_create,
         hash_map_get: Hash,
+        hash_map_remove: Hash,
+        array_list_create,
         array_list_get: union(enum) {
             index: struct {
                 index: u64,
@@ -71,7 +72,6 @@ pub fn PathPart(comptime Ctx: type) type {
             append,
             append_copy,
         },
-        hash_map_remove: Hash,
         value: union(enum) {
             slot: Slot,
             uint: u64,
@@ -932,6 +932,51 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                     }
                 },
+                .hash_map_get => {
+                    const next_map_start = switch (cursor) {
+                        .index_start => cursor.index_start,
+                        .slot_ptr => blk: {
+                            if (cursor.slot_ptr.slot.tag == 0) {
+                                return error.KeyNotFound;
+                            } else {
+                                const tag = try Tag.init(cursor.slot_ptr.slot);
+                                if (tag != .hash_map) {
+                                    return error.UnexpectedTag;
+                                }
+                                break :blk cursor.slot_ptr.slot.value;
+                            }
+                        },
+                    };
+                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_get, 0, write_mode, true);
+                    return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
+                },
+                .hash_map_remove => {
+                    if (!allow_write) return error.WriteNotAllowed;
+
+                    if (path.len > 1) return error.ValueMustBeAtEnd;
+
+                    const next_map_start = switch (cursor) {
+                        .index_start => cursor.index_start,
+                        .slot_ptr => blk: {
+                            if (cursor.slot_ptr.slot.tag == 0) {
+                                return error.KeyNotFound;
+                            } else {
+                                const tag = try Tag.init(cursor.slot_ptr.slot);
+                                if (tag != .hash_map) {
+                                    return error.UnexpectedTag;
+                                }
+                                break :blk cursor.slot_ptr.slot.value;
+                            }
+                        },
+                    };
+                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_remove, 0, .read_only, false);
+
+                    const writer = self.core.writer();
+                    try self.core.seekTo(next_slot_ptr.position);
+                    try writer.writeInt(SlotInt, 0, .little);
+
+                    return next_slot_ptr;
+                },
                 .array_list_create => {
                     if (!allow_write) return error.WriteNotAllowed;
 
@@ -980,24 +1025,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .little);
                         return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                     }
-                },
-                .hash_map_get => {
-                    const next_map_start = switch (cursor) {
-                        .index_start => cursor.index_start,
-                        .slot_ptr => blk: {
-                            if (cursor.slot_ptr.slot.tag == 0) {
-                                return error.KeyNotFound;
-                            } else {
-                                const tag = try Tag.init(cursor.slot_ptr.slot);
-                                if (tag != .hash_map) {
-                                    return error.UnexpectedTag;
-                                }
-                                break :blk cursor.slot_ptr.slot.value;
-                            }
-                        },
-                    };
-                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_get, 0, write_mode, true);
-                    return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                 },
                 .array_list_get => {
                     const next_array_list_start = switch (cursor) {
@@ -1087,33 +1114,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             return final_slot_ptr;
                         },
                     }
-                },
-                .hash_map_remove => {
-                    if (!allow_write) return error.WriteNotAllowed;
-
-                    if (path.len > 1) return error.ValueMustBeAtEnd;
-
-                    const next_map_start = switch (cursor) {
-                        .index_start => cursor.index_start,
-                        .slot_ptr => blk: {
-                            if (cursor.slot_ptr.slot.tag == 0) {
-                                return error.KeyNotFound;
-                            } else {
-                                const tag = try Tag.init(cursor.slot_ptr.slot);
-                                if (tag != .hash_map) {
-                                    return error.UnexpectedTag;
-                                }
-                                break :blk cursor.slot_ptr.slot.value;
-                            }
-                        },
-                    };
-                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_remove, 0, .read_only, false);
-
-                    const writer = self.core.writer();
-                    try self.core.seekTo(next_slot_ptr.position);
-                    try writer.writeInt(SlotInt, 0, .little);
-
-                    return next_slot_ptr;
                 },
                 .value => {
                     if (!allow_write) return error.WriteNotAllowed;
