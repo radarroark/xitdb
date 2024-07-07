@@ -72,6 +72,10 @@ pub fn PathPart(comptime Ctx: type) type {
             append,
             append_copy,
         },
+        array_list_slice: struct {
+            begin: u64,
+            end: u64,
+        },
         value: union(enum) {
             slot: Slot,
             uint: u64,
@@ -1114,6 +1118,40 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             return final_slot_ptr;
                         },
                     }
+                },
+                .array_list_slice => {
+                    if (!allow_write) return error.WriteNotAllowed;
+
+                    if (cursor != .slot_ptr) return error.NotImplemented;
+
+                    if (part.array_list_slice.begin != 0) return error.NotImplemented;
+
+                    const tag = try Tag.init(cursor.slot_ptr.slot);
+                    if (tag != .array_list) {
+                        return error.UnexpectedTag;
+                    }
+
+                    const reader = self.core.reader();
+                    const writer = self.core.writer();
+
+                    const array_list_start = cursor.slot_ptr.slot.value;
+                    try self.core.seekTo(array_list_start);
+                    const array_list_size = try reader.readInt(u64, .little);
+                    const array_list_ptr = try reader.readInt(u64, .little);
+
+                    if (part.array_list_slice.end >= array_list_size or part.array_list_slice.begin > part.array_list_slice.end) {
+                        return error.ArrayListSliceOutOfBounds;
+                    }
+                    const new_array_list_size = (part.array_list_slice.end + 1) - part.array_list_slice.begin;
+
+                    // write new root index block
+                    try self.core.seekFromEnd(0);
+                    const new_array_list_start = try self.core.getPos();
+                    try writer.writeInt(u64, new_array_list_size, .little);
+                    try writer.writeInt(u64, array_list_ptr, .little);
+
+                    const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = Slot.init(new_array_list_start, .array_list) };
+                    return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                 },
                 .value => {
                     if (!allow_write) return error.WriteNotAllowed;
