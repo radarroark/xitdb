@@ -80,8 +80,8 @@ pub fn PathPart(comptime Ctx: type) type {
             append_copy,
         },
         array_list_slice: struct {
-            begin: u64,
-            end: u64,
+            offset: u64,
+            size: u64,
         },
         value: union(enum) {
             slot: Slot,
@@ -1119,8 +1119,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     if (cursor != .slot_ptr) return error.NotImplemented;
 
-                    if (part.array_list_slice.begin != 0) return error.NotImplemented;
-
                     const tag = try Tag.init(cursor.slot_ptr.slot);
                     if (tag != .array_list) {
                         return error.UnexpectedTag;
@@ -1133,13 +1131,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     try self.core.seekTo(array_list_start);
                     var header: ListHeader = @bitCast(try reader.readInt(ListHeaderInt, .big));
 
-                    if (part.array_list_slice.end >= header.size or part.array_list_slice.begin > part.array_list_slice.end) {
+                    if (part.array_list_slice.offset + part.array_list_slice.size > header.size) {
                         return error.ArrayListSliceOutOfBounds;
                     }
-                    const new_array_list_size = (part.array_list_slice.end + 1) - part.array_list_slice.begin;
 
                     // write new list header
-                    header.size = new_array_list_size;
+                    header.offset += part.array_list_slice.offset;
+                    header.size = part.array_list_slice.size;
                     try self.core.seekFromEnd(0);
                     const new_array_list_start = try self.core.getPos();
                     try writer.writeInt(ListHeaderInt, @bitCast(header), .big);

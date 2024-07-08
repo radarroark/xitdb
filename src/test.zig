@@ -421,7 +421,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             const fruits_slice_slot = try root_cursor.execute(void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
                 .{ .hash_map_get = fruits_key },
-                .{ .array_list_slice = .{ .begin = 0, .end = 2 } },
+                .{ .array_list_slice = .{ .offset = 1, .size = 2 } },
             });
 
             // save the newly-made slice
@@ -432,39 +432,65 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 .{ .value = .{ .slot = fruits_slice_slot } },
             });
 
-            // read apple from fruits-slice
-            const slice_apple_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-                .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .hash_map_get = hash_buffer("fruits-slice") },
-                .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = false } } },
-            })).?;
-            defer allocator.free(slice_apple_value);
-            try std.testing.expectEqualStrings("apple", slice_apple_value);
+            {
+                // read banana from fruits-slice
+                const slice_banana_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+                    .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+                    .{ .hash_map_get = hash_buffer("fruits-slice") },
+                    .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = false } } },
+                })).?;
+                defer allocator.free(slice_banana_value);
+                try std.testing.expectEqualStrings("banana", slice_banana_value);
 
-            // read banana from fruits-slice
-            const slice_banana_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-                .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .hash_map_get = hash_buffer("fruits-slice") },
-                .{ .array_list_get = .{ .index = .{ .index = 1, .reverse = false } } },
-            })).?;
-            defer allocator.free(slice_banana_value);
-            try std.testing.expectEqualStrings("banana", slice_banana_value);
+                // read pear from fruits-slice
+                const slice_pear_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+                    .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+                    .{ .hash_map_get = hash_buffer("fruits-slice") },
+                    .{ .array_list_get = .{ .index = .{ .index = 1, .reverse = false } } },
+                })).?;
+                defer allocator.free(slice_pear_value);
+                try std.testing.expectEqualStrings("pear", slice_pear_value);
 
-            // read pear from fruits-slice
-            const slice_pear_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-                .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .hash_map_get = hash_buffer("fruits-slice") },
-                .{ .array_list_get = .{ .index = .{ .index = 2, .reverse = false } } },
-            })).?;
-            defer allocator.free(slice_pear_value);
-            try std.testing.expectEqualStrings("pear", slice_pear_value);
+                // grape is not in the slice
+                try std.testing.expect(null == try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+                    .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+                    .{ .hash_map_get = hash_buffer("fruits-slice") },
+                    .{ .array_list_get = .{ .index = .{ .index = 2, .reverse = false } } },
+                }));
+            }
 
-            // grape is not in the slice
-            try std.testing.expect(null == try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+            // slice the fruits list again
+            const fruits_slice_slot2 = try root_cursor.execute(void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
                 .{ .hash_map_get = hash_buffer("fruits-slice") },
-                .{ .array_list_get = .{ .index = .{ .index = 3, .reverse = false } } },
-            }));
+                .{ .array_list_slice = .{ .offset = 1, .size = 1 } },
+            });
+
+            // save the newly-made slice
+            _ = try root_cursor.execute(void, &[_]PathPart(void){
+                .{ .array_list_get = .append_copy },
+                .hash_map_create,
+                .{ .hash_map_get = hash_buffer("fruits-slice") },
+                .{ .value = .{ .slot = fruits_slice_slot2 } },
+            });
+
+            {
+                // read pear from fruits-slice
+                const slice_pear_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+                    .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+                    .{ .hash_map_get = hash_buffer("fruits-slice") },
+                    .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = false } } },
+                })).?;
+                defer allocator.free(slice_pear_value);
+                try std.testing.expectEqualStrings("pear", slice_pear_value);
+
+                // grape is not in the slice
+                try std.testing.expect(null == try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+                    .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+                    .{ .hash_map_get = hash_buffer("fruits-slice") },
+                    .{ .array_list_get = .{ .index = .{ .index = 1, .reverse = false } } },
+                }));
+            }
         }
     }
 
