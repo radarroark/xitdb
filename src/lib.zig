@@ -47,8 +47,8 @@ pub const Slot = packed struct {
 };
 pub const Tag = enum(u8) {
     index = 1,
-    hash_map = 2,
-    array_list = 3,
+    array_list = 2,
+    hash_map = 3,
     hash = 4,
     bytes = 5,
     uint = 6,
@@ -67,9 +67,6 @@ const ListHeader = packed struct {
 
 pub fn PathPart(comptime Ctx: type) type {
     return union(enum) {
-        hash_map_create,
-        hash_map_get: Hash,
-        hash_map_remove: Hash,
         array_list_create,
         array_list_get: union(enum) {
             index: struct {
@@ -83,6 +80,9 @@ pub fn PathPart(comptime Ctx: type) type {
             offset: u64,
             size: u64,
         },
+        hash_map_create,
+        hash_map_get: Hash,
+        hash_map_remove: Hash,
         value: union(enum) {
             slot: Slot,
             uint: u64,
@@ -893,85 +893,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             else
                 .read_only;
             switch (part) {
-                .hash_map_create => {
-                    if (!allow_write) return error.WriteNotAllowed;
-
-                    if (cursor != .slot_ptr) return error.NotImplemented;
-
-                    if (cursor.slot_ptr.slot.tag == 0) {
-                        // if slot was empty, insert the new map
-                        const writer = self.core.writer();
-                        try self.core.seekFromEnd(0);
-                        const map_start = try self.core.getPos();
-                        const map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                        try writer.writeAll(&map_index_block);
-                        // make slot point to map
-                        const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = Slot.init(map_start, .hash_map) };
-                        try self.core.seekTo(next_slot_ptr.position);
-                        try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
-                        return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
-                    } else {
-                        const tag = try Tag.init(cursor.slot_ptr.slot);
-                        if (tag != .hash_map) {
-                            return error.UnexpectedTag;
-                        }
-                        const next_pos = cursor.slot_ptr.slot.value;
-                        // read existing block
-                        const reader = self.core.reader();
-                        try self.core.seekTo(next_pos);
-                        var map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                        try reader.readNoEof(&map_index_block);
-                        // copy it to the end
-                        const writer = self.core.writer();
-                        try self.core.seekFromEnd(0);
-                        const map_start = try self.core.getPos();
-                        try writer.writeAll(&map_index_block);
-                        // make slot point to map
-                        const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = Slot.init(map_start, .hash_map) };
-                        try self.core.seekTo(next_slot_ptr.position);
-                        try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
-                        return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
-                    }
-                },
-                .hash_map_get => {
-                    if (cursor != .slot_ptr) return error.NotImplemented;
-
-                    if (cursor.slot_ptr.slot.tag == 0) {
-                        return error.KeyNotFound;
-                    }
-                    const tag = try Tag.init(cursor.slot_ptr.slot);
-                    if (tag != .hash_map) {
-                        return error.UnexpectedTag;
-                    }
-                    const next_map_start = cursor.slot_ptr.slot.value;
-
-                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_get, 0, write_mode, true);
-                    return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
-                },
-                .hash_map_remove => {
-                    if (!allow_write) return error.WriteNotAllowed;
-
-                    if (path.len > 1) return error.ValueMustBeAtEnd;
-
-                    if (cursor != .slot_ptr) return error.NotImplemented;
-
-                    if (cursor.slot_ptr.slot.tag == 0) {
-                        return error.KeyNotFound;
-                    }
-                    const tag = try Tag.init(cursor.slot_ptr.slot);
-                    if (tag != .hash_map) {
-                        return error.UnexpectedTag;
-                    }
-                    const next_map_start = cursor.slot_ptr.slot.value;
-
-                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_remove, 0, .read_only, false);
-
-                    const writer = self.core.writer();
-                    try self.core.seekTo(next_slot_ptr.position);
-                    try writer.writeInt(SlotInt, 0, .big);
-
-                    return next_slot_ptr;
-                },
                 .array_list_create => {
                     if (!allow_write) return error.WriteNotAllowed;
 
@@ -1137,6 +1058,85 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = Slot.init(new_array_list_start, .array_list) };
                     return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
+                },
+                .hash_map_create => {
+                    if (!allow_write) return error.WriteNotAllowed;
+
+                    if (cursor != .slot_ptr) return error.NotImplemented;
+
+                    if (cursor.slot_ptr.slot.tag == 0) {
+                        // if slot was empty, insert the new map
+                        const writer = self.core.writer();
+                        try self.core.seekFromEnd(0);
+                        const map_start = try self.core.getPos();
+                        const map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                        try writer.writeAll(&map_index_block);
+                        // make slot point to map
+                        const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = Slot.init(map_start, .hash_map) };
+                        try self.core.seekTo(next_slot_ptr.position);
+                        try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
+                        return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
+                    } else {
+                        const tag = try Tag.init(cursor.slot_ptr.slot);
+                        if (tag != .hash_map) {
+                            return error.UnexpectedTag;
+                        }
+                        const next_pos = cursor.slot_ptr.slot.value;
+                        // read existing block
+                        const reader = self.core.reader();
+                        try self.core.seekTo(next_pos);
+                        var map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                        try reader.readNoEof(&map_index_block);
+                        // copy it to the end
+                        const writer = self.core.writer();
+                        try self.core.seekFromEnd(0);
+                        const map_start = try self.core.getPos();
+                        try writer.writeAll(&map_index_block);
+                        // make slot point to map
+                        const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = Slot.init(map_start, .hash_map) };
+                        try self.core.seekTo(next_slot_ptr.position);
+                        try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
+                        return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
+                    }
+                },
+                .hash_map_get => {
+                    if (cursor != .slot_ptr) return error.NotImplemented;
+
+                    if (cursor.slot_ptr.slot.tag == 0) {
+                        return error.KeyNotFound;
+                    }
+                    const tag = try Tag.init(cursor.slot_ptr.slot);
+                    if (tag != .hash_map) {
+                        return error.UnexpectedTag;
+                    }
+                    const next_map_start = cursor.slot_ptr.slot.value;
+
+                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_get, 0, write_mode, true);
+                    return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
+                },
+                .hash_map_remove => {
+                    if (!allow_write) return error.WriteNotAllowed;
+
+                    if (path.len > 1) return error.ValueMustBeAtEnd;
+
+                    if (cursor != .slot_ptr) return error.NotImplemented;
+
+                    if (cursor.slot_ptr.slot.tag == 0) {
+                        return error.KeyNotFound;
+                    }
+                    const tag = try Tag.init(cursor.slot_ptr.slot);
+                    if (tag != .hash_map) {
+                        return error.UnexpectedTag;
+                    }
+                    const next_map_start = cursor.slot_ptr.slot.value;
+
+                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_remove, 0, .read_only, false);
+
+                    const writer = self.core.writer();
+                    try self.core.seekTo(next_slot_ptr.position);
+                    try writer.writeInt(SlotInt, 0, .big);
+
+                    return next_slot_ptr;
                 },
                 .value => {
                     if (!allow_write) return error.WriteNotAllowed;
