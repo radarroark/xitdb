@@ -1071,11 +1071,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                             const append_result = try self.readArrayListSlotAppend(next_array_list_start, write_mode);
                             const final_slot_ptr = try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = append_result.slot_ptr });
+
                             // update array_list size and ptr
-                            try self.core.seekTo(next_array_list_start + @sizeOf(u64));
                             const writer = self.core.writer();
-                            try writer.writeInt(u64, append_result.array_list_size, .big);
-                            try writer.writeInt(u64, append_result.array_list_ptr, .big);
+                            try self.core.seekTo(next_array_list_start);
+                            try writer.writeInt(ListHeaderInt, @bitCast(append_result.header), .big);
 
                             return final_slot_ptr;
                         },
@@ -1086,7 +1086,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             const writer = self.core.writer();
 
                             try self.core.seekTo(next_array_list_start);
-                            var header: ListHeader = @bitCast(try reader.readInt(ListHeaderInt, .big));
+                            const header: ListHeader = @bitCast(try reader.readInt(ListHeaderInt, .big));
                             // read the last slot in the array_list
                             var last_slot: Slot = .{};
                             if (header.size > 0) {
@@ -1095,6 +1095,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 const last_slot_ptr = try self.readArrayListSlot(header.ptr, key, shift, .read_only);
                                 last_slot = last_slot_ptr.slot;
                             }
+
                             // make the next slot
                             var append_result = try self.readArrayListSlotAppend(next_array_list_start, write_mode);
                             // set its value to the last slot
@@ -1105,10 +1106,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             }
                             const final_slot_ptr = try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = append_result.slot_ptr });
                             // update array_list size and ptr
-                            header.size = append_result.array_list_size;
-                            header.ptr = append_result.array_list_ptr;
                             try self.core.seekTo(next_array_list_start);
-                            try writer.writeInt(ListHeaderInt, @bitCast(header), .big);
+                            try writer.writeInt(ListHeaderInt, @bitCast(append_result.header), .big);
 
                             return final_slot_ptr;
                         },
@@ -1322,8 +1321,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
         // array_lists
 
         const AppendResult = struct {
-            array_list_size: u64,
-            array_list_ptr: u64,
+            header: ListHeader,
             slot_ptr: SlotPointer,
         };
 
@@ -1354,7 +1352,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
             slot_ptr = try self.readArrayListSlot(index_pos, key, next_shift, write_mode);
 
-            return AppendResult{ .array_list_size = key + 1, .array_list_ptr = index_pos, .slot_ptr = slot_ptr };
+            return .{ .header = .{ .offset = header.offset, .size = header.size + 1, .ptr = index_pos }, .slot_ptr = slot_ptr };
         }
 
         fn readArrayListSlot(self: *Database(db_kind), index_pos: u64, key: u64, shift: u6, write_mode: WriteMode) !SlotPointer {
