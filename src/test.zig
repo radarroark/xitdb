@@ -756,3 +756,10 @@ test "read and write" {
         try expectEqual(42, reader.readInt(u64, .little));
     }
 }
+
+test "get/set tag" {
+    const ptr_value = xitdb.Slot.init(42, .hash_map);
+    try std.testing.expectEqual(.hash_map, try xitdb.Tag.init(ptr_value));
+    const ptr_index = xitdb.Slot.init(42, .index);
+    try std.testing.expectEqual(.index, try xitdb.Tag.init(ptr_index));
+}

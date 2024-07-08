@@ -1410,10 +1410,3 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
         }
     };
 }
-
-test "get/set pointer type" {
-    const ptr_value = Slot.init(42, .hash_map);
-    try std.testing.expectEqual(Tag.hash_map, try Tag.init(ptr_value));
-    const ptr_index = Slot.init(42, .index);
-    try std.testing.expectEqual(Tag.index, try Tag.init(ptr_index));
-}
