@@ -92,15 +92,6 @@ const WriteMode = enum {
     write_immutable,
 };
 
-pub const DatabaseError = error{
-    NotImplemented,
-    KeyOffsetExceeded,
-    KeyNotFound,
-    UnexpectedTag,
-    WriteNotAllowed,
-    ValueMustBeAtEnd,
-};
-
 pub const DatabaseKind = enum {
     memory,
     file,
