@@ -1066,7 +1066,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             const append_result = try self.readArrayListSlotAppend(next_array_list_start, write_mode);
                             const final_slot_ptr = try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = append_result.slot_ptr });
 
-                            // update array_list size and ptr
+                            // update array_list header
                             const writer = self.core.writer();
                             try self.core.seekTo(next_array_list_start);
                             try writer.writeInt(ListHeaderInt, @bitCast(append_result.header), .big);
@@ -1099,7 +1099,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 append_result.slot_ptr.slot = last_slot;
                             }
                             const final_slot_ptr = try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = append_result.slot_ptr });
-                            // update array_list size and ptr
+                            // update array_list header
                             try self.core.seekTo(next_array_list_start);
                             try writer.writeInt(ListHeaderInt, @bitCast(append_result.header), .big);
 
