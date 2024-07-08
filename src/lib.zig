@@ -1189,7 +1189,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             .db = self,
                         };
                         try part.ctx.run(&next_cursor);
-                        return cursor.slot_ptr;
+                        return next_cursor.read_slot_cursor.slot_ptr;
                     }
                 },
                 .path => {
