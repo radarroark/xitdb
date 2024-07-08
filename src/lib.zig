@@ -934,20 +934,17 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                 },
                 .hash_map_get => {
-                    const next_map_start = switch (cursor) {
-                        .index_start => cursor.index_start,
-                        .slot_ptr => blk: {
-                            if (cursor.slot_ptr.slot.tag == 0) {
-                                return error.KeyNotFound;
-                            } else {
-                                const tag = try Tag.init(cursor.slot_ptr.slot);
-                                if (tag != .hash_map) {
-                                    return error.UnexpectedTag;
-                                }
-                                break :blk cursor.slot_ptr.slot.value;
-                            }
-                        },
-                    };
+                    if (cursor != .slot_ptr) return error.NotImplemented;
+
+                    if (cursor.slot_ptr.slot.tag == 0) {
+                        return error.KeyNotFound;
+                    }
+                    const tag = try Tag.init(cursor.slot_ptr.slot);
+                    if (tag != .hash_map) {
+                        return error.UnexpectedTag;
+                    }
+                    const next_map_start = cursor.slot_ptr.slot.value;
+
                     const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_get, 0, write_mode, true);
                     return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                 },
@@ -956,20 +953,17 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     if (path.len > 1) return error.ValueMustBeAtEnd;
 
-                    const next_map_start = switch (cursor) {
-                        .index_start => cursor.index_start,
-                        .slot_ptr => blk: {
-                            if (cursor.slot_ptr.slot.tag == 0) {
-                                return error.KeyNotFound;
-                            } else {
-                                const tag = try Tag.init(cursor.slot_ptr.slot);
-                                if (tag != .hash_map) {
-                                    return error.UnexpectedTag;
-                                }
-                                break :blk cursor.slot_ptr.slot.value;
-                            }
-                        },
-                    };
+                    if (cursor != .slot_ptr) return error.NotImplemented;
+
+                    if (cursor.slot_ptr.slot.tag == 0) {
+                        return error.KeyNotFound;
+                    }
+                    const tag = try Tag.init(cursor.slot_ptr.slot);
+                    if (tag != .hash_map) {
+                        return error.UnexpectedTag;
+                    }
+                    const next_map_start = cursor.slot_ptr.slot.value;
+
                     const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_remove, 0, .read_only, false);
 
                     const writer = self.core.writer();
