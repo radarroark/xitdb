@@ -420,11 +420,11 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         // slice
         {
             // slice the fruits list
-            const fruits_slice_slot = try root_cursor.execute(void, &[_]PathPart(void){
+            const fruits_slot = try root_cursor.execute(void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
                 .{ .hash_map_get = hash_buffer("fruits") },
-                .{ .array_list_slice = .{ .offset = 1, .size = 2 } },
             });
+            const fruits_slice_slot = try root_cursor.db.slice(fruits_slot, 1, 2);
 
             // save the newly-made slice
             _ = try root_cursor.execute(void, &[_]PathPart(void){
@@ -462,11 +462,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             }
 
             // slice the fruits list again
-            const fruits_slice_slot2 = try root_cursor.execute(void, &[_]PathPart(void){
-                .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .hash_map_get = hash_buffer("fruits-slice") },
-                .{ .array_list_slice = .{ .offset = 1, .size = 1 } },
-            });
+            const fruits_slice_slot2 = try root_cursor.db.slice(fruits_slice_slot, 1, 1);
 
             // save the newly-made slice
             _ = try root_cursor.execute(void, &[_]PathPart(void){
@@ -754,15 +750,15 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         const even_list_slot = try root_cursor.execute(void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .hash_map_get = hash_buffer("even") },
-            .{ .array_list_slice = .{ .offset = 0, .size = 2 } },
         });
+        const even_list_slice_slot = try root_cursor.db.slice(even_list_slot, 0, 2);
 
         // save the newly-made slice
         _ = try root_cursor.execute(void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_create,
             .{ .hash_map_get = hash_buffer("even-slice") },
-            .{ .value = .{ .slot = even_list_slot } },
+            .{ .value = .{ .slot = even_list_slice_slot } },
         });
 
         // append to the slice

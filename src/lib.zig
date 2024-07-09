@@ -77,10 +77,6 @@ pub fn PathPart(comptime Ctx: type) type {
             append,
             append_copy,
         },
-        array_list_slice: struct {
-            offset: u64,
-            size: u64,
-        },
         hash_map_create,
         hash_map_get: Hash,
         hash_map_remove: Hash,
@@ -1067,16 +1063,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             return final_slot_ptr;
                         },
                     }
-                },
-                .array_list_slice => {
-                    if (!allow_write) return error.WriteNotAllowed;
-
-                    if (cursor != .slot_ptr) return error.NotImplemented;
-
-                    const slice_slot = try self.slice(cursor.slot_ptr.slot, part.array_list_slice.offset, part.array_list_slice.size);
-
-                    const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = slice_slot };
-                    return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                 },
                 .hash_map_create => {
                     if (!allow_write) return error.WriteNotAllowed;
