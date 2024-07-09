@@ -961,22 +961,21 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             try self.core.seekTo(next_array_list_start);
                             const reader = self.core.reader();
                             const header: ListHeader = @bitCast(try reader.readInt(ListHeaderInt, .big));
-                            var key: u64 = 0;
+                            var key: u64 = header.offset;
                             if (index.reverse) {
                                 if (index.index >= header.size) {
                                     return error.KeyNotFound;
                                 } else {
-                                    key = header.size - index.index - 1;
+                                    key += header.size - index.index - 1;
                                 }
                             } else {
                                 if (index.index >= header.size) {
                                     return error.KeyNotFound;
                                 } else {
-                                    key = index.index;
+                                    key += index.index;
                                 }
                             }
-                            key += header.offset;
-                            const last_key = header.size - 1;
+                            const last_key = header.offset + header.size - 1;
                             const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
                             const final_slot_ptr = try self.readArrayListSlot(header.ptr, key, shift, write_mode);
                             return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = final_slot_ptr });
