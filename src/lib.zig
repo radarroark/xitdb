@@ -58,11 +58,12 @@ pub const Tag = enum(u8) {
     }
 };
 
-const ListHeaderInt = u192;
+const ListHeaderInt = u256;
 const ListHeader = packed struct {
     ptr: u64,
+    begin_padding: u64,
     size: u64,
-    offset: u64,
+    end_padding: u64,
 };
 
 pub fn PathPart(comptime Ctx: type) type {
@@ -866,7 +867,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
             const index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
             const array_list_ptr = try self.core.getPos() + byteSizeOf(ListHeader);
-            try writer.writeInt(ListHeaderInt, @bitCast(ListHeader{ .ptr = array_list_ptr, .size = 0, .offset = 0 }), .big);
+            try writer.writeInt(ListHeaderInt, @bitCast(ListHeader{
+                .size = 0,
+                .begin_padding = 0,
+                .ptr = array_list_ptr,
+                .end_padding = 0,
+            }), .big);
             try writer.writeAll(&index_block);
         }
 
@@ -905,7 +911,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         const array_list_start = try self.core.getPos();
                         const array_list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                         const array_list_ptr = try self.core.getPos() + byteSizeOf(ListHeader);
-                        try writer.writeInt(ListHeaderInt, @bitCast(ListHeader{ .ptr = array_list_ptr, .size = 0, .offset = 0 }), .big);
+                        try writer.writeInt(ListHeaderInt, @bitCast(ListHeader{
+                            .begin_padding = 0,
+                            .size = 0,
+                            .end_padding = 0,
+                            .ptr = array_list_ptr,
+                        }), .big);
                         try writer.writeAll(&array_list_index_block);
                         // make slot point to array_list
                         const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = Slot.init(array_list_start, .array_list) };
@@ -961,7 +972,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             try self.core.seekTo(next_array_list_start);
                             const reader = self.core.reader();
                             const header: ListHeader = @bitCast(try reader.readInt(ListHeaderInt, .big));
-                            var key: u64 = header.offset;
+                            var key: u64 = header.begin_padding;
                             if (index.reverse) {
                                 if (index.index >= header.size) {
                                     return error.KeyNotFound;
@@ -975,7 +986,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                     key += index.index;
                                 }
                             }
-                            const last_key = header.offset + header.size - 1;
+                            const last_key = header.begin_padding + header.size + header.end_padding - 1;
                             const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
                             const final_slot_ptr = try self.readArrayListSlot(header.ptr, key, shift, write_mode);
                             return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = final_slot_ptr });
@@ -1004,9 +1015,9 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             // read the last slot in the array_list
                             var last_slot: Slot = .{};
                             if (header.size > 0) {
-                                const key = header.offset + header.size - 1;
-                                const shift: u6 = @intCast(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
-                                const last_slot_ptr = try self.readArrayListSlot(header.ptr, key, shift, .read_only);
+                                const last_key = header.begin_padding + header.size + header.end_padding - 1;
+                                const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
+                                const last_slot_ptr = try self.readArrayListSlot(header.ptr, last_key, shift, .read_only);
                                 last_slot = last_slot_ptr.slot;
                             }
 
@@ -1042,18 +1053,21 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     const array_list_start = cursor.slot_ptr.slot.value;
                     try self.core.seekTo(array_list_start);
-                    var header: ListHeader = @bitCast(try reader.readInt(ListHeaderInt, .big));
+                    const header: ListHeader = @bitCast(try reader.readInt(ListHeaderInt, .big));
 
                     if (part.array_list_slice.offset + part.array_list_slice.size > header.size) {
                         return error.ArrayListSliceOutOfBounds;
                     }
 
                     // write new list header
-                    header.offset += part.array_list_slice.offset;
-                    header.size = part.array_list_slice.size;
                     try self.core.seekFromEnd(0);
                     const new_array_list_start = try self.core.getPos();
-                    try writer.writeInt(ListHeaderInt, @bitCast(header), .big);
+                    try writer.writeInt(ListHeaderInt, @bitCast(ListHeader{
+                        .begin_padding = header.begin_padding + part.array_list_slice.offset,
+                        .size = part.array_list_slice.size,
+                        .end_padding = header.end_padding + header.size - (part.array_list_slice.offset + part.array_list_slice.size),
+                        .ptr = header.ptr,
+                    }), .big);
 
                     const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = Slot.init(new_array_list_start, .array_list) };
                     return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
@@ -1324,28 +1338,43 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
             try self.core.seekTo(index_start);
             const header: ListHeader = @bitCast(try reader.readInt(ListHeaderInt, .big));
-            const key = header.offset + header.size;
             var index_pos = header.ptr;
-
-            const prev_shift: u6 = @intCast(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key - 1));
-            const next_shift: u6 = @intCast(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
-
             var slot_ptr: SlotPointer = undefined;
 
-            if (prev_shift != next_shift) {
-                // root overflow
-                try self.core.seekFromEnd(0);
-                const next_index_pos = try self.core.getPos();
-                var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                try writer.writeAll(&index_block);
-                try self.core.seekTo(next_index_pos);
-                try writer.writeInt(SlotInt, @bitCast(Slot.init(index_pos, .index)), .big);
-                index_pos = next_index_pos;
+            if (header.end_padding == 0) {
+                const key = header.begin_padding + header.size;
+
+                const prev_shift: u6 = @intCast(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key - 1));
+                const next_shift: u6 = @intCast(if (key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, key));
+
+                if (prev_shift != next_shift) {
+                    // root overflow
+                    try self.core.seekFromEnd(0);
+                    const next_index_pos = try self.core.getPos();
+                    var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                    try writer.writeAll(&index_block);
+                    try self.core.seekTo(next_index_pos);
+                    try writer.writeInt(SlotInt, @bitCast(Slot.init(index_pos, .index)), .big);
+                    index_pos = next_index_pos;
+                }
+
+                slot_ptr = try self.readArrayListSlot(index_pos, key, next_shift, write_mode);
+            } else {
+                const last_key = header.begin_padding + header.size + header.end_padding - 1;
+                const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
+                const key = header.begin_padding + header.size;
+                slot_ptr = try self.readArrayListSlot(index_pos, key, shift, write_mode);
             }
 
-            slot_ptr = try self.readArrayListSlot(index_pos, key, next_shift, write_mode);
-
-            return .{ .header = .{ .offset = header.offset, .size = header.size + 1, .ptr = index_pos }, .slot_ptr = slot_ptr };
+            return .{
+                .header = .{
+                    .ptr = index_pos,
+                    .begin_padding = header.begin_padding,
+                    .size = header.size + 1,
+                    .end_padding = if (header.end_padding == 0) 0 else header.end_padding - 1,
+                },
+                .slot_ptr = slot_ptr,
+            };
         }
 
         fn readArrayListSlot(self: *Database(db_kind), index_pos: u64, key: u64, shift: u6, write_mode: WriteMode) !SlotPointer {

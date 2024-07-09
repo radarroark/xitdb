@@ -725,6 +725,70 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         }
         try expectEqual(10, i);
     }
+
+    // slice
+    {
+        const init_opts = try initOpts(kind, opts);
+        var db = try Database(kind).init(allocator, init_opts);
+        defer {
+            db.deinit();
+            if (kind == .file) {
+                opts.dir.deleteFile(opts.path) catch {};
+            }
+        }
+        var root_cursor = db.rootCursor();
+
+        // create list
+        for (0..xitdb.SLOT_COUNT + 1) |i| {
+            _ = try root_cursor.execute(void, &[_]PathPart(void){
+                .{ .array_list_get = .append_copy },
+                .hash_map_create,
+                .{ .hash_map_get = hash_buffer("even") },
+                .array_list_create,
+                .{ .array_list_get = .append },
+                .{ .value = .{ .uint = i * 2 } },
+            });
+        }
+
+        // slice list
+        const even_list_slot = try root_cursor.execute(void, &[_]PathPart(void){
+            .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+            .{ .hash_map_get = hash_buffer("even") },
+            .{ .array_list_slice = .{ .offset = 0, .size = 2 } },
+        });
+
+        // save the newly-made slice
+        _ = try root_cursor.execute(void, &[_]PathPart(void){
+            .{ .array_list_get = .append_copy },
+            .hash_map_create,
+            .{ .hash_map_get = hash_buffer("even-slice") },
+            .{ .value = .{ .slot = even_list_slot } },
+        });
+
+        // append to the slice
+        _ = try root_cursor.execute(void, &[_]PathPart(void){
+            .{ .array_list_get = .append_copy },
+            .hash_map_create,
+            .{ .hash_map_get = hash_buffer("even-slice") },
+            .array_list_create,
+            .{ .path = &[_]PathPart(void){
+                .{ .array_list_get = .append },
+                .{ .value = .{ .uint = 42 } },
+            } },
+        });
+
+        // read the new value from the slice
+        try expectEqual(42, try root_cursor.readInt(void, &[_]PathPart(void){
+            .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+            .{ .hash_map_get = hash_buffer("even-slice") },
+            .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+        }));
+        try expectEqual(42, try root_cursor.readInt(void, &[_]PathPart(void){
+            .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+            .{ .hash_map_get = hash_buffer("even-slice") },
+            .{ .array_list_get = .{ .index = .{ .index = 2, .reverse = false } } },
+        }));
+    }
 }
 
 test "read and write" {
