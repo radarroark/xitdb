@@ -857,6 +857,36 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             };
         }
 
+        pub fn slice(self: *Database(db_kind), list: Slot, offset: u64, size: u64) !Slot {
+            const tag = try Tag.init(list);
+            if (tag != .array_list) {
+                return error.UnexpectedTag;
+            }
+
+            const reader = self.core.reader();
+            const writer = self.core.writer();
+
+            const array_list_start = list.value;
+            try self.core.seekTo(array_list_start);
+            const header: ListHeader = @bitCast(try reader.readInt(ListHeaderInt, .big));
+
+            if (offset + size > header.size) {
+                return error.ArrayListSliceOutOfBounds;
+            }
+
+            // write new list header
+            try self.core.seekFromEnd(0);
+            const new_array_list_start = try self.core.getPos();
+            try writer.writeInt(ListHeaderInt, @bitCast(ListHeader{
+                .begin_padding = header.begin_padding + offset,
+                .size = size,
+                .end_padding = header.end_padding + header.size - (offset + size),
+                .ptr = header.ptr,
+            }), .big);
+
+            return Slot.init(new_array_list_start, .array_list);
+        }
+
         // private
 
         fn writeHeader(self: *Database(db_kind)) !void {
@@ -1043,33 +1073,9 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     if (cursor != .slot_ptr) return error.NotImplemented;
 
-                    const tag = try Tag.init(cursor.slot_ptr.slot);
-                    if (tag != .array_list) {
-                        return error.UnexpectedTag;
-                    }
+                    const slice_slot = try self.slice(cursor.slot_ptr.slot, part.array_list_slice.offset, part.array_list_slice.size);
 
-                    const reader = self.core.reader();
-                    const writer = self.core.writer();
-
-                    const array_list_start = cursor.slot_ptr.slot.value;
-                    try self.core.seekTo(array_list_start);
-                    const header: ListHeader = @bitCast(try reader.readInt(ListHeaderInt, .big));
-
-                    if (part.array_list_slice.offset + part.array_list_slice.size > header.size) {
-                        return error.ArrayListSliceOutOfBounds;
-                    }
-
-                    // write new list header
-                    try self.core.seekFromEnd(0);
-                    const new_array_list_start = try self.core.getPos();
-                    try writer.writeInt(ListHeaderInt, @bitCast(ListHeader{
-                        .begin_padding = header.begin_padding + part.array_list_slice.offset,
-                        .size = part.array_list_slice.size,
-                        .end_padding = header.end_padding + header.size - (part.array_list_slice.offset + part.array_list_slice.size),
-                        .ptr = header.ptr,
-                    }), .big);
-
-                    const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = Slot.init(new_array_list_start, .array_list) };
+                    const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = slice_slot };
                     return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                 },
                 .hash_map_create => {
