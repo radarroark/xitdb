@@ -874,10 +874,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             try self.core.seekFromEnd(0);
             const new_array_list_start = try self.core.getPos();
             try writer.writeInt(ListHeaderInt, @bitCast(ListHeader{
+                .ptr = header.ptr,
                 .begin_padding = header.begin_padding + offset,
                 .size = size,
                 .end_padding = header.end_padding + header.size - (offset + size),
-                .ptr = header.ptr,
             }), .big);
 
             return Slot.init(new_array_list_start, .array_list);
@@ -933,9 +933,9 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             const index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
             const array_list_ptr = try self.core.getPos() + byteSizeOf(ListHeader);
             try writer.writeInt(ListHeaderInt, @bitCast(ListHeader{
-                .size = 0,
-                .begin_padding = 0,
                 .ptr = array_list_ptr,
+                .begin_padding = 0,
+                .size = 0,
                 .end_padding = 0,
             }), .big);
             try writer.writeAll(&index_block);
@@ -977,10 +977,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         const array_list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                         const array_list_ptr = try self.core.getPos() + byteSizeOf(ListHeader);
                         try writer.writeInt(ListHeaderInt, @bitCast(ListHeader{
+                            .ptr = array_list_ptr,
                             .begin_padding = 0,
                             .size = 0,
                             .end_padding = 0,
-                            .ptr = array_list_ptr,
                         }), .big);
                         try writer.writeAll(&array_list_index_block);
                         // make slot point to array_list
