@@ -883,6 +883,45 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             return Slot.init(new_array_list_start, .array_list);
         }
 
+        pub fn concat(self: *Database(db_kind), list_a: Slot, list_b: Slot) !Slot {
+            if (try Tag.init(list_a) != .array_list) {
+                return error.UnexpectedTag;
+            }
+            if (try Tag.init(list_b) != .array_list) {
+                return error.UnexpectedTag;
+            }
+
+            const reader = self.core.reader();
+
+            // read the first list's blocks
+
+            try self.core.seekTo(list_a.value);
+            const header_a: ListHeader = @bitCast(try reader.readInt(ListHeaderInt, .big));
+
+            var blocks_a = std.ArrayList([SLOT_COUNT]Slot).init(self.allocator);
+            defer blocks_a.deinit();
+            {
+                const last_key = if (header_a.size == 0) 0 else header_a.begin_padding + header_a.size + header_a.end_padding - 1;
+                const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
+                try self.readArrayListBlocks(header_a.ptr, header_a.begin_padding + header_a.size - 1, shift, &blocks_a);
+            }
+
+            // read the second list's blocks
+
+            try self.core.seekTo(list_b.value);
+            const header_b: ListHeader = @bitCast(try reader.readInt(ListHeaderInt, .big));
+
+            var blocks_b = std.ArrayList([SLOT_COUNT]Slot).init(self.allocator);
+            defer blocks_b.deinit();
+            {
+                const last_key = if (header_b.size == 0) 0 else header_b.begin_padding + header_b.size + header_b.end_padding - 1;
+                const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
+                try self.readArrayListBlocks(header_b.ptr, header_b.begin_padding, shift, &blocks_b);
+            }
+
+            return list_a;
+        }
+
         // private
 
         fn writeHeader(self: *Database(db_kind)) !void {
@@ -1420,6 +1459,38 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                     return self.readArrayListSlot(next_ptr, key, shift - 1, write_mode);
                 }
+            }
+        }
+
+        fn readArrayListBlocks(self: *Database(db_kind), index_pos: u64, key: u64, shift: u6, blocks: *std.ArrayList([SLOT_COUNT]Slot)) !void {
+            const reader = self.core.reader();
+            try self.core.seekTo(index_pos);
+            var bytes_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+            try reader.readNoEof(&bytes_block);
+
+            var slot_block = [_]Slot{.{}} ** SLOT_COUNT;
+            var stream = std.io.fixedBufferStream(&bytes_block);
+            var block_reader = stream.reader();
+            for (&slot_block) |*block_slot| {
+                block_slot.* = @bitCast(try block_reader.readInt(SlotInt, .big));
+            }
+            try blocks.append(slot_block);
+
+            if (shift == 0) {
+                return;
+            }
+
+            const i = @as(u64, @truncate(key >> (shift * BIT_COUNT))) & MASK;
+            const slot = slot_block[i];
+            if (slot.tag == 0) {
+                return error.EmptySlot;
+            } else {
+                const ptr = slot.value;
+                const tag = try Tag.init(slot);
+                if (tag != .index) {
+                    return error.UnexpectedTag;
+                }
+                try self.readArrayListBlocks(ptr, key, shift - 1, blocks);
             }
         }
     };

@@ -785,12 +785,67 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .array_list_get = .{ .index = .{ .index = 2, .reverse = false } } },
         }));
     }
+
+    // concat
+    {
+        const init_opts = try initOpts(kind, opts);
+        var db = try Database(kind).init(allocator, init_opts);
+        defer {
+            db.deinit();
+            if (kind == .file) {
+                opts.dir.deleteFile(opts.path) catch {};
+            }
+        }
+        var root_cursor = db.rootCursor();
+
+        const Ctx = struct {
+            pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
+                // create even list
+                for (0..xitdb.SLOT_COUNT * 5) |i| {
+                    _ = try cursor.execute(void, &[_]PathPart(void){
+                        .{ .hash_map_get = hash_buffer("even") },
+                        .array_list_create,
+                        .{ .array_list_get = .append },
+                        .{ .value = .{ .uint = i * 2 } },
+                    });
+                }
+
+                // get even list
+                const even_list_slot = try cursor.execute(void, &[_]PathPart(void){
+                    .{ .hash_map_get = hash_buffer("even") },
+                });
+
+                // create odd list
+                for (0..xitdb.SLOT_COUNT + 1) |i| {
+                    _ = try cursor.execute(void, &[_]PathPart(void){
+                        .{ .hash_map_get = hash_buffer("odd") },
+                        .array_list_create,
+                        .{ .array_list_get = .append },
+                        .{ .value = .{ .uint = (i * 2) + 1 } },
+                    });
+                }
+
+                // get odd list
+                const odd_list_slot = try cursor.execute(void, &[_]PathPart(void){
+                    .{ .hash_map_get = hash_buffer("odd") },
+                });
+
+                // concat the lists
+                _ = try cursor.db.concat(even_list_slot, odd_list_slot);
+            }
+        };
+        _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
+            .{ .array_list_get = .append_copy },
+            .hash_map_create,
+            .{ .ctx = Ctx{} },
+        });
+    }
 }
 
 test "read and write" {
     const allocator = std.testing.allocator;
 
-    try testMain(allocator, .memory, .{ .capacity = 10000 });
+    try testMain(allocator, .memory, .{ .capacity = 50000 });
 
     try testMain(allocator, .file, .{ .dir = std.fs.cwd(), .path = "main.db" });
 
