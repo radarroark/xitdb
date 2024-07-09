@@ -606,7 +606,6 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         defer allocator.free(value3);
         try std.testing.expectEqualStrings("hello", value3);
     }
-    if (true) return;
 
     // iterate over inner array_list
     {
