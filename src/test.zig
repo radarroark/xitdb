@@ -307,86 +307,6 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         defer allocator.free(hello_value2);
         try std.testing.expectEqualStrings("hello", hello_value2);
 
-        // write apple
-        const fruits_key = hash_buffer("fruits");
-        _ = try root_cursor.execute(void, &[_]PathPart(void){
-            .{ .array_list_get = .append_copy },
-            .hash_map_create,
-            .{ .hash_map_get = fruits_key },
-            .array_list_create,
-            .{ .array_list_get = .append },
-            .{ .value = .{ .bytes = "apple" } },
-        });
-
-        // read apple
-        const apple_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-            .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .hash_map_get = fruits_key },
-            .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-        })).?;
-        defer allocator.free(apple_value);
-        try std.testing.expectEqualStrings("apple", apple_value);
-
-        // write banana
-        _ = try root_cursor.execute(void, &[_]PathPart(void){
-            .{ .array_list_get = .append_copy },
-            .hash_map_create,
-            .{ .hash_map_get = fruits_key },
-            .array_list_create,
-            .{ .array_list_get = .append },
-            .{ .value = .{ .bytes = "banana" } },
-        });
-
-        // read banana
-        const banana_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-            .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .hash_map_get = fruits_key },
-            .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-        })).?;
-        defer allocator.free(banana_value);
-        try std.testing.expectEqualStrings("banana", banana_value);
-
-        // can't read banana in older array_list
-        try expectEqual(null, try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-            .{ .array_list_get = .{ .index = .{ .index = 1, .reverse = true } } },
-            .{ .hash_map_get = fruits_key },
-            .{ .array_list_get = .{ .index = .{ .index = 1, .reverse = false } } },
-        }));
-
-        // write pear and grape
-        _ = try root_cursor.execute(void, &[_]PathPart(void){
-            .{ .array_list_get = .append_copy },
-            .hash_map_create,
-            .{ .hash_map_get = fruits_key },
-            .array_list_create,
-            .{ .path = &[_]PathPart(void){
-                .{ .array_list_get = .append },
-                .{ .value = .{ .bytes = "pear" } },
-            } },
-            .{ .path = &[_]PathPart(void){
-                .{ .array_list_get = .append },
-                .{ .value = .{ .bytes = "grape" } },
-            } },
-        });
-
-        // read pear
-        const pear_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-            .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .hash_map_get = fruits_key },
-            .{ .array_list_get = .{ .index = .{ .index = 1, .reverse = true } } },
-        })).?;
-        defer allocator.free(pear_value);
-        try std.testing.expectEqualStrings("pear", pear_value);
-
-        // read grape
-        const grape_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-            .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .hash_map_get = fruits_key },
-            .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-        })).?;
-        defer allocator.free(grape_value);
-        try std.testing.expectEqualStrings("grape", grape_value);
-
         // overwrite foo with an int
         _ = try root_cursor.execute(void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
@@ -415,12 +335,94 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .hash_map_get = foo_key },
         }));
 
-        // slices
+        // non-top-level list
+        {
+            // write apple
+            _ = try root_cursor.execute(void, &[_]PathPart(void){
+                .{ .array_list_get = .append_copy },
+                .hash_map_create,
+                .{ .hash_map_get = hash_buffer("fruits") },
+                .array_list_create,
+                .{ .array_list_get = .append },
+                .{ .value = .{ .bytes = "apple" } },
+            });
+
+            // read apple
+            const apple_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+                .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+                .{ .hash_map_get = hash_buffer("fruits") },
+                .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+            })).?;
+            defer allocator.free(apple_value);
+            try std.testing.expectEqualStrings("apple", apple_value);
+
+            // write banana
+            _ = try root_cursor.execute(void, &[_]PathPart(void){
+                .{ .array_list_get = .append_copy },
+                .hash_map_create,
+                .{ .hash_map_get = hash_buffer("fruits") },
+                .array_list_create,
+                .{ .array_list_get = .append },
+                .{ .value = .{ .bytes = "banana" } },
+            });
+
+            // read banana
+            const banana_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+                .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+                .{ .hash_map_get = hash_buffer("fruits") },
+                .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+            })).?;
+            defer allocator.free(banana_value);
+            try std.testing.expectEqualStrings("banana", banana_value);
+
+            // can't read banana in older array_list
+            try expectEqual(null, try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+                .{ .array_list_get = .{ .index = .{ .index = 1, .reverse = true } } },
+                .{ .hash_map_get = hash_buffer("fruits") },
+                .{ .array_list_get = .{ .index = .{ .index = 1, .reverse = false } } },
+            }));
+
+            // write pear and grape
+            _ = try root_cursor.execute(void, &[_]PathPart(void){
+                .{ .array_list_get = .append_copy },
+                .hash_map_create,
+                .{ .hash_map_get = hash_buffer("fruits") },
+                .array_list_create,
+                .{ .path = &[_]PathPart(void){
+                    .{ .array_list_get = .append },
+                    .{ .value = .{ .bytes = "pear" } },
+                } },
+                .{ .path = &[_]PathPart(void){
+                    .{ .array_list_get = .append },
+                    .{ .value = .{ .bytes = "grape" } },
+                } },
+            });
+
+            // read pear
+            const pear_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+                .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+                .{ .hash_map_get = hash_buffer("fruits") },
+                .{ .array_list_get = .{ .index = .{ .index = 1, .reverse = true } } },
+            })).?;
+            defer allocator.free(pear_value);
+            try std.testing.expectEqualStrings("pear", pear_value);
+
+            // read grape
+            const grape_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+                .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+                .{ .hash_map_get = hash_buffer("fruits") },
+                .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+            })).?;
+            defer allocator.free(grape_value);
+            try std.testing.expectEqualStrings("grape", grape_value);
+        }
+
+        // slice
         {
             // slice the fruits list
             const fruits_slice_slot = try root_cursor.execute(void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .hash_map_get = fruits_key },
+                .{ .hash_map_get = hash_buffer("fruits") },
                 .{ .array_list_slice = .{ .offset = 1, .size = 2 } },
             });
 
