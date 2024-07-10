@@ -416,80 +416,6 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             defer allocator.free(grape_value);
             try std.testing.expectEqualStrings("grape", grape_value);
         }
-
-        // slice
-        {
-            // slice the fruits list
-            const fruits_slot = try root_cursor.execute(void, &[_]PathPart(void){
-                .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .hash_map_get = hash_buffer("fruits") },
-            });
-            const fruits_slice_slot = try root_cursor.db.slice(fruits_slot, 1, 2);
-
-            // save the newly-made slice
-            _ = try root_cursor.execute(void, &[_]PathPart(void){
-                .{ .array_list_get = .append_copy },
-                .hash_map_create,
-                .{ .hash_map_get = hash_buffer("fruits-slice") },
-                .{ .value = .{ .slot = fruits_slice_slot } },
-            });
-
-            {
-                // read banana from fruits-slice
-                const slice_banana_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-                    .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                    .{ .hash_map_get = hash_buffer("fruits-slice") },
-                    .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = false } } },
-                })).?;
-                defer allocator.free(slice_banana_value);
-                try std.testing.expectEqualStrings("banana", slice_banana_value);
-
-                // read pear from fruits-slice
-                const slice_pear_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-                    .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                    .{ .hash_map_get = hash_buffer("fruits-slice") },
-                    .{ .array_list_get = .{ .index = .{ .index = 1, .reverse = false } } },
-                })).?;
-                defer allocator.free(slice_pear_value);
-                try std.testing.expectEqualStrings("pear", slice_pear_value);
-
-                // grape is not in the slice
-                try std.testing.expect(null == try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-                    .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                    .{ .hash_map_get = hash_buffer("fruits-slice") },
-                    .{ .array_list_get = .{ .index = .{ .index = 2, .reverse = false } } },
-                }));
-            }
-
-            // slice the fruits list again
-            const fruits_slice_slot2 = try root_cursor.db.slice(fruits_slice_slot, 1, 1);
-
-            // save the newly-made slice
-            _ = try root_cursor.execute(void, &[_]PathPart(void){
-                .{ .array_list_get = .append_copy },
-                .hash_map_create,
-                .{ .hash_map_get = hash_buffer("fruits-slice") },
-                .{ .value = .{ .slot = fruits_slice_slot2 } },
-            });
-
-            {
-                // read pear from fruits-slice
-                const slice_pear_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-                    .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                    .{ .hash_map_get = hash_buffer("fruits-slice") },
-                    .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = false } } },
-                })).?;
-                defer allocator.free(slice_pear_value);
-                try std.testing.expectEqualStrings("pear", slice_pear_value);
-
-                // grape is not in the slice
-                try std.testing.expect(null == try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-                    .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                    .{ .hash_map_get = hash_buffer("fruits-slice") },
-                    .{ .array_list_get = .{ .index = .{ .index = 1, .reverse = false } } },
-                }));
-            }
-        }
     }
 
     // append to top-level array_list many times, filling up the array_list until a root overflow occurs
@@ -722,7 +648,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try expectEqual(10, i);
     }
 
-    // slice
+    // slice linked_array_list
     {
         const init_opts = try initOpts(kind, opts);
         var db = try Database(kind).init(allocator, init_opts);
@@ -740,8 +666,8 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 .{ .array_list_get = .append_copy },
                 .hash_map_create,
                 .{ .hash_map_get = hash_buffer("even") },
-                .array_list_create,
-                .{ .array_list_get = .append },
+                .linked_array_list_create,
+                .{ .linked_array_list_get = .append },
                 .{ .value = .{ .uint = i * 2 } },
             });
         }
@@ -766,9 +692,9 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .array_list_get = .append_copy },
             .hash_map_create,
             .{ .hash_map_get = hash_buffer("even-slice") },
-            .array_list_create,
+            .linked_array_list_create,
             .{ .path = &[_]PathPart(void){
-                .{ .array_list_get = .append },
+                .{ .linked_array_list_get = .append },
                 .{ .value = .{ .uint = 42 } },
             } },
         });
@@ -777,16 +703,16 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try expectEqual(42, try root_cursor.readInt(void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .hash_map_get = hash_buffer("even-slice") },
-            .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+            .{ .linked_array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
         }));
         try expectEqual(42, try root_cursor.readInt(void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             .{ .hash_map_get = hash_buffer("even-slice") },
-            .{ .array_list_get = .{ .index = .{ .index = 2, .reverse = false } } },
+            .{ .linked_array_list_get = .{ .index = .{ .index = 2, .reverse = false } } },
         }));
     }
 
-    // concat
+    // concat linked_array_list
     {
         const init_opts = try initOpts(kind, opts);
         var db = try Database(kind).init(allocator, init_opts);
@@ -804,8 +730,8 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 for (0..xitdb.SLOT_COUNT * 5) |i| {
                     _ = try cursor.execute(void, &[_]PathPart(void){
                         .{ .hash_map_get = hash_buffer("even") },
-                        .array_list_create,
-                        .{ .array_list_get = .append },
+                        .linked_array_list_create,
+                        .{ .linked_array_list_get = .append },
                         .{ .value = .{ .uint = i * 2 } },
                     });
                 }
@@ -819,8 +745,8 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 for (0..xitdb.SLOT_COUNT + 1) |i| {
                     _ = try cursor.execute(void, &[_]PathPart(void){
                         .{ .hash_map_get = hash_buffer("odd") },
-                        .array_list_create,
-                        .{ .array_list_get = .append },
+                        .linked_array_list_create,
+                        .{ .linked_array_list_get = .append },
                         .{ .value = .{ .uint = (i * 2) + 1 } },
                     });
                 }
