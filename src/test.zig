@@ -33,6 +33,68 @@ fn initOpts(comptime kind: DatabaseKind, opts: anytype) !Database(kind).InitOpts
     }
 }
 
+fn testConcat(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: anytype, comptime list_a_size: usize, comptime list_b_size: usize) !void {
+    const init_opts = try initOpts(kind, opts);
+    var db = try Database(kind).init(allocator, init_opts);
+    defer {
+        db.deinit();
+        if (kind == .file) {
+            opts.dir.deleteFile(opts.path) catch {};
+        }
+    }
+    var root_cursor = db.rootCursor();
+
+    const Ctx = struct {
+        pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
+            // create even list
+            _ = try cursor.execute(void, &[_]PathPart(void){
+                .{ .hash_map_get = hash_buffer("even") },
+                .linked_array_list_create,
+            });
+            for (0..list_a_size) |i| {
+                _ = try cursor.execute(void, &[_]PathPart(void){
+                    .{ .hash_map_get = hash_buffer("even") },
+                    .linked_array_list_create,
+                    .{ .linked_array_list_get = .append },
+                    .{ .value = .{ .uint = i * 2 } },
+                });
+            }
+
+            // get even list
+            const even_list_slot = try cursor.execute(void, &[_]PathPart(void){
+                .{ .hash_map_get = hash_buffer("even") },
+            });
+
+            // create odd list
+            _ = try cursor.execute(void, &[_]PathPart(void){
+                .{ .hash_map_get = hash_buffer("odd") },
+                .linked_array_list_create,
+            });
+            for (0..list_b_size) |i| {
+                _ = try cursor.execute(void, &[_]PathPart(void){
+                    .{ .hash_map_get = hash_buffer("odd") },
+                    .linked_array_list_create,
+                    .{ .linked_array_list_get = .append },
+                    .{ .value = .{ .uint = (i * 2) + 1 } },
+                });
+            }
+
+            // get odd list
+            const odd_list_slot = try cursor.execute(void, &[_]PathPart(void){
+                .{ .hash_map_get = hash_buffer("odd") },
+            });
+
+            // concat the lists
+            _ = try cursor.db.concat(even_list_slot, odd_list_slot);
+        }
+    };
+    _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
+        .{ .array_list_get = .append_copy },
+        .hash_map_create,
+        .{ .ctx = Ctx{} },
+    });
+}
+
 fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: anytype) !void {
     // array_list of hash_maps
     {
@@ -712,152 +774,11 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         }));
     }
 
-    // concat linked_array_list (large lists)
-    {
-        const init_opts = try initOpts(kind, opts);
-        var db = try Database(kind).init(allocator, init_opts);
-        defer {
-            db.deinit();
-            if (kind == .file) {
-                opts.dir.deleteFile(opts.path) catch {};
-            }
-        }
-        var root_cursor = db.rootCursor();
-
-        const Ctx = struct {
-            pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
-                // create even list
-                for (0..xitdb.SLOT_COUNT * 5) |i| {
-                    _ = try cursor.execute(void, &[_]PathPart(void){
-                        .{ .hash_map_get = hash_buffer("even") },
-                        .linked_array_list_create,
-                        .{ .linked_array_list_get = .append },
-                        .{ .value = .{ .uint = i * 2 } },
-                    });
-                }
-
-                // get even list
-                const even_list_slot = try cursor.execute(void, &[_]PathPart(void){
-                    .{ .hash_map_get = hash_buffer("even") },
-                });
-
-                // create odd list
-                for (0..xitdb.SLOT_COUNT + 1) |i| {
-                    _ = try cursor.execute(void, &[_]PathPart(void){
-                        .{ .hash_map_get = hash_buffer("odd") },
-                        .linked_array_list_create,
-                        .{ .linked_array_list_get = .append },
-                        .{ .value = .{ .uint = (i * 2) + 1 } },
-                    });
-                }
-
-                // get odd list
-                const odd_list_slot = try cursor.execute(void, &[_]PathPart(void){
-                    .{ .hash_map_get = hash_buffer("odd") },
-                });
-
-                // concat the lists
-                _ = try cursor.db.concat(even_list_slot, odd_list_slot);
-            }
-        };
-        _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
-            .{ .array_list_get = .append_copy },
-            .hash_map_create,
-            .{ .ctx = Ctx{} },
-        });
-    }
-
-    // concat linked_array_list (small lists)
-    {
-        const init_opts = try initOpts(kind, opts);
-        var db = try Database(kind).init(allocator, init_opts);
-        defer {
-            db.deinit();
-            if (kind == .file) {
-                opts.dir.deleteFile(opts.path) catch {};
-            }
-        }
-        var root_cursor = db.rootCursor();
-
-        const Ctx = struct {
-            pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
-                // create even list
-                for (0..xitdb.SLOT_COUNT) |i| {
-                    _ = try cursor.execute(void, &[_]PathPart(void){
-                        .{ .hash_map_get = hash_buffer("even") },
-                        .linked_array_list_create,
-                        .{ .linked_array_list_get = .append },
-                        .{ .value = .{ .uint = i * 2 } },
-                    });
-                }
-
-                // get even list
-                const even_list_slot = try cursor.execute(void, &[_]PathPart(void){
-                    .{ .hash_map_get = hash_buffer("even") },
-                });
-
-                // create odd list
-                for (0..xitdb.SLOT_COUNT) |i| {
-                    _ = try cursor.execute(void, &[_]PathPart(void){
-                        .{ .hash_map_get = hash_buffer("odd") },
-                        .linked_array_list_create,
-                        .{ .linked_array_list_get = .append },
-                        .{ .value = .{ .uint = (i * 2) + 1 } },
-                    });
-                }
-
-                // get odd list
-                const odd_list_slot = try cursor.execute(void, &[_]PathPart(void){
-                    .{ .hash_map_get = hash_buffer("odd") },
-                });
-
-                // concat the lists
-                _ = try cursor.db.concat(even_list_slot, odd_list_slot);
-            }
-        };
-        _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
-            .{ .array_list_get = .append_copy },
-            .hash_map_create,
-            .{ .ctx = Ctx{} },
-        });
-    }
-
-    // concat linked_array_list (empty lists)
-    {
-        const init_opts = try initOpts(kind, opts);
-        var db = try Database(kind).init(allocator, init_opts);
-        defer {
-            db.deinit();
-            if (kind == .file) {
-                opts.dir.deleteFile(opts.path) catch {};
-            }
-        }
-        var root_cursor = db.rootCursor();
-
-        const Ctx = struct {
-            pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
-                // create even list
-                const even_list_slot = try cursor.execute(void, &[_]PathPart(void){
-                    .{ .hash_map_get = hash_buffer("even") },
-                    .linked_array_list_create,
-                });
-
-                // create odd list
-                const odd_list_slot = try cursor.execute(void, &[_]PathPart(void){
-                    .{ .hash_map_get = hash_buffer("odd") },
-                    .linked_array_list_create,
-                });
-
-                // concat the lists
-                _ = try cursor.db.concat(even_list_slot, odd_list_slot);
-            }
-        };
-        _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
-            .{ .array_list_get = .append_copy },
-            .hash_map_create,
-            .{ .ctx = Ctx{} },
-        });
-    }
+    // concat linked_array_list
+    try testConcat(allocator, kind, opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT + 1);
+    try testConcat(allocator, kind, opts, xitdb.SLOT_COUNT, xitdb.SLOT_COUNT);
+    try testConcat(allocator, kind, opts, 1, 1);
+    try testConcat(allocator, kind, opts, 0, 0);
 }
 
 test "read and write" {
