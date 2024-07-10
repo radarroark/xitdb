@@ -972,7 +972,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             }
 
             // stitch the blocks together
-            var ptrs = [_]?u64{null} ** 3;
+            var ptrs = [_]?u64{null} ** 2;
             for (0..@max(blocks_a.items.len, blocks_b.items.len)) |i| {
                 const block_infos: [2]?LinkedArrayListBlockInfo = .{
                     if (i < blocks_a.items.len) blocks_a.items[blocks_a.items.len - 1 - i] else null,
@@ -1041,7 +1041,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
 
                 // clear the ptrs
-                ptrs = .{ null, null, null };
+                ptrs = .{ null, null };
 
                 // write the block(s)
                 try self.core.seekFromEnd(0);
@@ -1067,15 +1067,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             const root_ptr = blk: {
                 if (ptrs[0]) |first_ptr| {
                     // if there is more than one pointer, make a root node
-                    if (ptrs[1] != null) {
+                    if (ptrs[1]) |second_ptr| {
                         var block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
-                        var slot_i: usize = 0;
-                        for (ptrs) |ptr_maybe| {
-                            if (ptr_maybe) |ptr| {
-                                block[slot_i] = LinkedArrayListSlot{ .slot = Slot.init(ptr, .index), .size = 0 };
-                                slot_i += 1;
-                            }
-                        }
+                        block[0] = LinkedArrayListSlot{ .slot = Slot.init(first_ptr, .index), .size = 0 };
+                        block[1] = LinkedArrayListSlot{ .slot = Slot.init(second_ptr, .index), .size = 0 };
 
                         // write the root node
                         const new_ptr = try self.core.getPos();
