@@ -970,40 +970,16 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             }
 
             // stitch the blocks together
-            try self.core.seekFromEnd(0);
-            var ptrs: struct { left: ?u64, center: ?u64, right: ?u64 } = .{
-                .left = null,
-                .center = null,
-                .right = null,
-            };
-            for (0..@max(blocks_a.items.len, blocks_b.items.len) + 1) |i| {
-                const non_leaf = ptrs.left != null or ptrs.center != null or ptrs.right != null;
-
-                if (non_leaf) {
-                    const next_ptr = try self.core.getPos();
-                    const block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
-                    try writer.writeAll(&block);
-                    try self.core.seekTo(next_ptr);
-                    if (ptrs.left) |ptr| {
-                        try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{ .slot = Slot.init(ptr, .index), .size = 0 }), .big);
-                    }
-                    if (ptrs.center) |ptr| {
-                        try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{ .slot = Slot.init(ptr, .index), .size = 0 }), .big);
-                    }
-                    if (ptrs.right) |ptr| {
-                        try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{ .slot = Slot.init(ptr, .index), .size = 0 }), .big);
-                    }
-                    ptrs = .{ .left = null, .center = next_ptr, .right = null };
-                }
-
+            var ptrs = [_]?u64{null} ** 3;
+            for (0..@max(blocks_a.items.len, blocks_b.items.len)) |i| {
                 const block_infos: [2]?LinkedArrayListBlockInfo = .{
                     if (i < blocks_a.items.len) blocks_a.items[blocks_a.items.len - 1 - i] else null,
                     if (i < blocks_b.items.len) blocks_b.items[blocks_b.items.len - 1 - i] else null,
                 };
+                var next_blocks: [2]?[SLOT_COUNT]LinkedArrayListSlot = .{ null, null };
+                const non_leaf = ptrs[0] != null;
 
-                var next_ptrs: [2]?u64 = .{ null, null };
-
-                for (block_infos, &next_ptrs) |block_info_maybe, *ptr_maybe| {
+                for (block_infos, &next_blocks) |block_info_maybe, *next_block_maybe| {
                     if (block_info_maybe) |block_info| {
                         var block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
                         var target_i: usize = 0;
@@ -1025,22 +1001,91 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             continue;
                         }
 
-                        const next_ptr = try self.core.getPos();
-                        for (block) |slot| {
-                            try writer.writeInt(LinkedArrayListSlotInt, @bitCast(slot), .big);
-                        }
-                        ptr_maybe.* = next_ptr;
+                        next_block_maybe.* = block;
                     }
                 }
 
-                ptrs.left = next_ptrs[0];
-                ptrs.right = next_ptrs[1];
+                var slots_to_write = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** (SLOT_COUNT * 3);
+                var slot_i: usize = 0;
+
+                // add the left block
+                if (next_blocks[0]) |left_block| {
+                    for (left_block) |slot| {
+                        if (slot.slot.tag == 0) {
+                            break;
+                        }
+                        slots_to_write[slot_i] = slot;
+                        slot_i += 1;
+                    }
+                }
+
+                // add the center block
+                for (ptrs) |ptr_maybe| {
+                    if (ptr_maybe) |ptr| {
+                        slots_to_write[slot_i] = LinkedArrayListSlot{ .slot = Slot.init(ptr, .index), .size = 0 };
+                        slot_i += 1;
+                    }
+                }
+
+                // add the right block
+                if (next_blocks[1]) |left_block| {
+                    for (left_block) |slot| {
+                        if (slot.slot.tag == 0) {
+                            break;
+                        }
+                        slots_to_write[slot_i] = slot;
+                        slot_i += 1;
+                    }
+                }
+
+                // clear the ptrs
+                ptrs = .{ null, null, null };
+
+                // write the block(s)
+                try self.core.seekFromEnd(0);
+                for (&ptrs, 0..) |*ptr, block_i| {
+                    const start = block_i * SLOT_COUNT;
+                    const block = slots_to_write[start .. start + SLOT_COUNT];
+
+                    // this block is empty so don't bother writing it
+                    if (block[0].slot.tag == 0) {
+                        break;
+                    }
+
+                    // write the block
+                    const next_ptr = try self.core.getPos();
+                    for (block) |slot| {
+                        try writer.writeInt(LinkedArrayListSlotInt, @bitCast(slot), .big);
+                    }
+
+                    ptr.* = next_ptr;
+                }
+            }
+
+            var root_ptr = ptrs[0] orelse return error.ExpectedRootPointer;
+
+            // if there is more than one pointer, make a root node
+            if (ptrs[1] != null) {
+                var block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
+                var slot_i: usize = 0;
+                for (ptrs) |ptr_maybe| {
+                    if (ptr_maybe) |ptr| {
+                        block[slot_i] = LinkedArrayListSlot{ .slot = Slot.init(ptr, .index), .size = 0 };
+                        slot_i += 1;
+                    }
+                }
+
+                // write the root node
+                root_ptr = try self.core.getPos();
+                for (block) |slot| {
+                    try writer.writeInt(LinkedArrayListSlotInt, @bitCast(slot), .big);
+                }
             }
 
             // write the header
             const list_start = try self.core.getPos();
             try writer.writeInt(LinkedArrayListHeaderInt, @bitCast(LinkedArrayListHeader{
-                .ptr = ptrs.center orelse return error.ExpectedRootPointer,
+                .ptr = root_ptr,
                 .begin_padding = 0,
                 .size = header_a.size + header_b.size,
                 .end_padding = 0,

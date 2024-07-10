@@ -712,7 +712,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         }));
     }
 
-    // concat linked_array_list
+    // concat linked_array_list (large lists)
     {
         const init_opts = try initOpts(kind, opts);
         var db = try Database(kind).init(allocator, init_opts);
@@ -743,6 +743,61 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
                 // create odd list
                 for (0..xitdb.SLOT_COUNT + 1) |i| {
+                    _ = try cursor.execute(void, &[_]PathPart(void){
+                        .{ .hash_map_get = hash_buffer("odd") },
+                        .linked_array_list_create,
+                        .{ .linked_array_list_get = .append },
+                        .{ .value = .{ .uint = (i * 2) + 1 } },
+                    });
+                }
+
+                // get odd list
+                const odd_list_slot = try cursor.execute(void, &[_]PathPart(void){
+                    .{ .hash_map_get = hash_buffer("odd") },
+                });
+
+                // concat the lists
+                _ = try cursor.db.concat(even_list_slot, odd_list_slot);
+            }
+        };
+        _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
+            .{ .array_list_get = .append_copy },
+            .hash_map_create,
+            .{ .ctx = Ctx{} },
+        });
+    }
+
+    // concat linked_array_list (small lists)
+    {
+        const init_opts = try initOpts(kind, opts);
+        var db = try Database(kind).init(allocator, init_opts);
+        defer {
+            db.deinit();
+            if (kind == .file) {
+                opts.dir.deleteFile(opts.path) catch {};
+            }
+        }
+        var root_cursor = db.rootCursor();
+
+        const Ctx = struct {
+            pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
+                // create even list
+                for (0..xitdb.SLOT_COUNT) |i| {
+                    _ = try cursor.execute(void, &[_]PathPart(void){
+                        .{ .hash_map_get = hash_buffer("even") },
+                        .linked_array_list_create,
+                        .{ .linked_array_list_get = .append },
+                        .{ .value = .{ .uint = i * 2 } },
+                    });
+                }
+
+                // get even list
+                const even_list_slot = try cursor.execute(void, &[_]PathPart(void){
+                    .{ .hash_map_get = hash_buffer("even") },
+                });
+
+                // create odd list
+                for (0..xitdb.SLOT_COUNT) |i| {
                     _ = try cursor.execute(void, &[_]PathPart(void){
                         .{ .hash_map_get = hash_buffer("odd") },
                         .linked_array_list_create,
