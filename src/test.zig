@@ -821,6 +821,43 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .ctx = Ctx{} },
         });
     }
+
+    // concat linked_array_list (empty lists)
+    {
+        const init_opts = try initOpts(kind, opts);
+        var db = try Database(kind).init(allocator, init_opts);
+        defer {
+            db.deinit();
+            if (kind == .file) {
+                opts.dir.deleteFile(opts.path) catch {};
+            }
+        }
+        var root_cursor = db.rootCursor();
+
+        const Ctx = struct {
+            pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
+                // create even list
+                const even_list_slot = try cursor.execute(void, &[_]PathPart(void){
+                    .{ .hash_map_get = hash_buffer("even") },
+                    .linked_array_list_create,
+                });
+
+                // create odd list
+                const odd_list_slot = try cursor.execute(void, &[_]PathPart(void){
+                    .{ .hash_map_get = hash_buffer("odd") },
+                    .linked_array_list_create,
+                });
+
+                // concat the lists
+                _ = try cursor.db.concat(even_list_slot, odd_list_slot);
+            }
+        };
+        _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
+            .{ .array_list_get = .append_copy },
+            .hash_map_create,
+            .{ .ctx = Ctx{} },
+        });
+    }
 }
 
 test "read and write" {

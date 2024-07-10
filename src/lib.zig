@@ -953,9 +953,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             var blocks_a = std.ArrayList(LinkedArrayListBlockInfo).init(self.allocator);
             defer blocks_a.deinit();
             {
+                const key = if (header_a.size == 0) 0 else header_a.begin_padding + header_a.size - 1;
                 const last_key = if (header_a.size == 0) 0 else header_a.begin_padding + header_a.size + header_a.end_padding - 1;
                 const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
-                try self.readLinkedArrayListBlocks(header_a.ptr, header_a.begin_padding + header_a.size - 1, shift, &blocks_a);
+                try self.readLinkedArrayListBlocks(header_a.ptr, key, shift, &blocks_a);
             }
 
             // read the second list's blocks
@@ -964,9 +965,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             var blocks_b = std.ArrayList(LinkedArrayListBlockInfo).init(self.allocator);
             defer blocks_b.deinit();
             {
+                const key = header_b.begin_padding;
                 const last_key = if (header_b.size == 0) 0 else header_b.begin_padding + header_b.size + header_b.end_padding - 1;
                 const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
-                try self.readLinkedArrayListBlocks(header_b.ptr, header_b.begin_padding, shift, &blocks_b);
+                try self.readLinkedArrayListBlocks(header_b.ptr, key, shift, &blocks_b);
             }
 
             // stitch the blocks together
@@ -1062,25 +1064,36 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
             }
 
-            var root_ptr = ptrs[0] orelse return error.ExpectedRootPointer;
+            const root_ptr = blk: {
+                if (ptrs[0]) |first_ptr| {
+                    // if there is more than one pointer, make a root node
+                    if (ptrs[1] != null) {
+                        var block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
+                        var slot_i: usize = 0;
+                        for (ptrs) |ptr_maybe| {
+                            if (ptr_maybe) |ptr| {
+                                block[slot_i] = LinkedArrayListSlot{ .slot = Slot.init(ptr, .index), .size = 0 };
+                                slot_i += 1;
+                            }
+                        }
 
-            // if there is more than one pointer, make a root node
-            if (ptrs[1] != null) {
-                var block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
-                var slot_i: usize = 0;
-                for (ptrs) |ptr_maybe| {
-                    if (ptr_maybe) |ptr| {
-                        block[slot_i] = LinkedArrayListSlot{ .slot = Slot.init(ptr, .index), .size = 0 };
-                        slot_i += 1;
+                        // write the root node
+                        const new_ptr = try self.core.getPos();
+                        for (block) |slot| {
+                            try writer.writeInt(LinkedArrayListSlotInt, @bitCast(slot), .big);
+                        }
+                        break :blk new_ptr;
+                    }
+                    // otherwise the first pointer is the root node
+                    else {
+                        break :blk first_ptr;
                     }
                 }
-
-                // write the root node
-                root_ptr = try self.core.getPos();
-                for (block) |slot| {
-                    try writer.writeInt(LinkedArrayListSlotInt, @bitCast(slot), .big);
+                // lists were empty so just re-use existing empty block
+                else {
+                    break :blk header_a.ptr;
                 }
-            }
+            };
 
             // write the header
             const list_start = try self.core.getPos();
