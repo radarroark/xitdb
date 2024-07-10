@@ -1405,7 +1405,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             const reader = self.core.reader();
             const writer = self.core.writer();
 
-            const i = @as(u64, @truncate((key_hash >> key_offset * BIT_COUNT))) & MASK;
+            const i: u4 = @intCast((key_hash >> key_offset * BIT_COUNT) & MASK);
             const slot_pos = index_pos + (byteSizeOf(Slot) * i);
             try self.core.seekTo(slot_pos);
             const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
@@ -1485,7 +1485,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             if (key_offset + 1 >= (HASH_SIZE * 8) / BIT_COUNT) {
                                 return error.KeyOffsetExceeded;
                             }
-                            const next_i = @as(u64, @truncate((existing_key_hash >> (key_offset + 1) * BIT_COUNT))) & MASK;
+                            const next_i: u4 = @intCast((existing_key_hash >> (key_offset + 1) * BIT_COUNT) & MASK);
                             try self.core.seekFromEnd(0);
                             const next_index_pos = try self.core.getPos();
                             var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
@@ -1553,7 +1553,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
         fn readArrayListSlot(self: *Database(db_kind), index_pos: u64, key: u64, shift: u6, write_mode: WriteMode) !SlotPointer {
             const reader = self.core.reader();
 
-            const i = @as(u64, @truncate(key >> (shift * BIT_COUNT))) & MASK;
+            const i: u4 = @intCast(key >> (shift * BIT_COUNT) & MASK);
             const slot_pos = index_pos + (byteSizeOf(Slot) * i);
             try self.core.seekTo(slot_pos);
             const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
@@ -1659,7 +1659,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
         fn readLinkedArrayListSlot(self: *Database(db_kind), index_pos: u64, key: u64, shift: u6, write_mode: WriteMode) !SlotPointer {
             const reader = self.core.reader();
 
-            const i = @as(u64, @truncate(key >> (shift * BIT_COUNT))) & MASK;
+            const i: u4 = @intCast(key >> (shift * BIT_COUNT) & MASK);
             const slot_pos = index_pos + (byteSizeOf(LinkedArrayListSlot) * i);
             try self.core.seekTo(slot_pos);
             const slot: LinkedArrayListSlot = @bitCast(try reader.readInt(LinkedArrayListSlotInt, .big));
@@ -1728,7 +1728,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 return;
             }
 
-            const i = @as(u64, @truncate(key >> (shift * BIT_COUNT))) & MASK;
+            const i: u4 = @intCast(key >> (shift * BIT_COUNT) & MASK);
             const slot = slot_block[i];
             if (slot.slot.tag == 0) {
                 return error.EmptySlot;
