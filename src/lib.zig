@@ -1213,20 +1213,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             try self.core.seekTo(next_array_list_start);
                             const reader = self.core.reader();
                             const header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
-                            var key: u64 = 0;
-                            if (index.reverse) {
-                                if (index.index >= header.size) {
-                                    return error.KeyNotFound;
-                                } else {
-                                    key = header.size - index.index - 1;
-                                }
-                            } else {
-                                if (index.index >= header.size) {
-                                    return error.KeyNotFound;
-                                } else {
-                                    key = index.index;
-                                }
+                            if (index.index >= header.size) {
+                                return error.KeyNotFound;
                             }
+                            const key = if (index.reverse)
+                                header.size - index.index - 1
+                            else
+                                index.index;
                             const last_key = header.size - 1;
                             const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
                             const final_slot_ptr = try self.readArrayListSlot(header.ptr, key, shift, write_mode);
@@ -1352,20 +1345,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             try self.core.seekTo(next_array_list_start);
                             const reader = self.core.reader();
                             const header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
-                            var key: u64 = header.begin_padding;
-                            if (index.reverse) {
-                                if (index.index >= header.size) {
-                                    return error.KeyNotFound;
-                                } else {
-                                    key += header.size - index.index - 1;
-                                }
-                            } else {
-                                if (index.index >= header.size) {
-                                    return error.KeyNotFound;
-                                } else {
-                                    key += index.index;
-                                }
+                            if (index.index >= header.size) {
+                                return error.KeyNotFound;
                             }
+                            const key = if (index.reverse)
+                                header.begin_padding + header.size - index.index - 1
+                            else
+                                header.begin_padding + index.index;
                             const last_key = header.begin_padding + header.size + header.end_padding - 1;
                             const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
                             const final_slot_ptr = try self.readLinkedArrayListSlot(header.ptr, key, shift, write_mode);
