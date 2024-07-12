@@ -1832,6 +1832,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             while (true) {
                 const slot_leaf_count: u64 = if (shift == 0) (if (slot_block[i].slot.tag == 0) 0 else 1) else slot_block[i].size;
                 if (next_skip_leaf_count == slot_leaf_count) {
+                    // if the slot's leaf count is at its maximum,
+                    // we have to skip to the next slot
                     if (slot_leaf_count == max_leaf_count) {
                         if (i + 1 < SLOT_COUNT) {
                             next_skip_leaf_count -= slot_leaf_count;
@@ -1839,6 +1841,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         } else {
                             return error.SkipLeafCountError;
                         }
+                    }
+                    // if the next slot has anything in it, consider this a gap
+                    // and skip to the next block
+                    else if (i + 1 < SLOT_COUNT and slot_block[i + 1].size > 0) {
+                        next_skip_leaf_count -= slot_leaf_count;
+                        i += 1;
                     }
                     break;
                 } else if (next_skip_leaf_count < slot_leaf_count) {
