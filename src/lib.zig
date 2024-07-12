@@ -1367,7 +1367,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 header.begin_padding + index.index;
                             const last_key = header.begin_padding + header.size + header.end_padding - 1;
                             const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
-                            const final_slot_ptr = try self.readLinkedArrayListSlot(header.ptr, key, shift, write_mode);
+                            const final_slot_ptr = try self.readLinkedArrayListSlot(header.ptr, key, shift, key, write_mode);
                             return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = final_slot_ptr.slot_ptr });
                         },
                         .append => {
@@ -1771,12 +1771,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     index_pos = next_index_pos;
                 }
 
-                slot_ptr = try self.readLinkedArrayListSlot(index_pos, key, next_shift, write_mode);
+                slot_ptr = try self.readLinkedArrayListSlot(index_pos, key, next_shift, key, write_mode);
             } else {
                 const last_key = if (header.size == 0) 0 else header.begin_padding + header.size + header.end_padding - 1;
                 const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
                 const key = header.begin_padding + header.size;
-                slot_ptr = try self.readLinkedArrayListSlot(index_pos, key, shift, write_mode);
+                slot_ptr = try self.readLinkedArrayListSlot(index_pos, key, shift, key, write_mode);
             }
 
             return .{
@@ -1809,7 +1809,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             return count;
         }
 
-        fn readLinkedArrayListSlot(self: *Database(db_kind), index_pos: u64, key: u64, shift: u6, write_mode: WriteMode) !LinkedArrayListSlotPointer {
+        fn readLinkedArrayListSlot(self: *Database(db_kind), index_pos: u64, key: u64, shift: u6, skip_leaf_count: u64, write_mode: WriteMode) !LinkedArrayListSlotPointer {
             const reader = self.core.reader();
             const writer = self.core.writer();
 
@@ -1826,7 +1826,31 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
             }
 
-            const i: u4 = @intCast(key >> (shift * BIT_COUNT) & MASK);
+            var next_skip_leaf_count = skip_leaf_count;
+            var i: u4 = 0;
+            const max_leaf_count = if (shift == 0) 1 else shift * SLOT_COUNT;
+            while (true) {
+                const slot_leaf_count: u64 = if (shift == 0) (if (slot_block[i].slot.tag == 0) 0 else 1) else slot_block[i].size;
+                if (next_skip_leaf_count == slot_leaf_count) {
+                    if (slot_leaf_count == max_leaf_count) {
+                        if (i + 1 < SLOT_COUNT) {
+                            next_skip_leaf_count -= slot_leaf_count;
+                            i += 1;
+                        } else {
+                            return error.SkipLeafCountError;
+                        }
+                    }
+                    break;
+                } else if (next_skip_leaf_count < slot_leaf_count) {
+                    break;
+                } else if (i + 1 < SLOT_COUNT) {
+                    next_skip_leaf_count -= slot_leaf_count;
+                    i += 1;
+                } else {
+                    return error.SkipLeafCountError;
+                }
+            }
+
             const slot = slot_block[i];
             const slot_pos = index_pos + (byteSizeOf(LinkedArrayListSlot) * i);
 
@@ -1841,7 +1865,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                         try writer.writeAll(&index_block);
 
-                        const next_slot_ptr = try self.readLinkedArrayListSlot(next_index_pos, key, shift - 1, write_mode);
+                        const next_slot_ptr = try self.readLinkedArrayListSlot(next_index_pos, key, shift - 1, next_skip_leaf_count, write_mode);
 
                         slot_block[i].size = next_slot_ptr.leaf_count;
                         const leaf_count = countLinkedArrayListLeafCount(&slot_block, shift, i);
@@ -1876,7 +1900,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         try writer.writeAll(&index_block);
                     }
 
-                    const next_slot_ptr = try self.readLinkedArrayListSlot(next_ptr, key, shift - 1, write_mode);
+                    const next_slot_ptr = try self.readLinkedArrayListSlot(next_ptr, key, shift - 1, next_skip_leaf_count, write_mode);
 
                     slot_block[i].size = next_slot_ptr.leaf_count;
                     const leaf_count = countLinkedArrayListLeafCount(&slot_block, shift, i);
