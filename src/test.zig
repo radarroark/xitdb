@@ -45,18 +45,25 @@ fn testConcat(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: a
     var root_cursor = db.rootCursor();
 
     const Ctx = struct {
-        pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
+        allocator: std.mem.Allocator,
+
+        pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
+            var values = std.ArrayList(u64).init(self.allocator);
+            defer values.deinit();
+
             // create even list
             _ = try cursor.execute(void, &[_]PathPart(void){
                 .{ .hash_map_get = hash_buffer("even") },
                 .linked_array_list_create,
             });
             for (0..list_a_size) |i| {
+                const n = i * 2;
+                try values.append(n);
                 _ = try cursor.execute(void, &[_]PathPart(void){
                     .{ .hash_map_get = hash_buffer("even") },
                     .linked_array_list_create,
                     .{ .linked_array_list_get = .append },
-                    .{ .value = .{ .uint = i * 2 } },
+                    .{ .value = .{ .uint = n } },
                 });
             }
 
@@ -71,11 +78,13 @@ fn testConcat(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: a
                 .linked_array_list_create,
             });
             for (0..list_b_size) |i| {
+                const n = (i * 2) + 1;
+                try values.append(n);
                 _ = try cursor.execute(void, &[_]PathPart(void){
                     .{ .hash_map_get = hash_buffer("odd") },
                     .linked_array_list_create,
                     .{ .linked_array_list_get = .append },
-                    .{ .value = .{ .uint = (i * 2) + 1 } },
+                    .{ .value = .{ .uint = n } },
                 });
             }
 
@@ -85,13 +94,26 @@ fn testConcat(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: a
             });
 
             // concat the lists
-            _ = try cursor.db.concat(even_list_slot, odd_list_slot);
+            const combo_list_slot = try cursor.db.concat(even_list_slot, odd_list_slot);
+            _ = try cursor.execute(void, &[_]PathPart(void){
+                .{ .hash_map_get = hash_buffer("combo") },
+                .{ .value = .{ .slot = combo_list_slot } },
+            });
+
+            // check all values in the new list
+            for (values.items, 0..) |val, i| {
+                const n = try cursor.readInt(void, &[_]PathPart(void){
+                    .{ .hash_map_get = hash_buffer("combo") },
+                    .{ .linked_array_list_get = .{ .index = .{ .index = i, .reverse = false } } },
+                });
+                try expectEqual(val, n);
+            }
         }
     };
     _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
         .{ .array_list_get = .append_copy },
         .hash_map_create,
-        .{ .ctx = Ctx{} },
+        .{ .ctx = .{ .allocator = allocator } },
     });
 }
 
@@ -775,7 +797,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
     }
 
     // concat linked_array_list
-    try testConcat(allocator, kind, opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT + 1);
+    try testConcat(allocator, kind, opts, xitdb.SLOT_COUNT * 5 + 1, xitdb.SLOT_COUNT + 1);
     try testConcat(allocator, kind, opts, xitdb.SLOT_COUNT, xitdb.SLOT_COUNT);
     try testConcat(allocator, kind, opts, 1, 1);
     try testConcat(allocator, kind, opts, 0, 0);
