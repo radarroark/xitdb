@@ -977,14 +977,14 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             }
 
             // stitch the blocks together
-            var ptrs = [_]?u64{null} ** 2;
+            var next_slots = [_]?LinkedArrayListSlot{null} ** 2;
             for (0..@max(blocks_a.items.len, blocks_b.items.len)) |i| {
                 const block_infos: [2]?LinkedArrayListBlockInfo = .{
                     if (i < blocks_a.items.len) blocks_a.items[blocks_a.items.len - 1 - i] else null,
                     if (i < blocks_b.items.len) blocks_b.items[blocks_b.items.len - 1 - i] else null,
                 };
                 var next_blocks: [2]?[SLOT_COUNT]LinkedArrayListSlot = .{ null, null };
-                const non_leaf = ptrs[0] != null;
+                const is_leaf_node = next_slots[0] == null;
 
                 for (block_infos, &next_blocks) |block_info_maybe, *next_block_maybe| {
                     if (block_info_maybe) |block_info| {
@@ -992,7 +992,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         var target_i: usize = 0;
                         for (block_info.block, 0..) |slot, source_i| {
                             // skip i'th block if necessary
-                            if (non_leaf and block_info.i == source_i) {
+                            if (!is_leaf_node and block_info.i == source_i) {
                                 continue;
                             }
                             // break on first empty slot
@@ -1012,12 +1012,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                 }
 
-                var slots_to_write = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** (SLOT_COUNT * 3);
+                var slots_to_write = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** (SLOT_COUNT * 2);
                 var slot_i: usize = 0;
 
                 // add the left block
-                if (next_blocks[0]) |left_block| {
-                    for (left_block) |slot| {
+                if (next_blocks[0]) |block| {
+                    for (block) |slot| {
                         if (slot.slot.tag == 0) {
                             break;
                         }
@@ -1027,16 +1027,16 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
 
                 // add the center block
-                for (ptrs) |ptr_maybe| {
-                    if (ptr_maybe) |ptr| {
-                        slots_to_write[slot_i] = LinkedArrayListSlot{ .slot = Slot.init(ptr, .index), .size = 0 };
+                for (next_slots) |slot_maybe| {
+                    if (slot_maybe) |slot| {
+                        slots_to_write[slot_i] = slot;
                         slot_i += 1;
                     }
                 }
 
                 // add the right block
-                if (next_blocks[1]) |left_block| {
-                    for (left_block) |slot| {
+                if (next_blocks[1]) |block| {
+                    for (block) |slot| {
                         if (slot.slot.tag == 0) {
                             break;
                         }
@@ -1045,12 +1045,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                 }
 
-                // clear the ptrs
-                ptrs = .{ null, null };
+                // clear the next slots
+                next_slots = .{ null, null };
 
                 // write the block(s)
                 try self.core.seekFromEnd(0);
-                for (&ptrs, 0..) |*ptr, block_i| {
+                for (&next_slots, 0..) |*next_slot, block_i| {
                     const start = block_i * SLOT_COUNT;
                     const block = slots_to_write[start .. start + SLOT_COUNT];
 
@@ -1061,21 +1061,29 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     // write the block
                     const next_ptr = try self.core.getPos();
+                    var leaf_count: u64 = 0;
                     for (block) |slot| {
                         try writer.writeInt(LinkedArrayListSlotInt, @bitCast(slot), .big);
+                        if (is_leaf_node) {
+                            if (slot.slot.tag != 0) {
+                                leaf_count += 1;
+                            }
+                        } else {
+                            leaf_count += slot.size;
+                        }
                     }
 
-                    ptr.* = next_ptr;
+                    next_slot.* = LinkedArrayListSlot{ .slot = Slot.init(next_ptr, .index), .size = leaf_count };
                 }
             }
 
             const root_ptr = blk: {
-                if (ptrs[0]) |first_ptr| {
-                    // if there is more than one pointer, make a root node
-                    if (ptrs[1]) |second_ptr| {
+                if (next_slots[0]) |first_slot| {
+                    // if there is more than one slot, make a root node
+                    if (next_slots[1]) |second_slot| {
                         var block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
-                        block[0] = LinkedArrayListSlot{ .slot = Slot.init(first_ptr, .index), .size = 0 };
-                        block[1] = LinkedArrayListSlot{ .slot = Slot.init(second_ptr, .index), .size = 0 };
+                        block[0] = first_slot;
+                        block[1] = second_slot;
 
                         // write the root node
                         const new_ptr = try self.core.getPos();
@@ -1084,9 +1092,9 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         }
                         break :blk new_ptr;
                     }
-                    // otherwise the first pointer is the root node
+                    // otherwise the first slot is the root node
                     else {
-                        break :blk first_ptr;
+                        break :blk first_slot.slot.value;
                     }
                 }
                 // lists were empty so just re-use existing empty block
