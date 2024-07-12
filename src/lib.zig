@@ -1790,7 +1790,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             };
         }
 
-        fn countLinkedArrayListBlockSize(block: []LinkedArrayListSlot, shift: u6, i: u4) u64 {
+        fn countLinkedArrayListLeafCount(block: []LinkedArrayListSlot, shift: u6, i: u4) u64 {
             var count: u64 = 0;
             // for leaf nodes, count all non-empty slots along with the slot being accessed
             if (shift == 0) {
@@ -1833,7 +1833,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             if (slot.slot.tag == 0) {
                 if (write_mode == .write or write_mode == .write_immutable) {
                     if (shift == 0) {
-                        const leaf_count = countLinkedArrayListBlockSize(&slot_block, shift, i);
+                        const leaf_count = countLinkedArrayListLeafCount(&slot_block, shift, i);
                         return .{ .slot_ptr = .{ .position = slot_pos, .slot = slot.slot }, .leaf_count = leaf_count };
                     } else {
                         try self.core.seekFromEnd(0);
@@ -1844,7 +1844,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         const next_slot_ptr = try self.readLinkedArrayListSlot(next_index_pos, key, shift - 1, write_mode);
 
                         slot_block[i].size = next_slot_ptr.leaf_count;
-                        const leaf_count = countLinkedArrayListBlockSize(&slot_block, shift, i);
+                        const leaf_count = countLinkedArrayListLeafCount(&slot_block, shift, i);
 
                         try self.core.seekTo(slot_pos);
                         try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{ .slot = Slot.init(next_index_pos, .index), .size = next_slot_ptr.leaf_count }), .big);
@@ -1857,7 +1857,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 const ptr = slot.slot.value;
                 const tag = try Tag.init(slot.slot);
                 if (shift == 0) {
-                    const leaf_count = countLinkedArrayListBlockSize(&slot_block, shift, i);
+                    const leaf_count = countLinkedArrayListLeafCount(&slot_block, shift, i);
                     return .{ .slot_ptr = .{ .position = slot_pos, .slot = slot.slot }, .leaf_count = leaf_count };
                 } else {
                     if (tag != .index) {
@@ -1879,7 +1879,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     const next_slot_ptr = try self.readLinkedArrayListSlot(next_ptr, key, shift - 1, write_mode);
 
                     slot_block[i].size = next_slot_ptr.leaf_count;
-                    const leaf_count = countLinkedArrayListBlockSize(&slot_block, shift, i);
+                    const leaf_count = countLinkedArrayListLeafCount(&slot_block, shift, i);
 
                     if (write_mode == .write_immutable) {
                         // make slot point to block
