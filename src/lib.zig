@@ -85,6 +85,7 @@ const LinkedArrayListBlockInfo = struct {
     block: [SLOT_COUNT]LinkedArrayListSlot,
     i: u4,
     ptr: u64,
+    leaf_count: u64,
 };
 
 pub fn PathPart(comptime Ctx: type) type {
@@ -919,6 +920,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
             if (offset + size > header.size) {
                 return error.LinkedArrayListSliceOutOfBounds;
+            } else if (size == header.size) {
+                return list;
             }
 
             // read the list's left blocks
@@ -948,7 +951,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                 const left_block = left_blocks.items[block_count - i - 1];
                 const right_block = right_blocks.items[block_count - i - 1];
-
+                const orig_block_infos = [_]LinkedArrayListBlockInfo{
+                    left_block,
+                    right_block,
+                };
                 var next_blocks: [2]?[SLOT_COUNT]LinkedArrayListSlot = .{ null, null };
 
                 if (left_block.ptr == right_block.ptr) {
@@ -1014,21 +1020,36 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                 // write the block(s)
                 try self.core.seekFromEnd(0);
-                for (&next_slots, next_blocks) |*next_slot, block_maybe| {
+                for (&next_slots, next_blocks, orig_block_infos) |*next_slot, block_maybe, orig_block_info| {
                     if (block_maybe) |block| {
-                        const next_ptr = try self.core.getPos();
-                        var leaf_count: u64 = 0;
-                        for (block) |slot| {
-                            try writer.writeInt(LinkedArrayListSlotInt, @bitCast(slot), .big);
-                            if (is_leaf_node) {
-                                if (slot.slot.tag != 0) {
-                                    leaf_count += 1;
-                                }
-                            } else {
-                                leaf_count += slot.size;
+                        // determine if the block changed compared to the original block
+                        var eql = true;
+                        for (block, orig_block_info.block) |slot, orig_slot| {
+                            if (!slot.slot.eql(orig_slot.slot)) {
+                                eql = false;
+                                break;
                             }
                         }
-                        next_slot.* = LinkedArrayListSlot{ .slot = Slot.init(next_ptr, .index), .size = leaf_count };
+                        // if there is no change, just use the original block
+                        if (eql) {
+                            next_slot.* = LinkedArrayListSlot{ .slot = Slot.init(orig_block_info.ptr, .index), .size = orig_block_info.leaf_count };
+                        }
+                        // otherwise make a new block
+                        else {
+                            const next_ptr = try self.core.getPos();
+                            var leaf_count: u64 = 0;
+                            for (block) |slot| {
+                                try writer.writeInt(LinkedArrayListSlotInt, @bitCast(slot), .big);
+                                if (is_leaf_node) {
+                                    if (slot.slot.tag != 0) {
+                                        leaf_count += 1;
+                                    }
+                                } else {
+                                    leaf_count += slot.size;
+                                }
+                            }
+                            next_slot.* = LinkedArrayListSlot{ .slot = Slot.init(next_ptr, .index), .size = leaf_count };
+                        }
                     }
                 }
 
@@ -2041,8 +2062,9 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             const key_and_index = try keyAndIndexForLinkedArrayList(&slot_block, key, shift);
             const next_key = key_and_index.key;
             const i = key_and_index.index;
+            const leaf_count = countLinkedArrayListLeafCount(&slot_block, shift, i);
 
-            try blocks.append(.{ .block = slot_block, .i = i, .ptr = index_pos });
+            try blocks.append(.{ .block = slot_block, .i = i, .ptr = index_pos, .leaf_count = leaf_count });
 
             if (shift == 0) {
                 return;

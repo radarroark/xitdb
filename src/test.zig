@@ -821,7 +821,10 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
     // slice linked_array_list
     try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5 + 1, 10, 5);
-    try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT + 1, 0, 2);
+    try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5 + 1, 0, xitdb.SLOT_COUNT * 2);
+    try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 3, xitdb.SLOT_COUNT);
+    try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 3, xitdb.SLOT_COUNT * 2);
+    try testSlice(allocator, kind, opts, 2, 0, 2);
     try testSlice(allocator, kind, opts, 2, 1, 1);
     try testSlice(allocator, kind, opts, 1, 0, 0);
 
