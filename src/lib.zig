@@ -748,7 +748,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 .stack = blk: {
                                     // find the block
                                     const position = switch (cursor.read_slot_cursor) {
-                                        .index_start => cursor.read_slot_cursor.index_start,
+                                        .db_start => cursor.read_slot_cursor.db_start,
                                         .slot_ptr => pos_blk: {
                                             const ptr = cursor.read_slot_cursor.slot_ptr.slot.value;
                                             const tag = try Tag.init(cursor.read_slot_cursor.slot_ptr.slot);
@@ -900,7 +900,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
         pub fn rootCursor(self: *Database(db_kind)) Cursor {
             return Cursor{
-                .read_slot_cursor = .{ .index_start = INDEX_START },
+                .read_slot_cursor = .{ .db_start = INDEX_START },
                 .db = self,
             };
         }
@@ -1260,13 +1260,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
         }
 
         const ReadSlotCursor = union(enum) {
-            index_start: u64,
+            db_start: u64,
             slot_ptr: SlotPointer,
         };
 
         fn readSlot(self: *Database(db_kind), comptime Ctx: type, path: []const PathPart(Ctx), allow_write: bool, cursor: ReadSlotCursor) anyerror!SlotPointer {
             const part = if (path.len > 0) path[0] else switch (cursor) {
-                .index_start => return SlotPointer{ .position = 0, .slot = .{} },
+                .db_start => return SlotPointer{ .position = 0, .slot = .{} },
                 .slot_ptr => {
                     if (!allow_write and cursor.slot_ptr.slot.tag == 0) {
                         return error.KeyNotFound;
@@ -1276,7 +1276,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             };
             const write_mode: WriteMode = if (allow_write)
                 switch (cursor) {
-                    .index_start => .write,
+                    .db_start => .write,
                     .slot_ptr => .write_immutable,
                 }
             else
@@ -1334,7 +1334,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 },
                 .array_list_get => {
                     const next_array_list_start = switch (cursor) {
-                        .index_start => cursor.index_start,
+                        .db_start => cursor.db_start,
                         .slot_ptr => blk: {
                             if (cursor.slot_ptr.slot.tag == 0) {
                                 return error.KeyNotFound;
@@ -1464,7 +1464,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 },
                 .linked_array_list_get => {
                     const next_array_list_start = switch (cursor) {
-                        .index_start => cursor.index_start,
+                        .db_start => cursor.db_start,
                         .slot_ptr => blk: {
                             if (cursor.slot_ptr.slot.tag == 0) {
                                 return error.KeyNotFound;
