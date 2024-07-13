@@ -819,26 +819,109 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try expectEqual(10, i);
     }
 
-    // slice linked_array_list
-    try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5 + 1, 10, 5);
-    try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5 + 1, 0, xitdb.SLOT_COUNT * 2);
-    try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 3, xitdb.SLOT_COUNT);
-    try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 3, xitdb.SLOT_COUNT * 2);
-    try testSlice(allocator, kind, opts, 2, 0, 2);
-    try testSlice(allocator, kind, opts, 2, 1, 1);
-    try testSlice(allocator, kind, opts, 1, 0, 0);
+    {
+        // slice linked_array_list
+        try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5 + 1, 10, 5);
+        try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5 + 1, 0, xitdb.SLOT_COUNT * 2);
+        try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 3, xitdb.SLOT_COUNT);
+        try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 3, xitdb.SLOT_COUNT * 2);
+        try testSlice(allocator, kind, opts, 2, 0, 2);
+        try testSlice(allocator, kind, opts, 2, 1, 1);
+        try testSlice(allocator, kind, opts, 1, 0, 0);
 
-    // concat linked_array_list
-    try testConcat(allocator, kind, opts, xitdb.SLOT_COUNT * 5 + 1, xitdb.SLOT_COUNT + 1);
-    try testConcat(allocator, kind, opts, xitdb.SLOT_COUNT, xitdb.SLOT_COUNT);
-    try testConcat(allocator, kind, opts, 1, 1);
-    try testConcat(allocator, kind, opts, 0, 0);
+        // concat linked_array_list
+        try testConcat(allocator, kind, opts, xitdb.SLOT_COUNT * 5 + 1, xitdb.SLOT_COUNT + 1);
+        try testConcat(allocator, kind, opts, xitdb.SLOT_COUNT, xitdb.SLOT_COUNT);
+        try testConcat(allocator, kind, opts, 1, 1);
+        try testConcat(allocator, kind, opts, 0, 0);
+    }
+
+    // concat linked_array_list multiple times
+    {
+        const init_opts = try initOpts(kind, opts);
+        var db = try Database(kind).init(allocator, init_opts);
+        defer {
+            db.deinit();
+            if (kind == .file) {
+                opts.dir.deleteFile(opts.path) catch {};
+            }
+        }
+        var root_cursor = db.rootCursor();
+
+        const Ctx = struct {
+            allocator: std.mem.Allocator,
+
+            pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
+                var values = std.ArrayList(u64).init(self.allocator);
+                defer values.deinit();
+
+                // create list
+                for (0..xitdb.SLOT_COUNT + 1) |i| {
+                    const n = i * 2;
+                    try values.append(n);
+                    _ = try cursor.execute(void, &[_]PathPart(void){
+                        .{ .hash_map_get = hash_buffer("even") },
+                        .linked_array_list_create,
+                        .{ .linked_array_list_get = .append },
+                        .{ .value = .{ .uint = n } },
+                    });
+                }
+
+                // get list slot
+                const even_list_slot = try cursor.execute(void, &[_]PathPart(void){
+                    .{ .hash_map_get = hash_buffer("even") },
+                });
+
+                // concat the list with itself multiple times.
+                // since each list has 17 items, each concat
+                // will create a gap, causing a root overflow
+                // before a normal array list would've.
+                var combo_list_slot = even_list_slot;
+                for (0..16) |_| {
+                    combo_list_slot = try cursor.db.concat(combo_list_slot, even_list_slot);
+                }
+
+                // save the new list
+                _ = try cursor.execute(void, &[_]PathPart(void){
+                    .{ .hash_map_get = hash_buffer("combo") },
+                    .{ .value = .{ .slot = combo_list_slot } },
+                });
+
+                // append to the new list
+                _ = try cursor.execute(void, &[_]PathPart(void){
+                    .{ .hash_map_get = hash_buffer("combo") },
+                    .{ .linked_array_list_get = .append },
+                    .{ .value = .{ .uint = 3 } },
+                });
+
+                // read the new value from the list
+                try expectEqual(3, try cursor.readInt(void, &[_]PathPart(void){
+                    .{ .hash_map_get = hash_buffer("combo") },
+                    .{ .linked_array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+                }));
+
+                // append more to the new list
+                for (0..500) |_| {
+                    _ = try cursor.execute(void, &[_]PathPart(void){
+                        .{ .hash_map_get = hash_buffer("combo") },
+                        .{ .linked_array_list_get = .append },
+                        .{ .value = .{ .uint = 1 } },
+                    });
+                }
+            }
+        };
+        _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
+            .{ .array_list_get = .append_copy },
+            .hash_map_create,
+            .{ .ctx = .{ .allocator = allocator } },
+        });
+    }
 }
 
 test "read and write" {
     const allocator = std.testing.allocator;
 
-    try testMain(allocator, .memory, .{ .capacity = 10000 });
+    try testMain(allocator, .memory, .{ .capacity = 50000 });
 
     try testMain(allocator, .file, .{ .dir = std.fs.cwd(), .path = "main.db" });
 
