@@ -33,6 +33,87 @@ fn initOpts(comptime kind: DatabaseKind, opts: anytype) !Database(kind).InitOpts
     }
 }
 
+fn testSlice(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: anytype, comptime original_size: usize, comptime slice_offset: u64, comptime slice_size: u64) !void {
+    const init_opts = try initOpts(kind, opts);
+    var db = try Database(kind).init(allocator, init_opts);
+    defer {
+        db.deinit();
+        if (kind == .file) {
+            opts.dir.deleteFile(opts.path) catch {};
+        }
+    }
+    var root_cursor = db.rootCursor();
+
+    const Ctx = struct {
+        allocator: std.mem.Allocator,
+
+        pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
+            var values = std.ArrayList(u64).init(self.allocator);
+            defer values.deinit();
+
+            // create list
+            for (0..original_size) |i| {
+                const n = i * 2;
+                try values.append(n);
+                _ = try cursor.execute(void, &[_]PathPart(void){
+                    .{ .hash_map_get = hash_buffer("even") },
+                    .linked_array_list_create,
+                    .{ .linked_array_list_get = .append },
+                    .{ .value = .{ .uint = n } },
+                });
+            }
+
+            // slice list
+            const even_list_slot = try cursor.execute(void, &[_]PathPart(void){
+                .{ .hash_map_get = hash_buffer("even") },
+            });
+            const even_list_slice_slot = try cursor.db.slice(even_list_slot, slice_offset, slice_size);
+
+            // save the newly-made slice
+            _ = try cursor.execute(void, &[_]PathPart(void){
+                .{ .hash_map_get = hash_buffer("even-slice") },
+                .{ .value = .{ .slot = even_list_slice_slot } },
+            });
+
+            // check all values in the new slice
+            for (values.items[slice_offset .. slice_offset + slice_size], 0..) |val, i| {
+                const n = try cursor.readInt(void, &[_]PathPart(void){
+                    .{ .hash_map_get = hash_buffer("even-slice") },
+                    .{ .linked_array_list_get = .{ .index = .{ .index = i, .reverse = false } } },
+                });
+                try expectEqual(val, n);
+            }
+
+            // there are no extra items
+            try expectEqual(null, try cursor.readInt(void, &[_]PathPart(void){
+                .{ .hash_map_get = hash_buffer("even-slice") },
+                .{ .linked_array_list_get = .{ .index = .{ .index = slice_size, .reverse = false } } },
+            }));
+
+            // append to the slice
+            _ = try cursor.execute(void, &[_]PathPart(void){
+                .{ .hash_map_get = hash_buffer("even-slice") },
+                .linked_array_list_create,
+                .{ .path = &[_]PathPart(void){
+                    .{ .linked_array_list_get = .append },
+                    .{ .value = .{ .uint = 3 } },
+                } },
+            });
+
+            // read the new value from the slice
+            try expectEqual(3, try cursor.readInt(void, &[_]PathPart(void){
+                .{ .hash_map_get = hash_buffer("even-slice") },
+                .{ .linked_array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+            }));
+        }
+    };
+    _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
+        .{ .array_list_get = .append_copy },
+        .hash_map_create,
+        .{ .ctx = .{ .allocator = allocator } },
+    });
+}
+
 fn testConcat(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: anytype, comptime list_a_size: usize, comptime list_b_size: usize) !void {
     const init_opts = try initOpts(kind, opts);
     var db = try Database(kind).init(allocator, init_opts);
@@ -108,6 +189,12 @@ fn testConcat(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: a
                 });
                 try expectEqual(val, n);
             }
+
+            // there are no extra items
+            try expectEqual(null, try cursor.readInt(void, &[_]PathPart(void){
+                .{ .hash_map_get = hash_buffer("combo") },
+                .{ .linked_array_list_get = .{ .index = .{ .index = values.items.len, .reverse = false } } },
+            }));
         }
     };
     _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
@@ -733,68 +820,10 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
     }
 
     // slice linked_array_list
-    {
-        const init_opts = try initOpts(kind, opts);
-        var db = try Database(kind).init(allocator, init_opts);
-        defer {
-            db.deinit();
-            if (kind == .file) {
-                opts.dir.deleteFile(opts.path) catch {};
-            }
-        }
-        var root_cursor = db.rootCursor();
-
-        // create list
-        for (0..xitdb.SLOT_COUNT + 1) |i| {
-            _ = try root_cursor.execute(void, &[_]PathPart(void){
-                .{ .array_list_get = .append_copy },
-                .hash_map_create,
-                .{ .hash_map_get = hash_buffer("even") },
-                .linked_array_list_create,
-                .{ .linked_array_list_get = .append },
-                .{ .value = .{ .uint = i * 2 } },
-            });
-        }
-
-        // slice list
-        const even_list_slot = try root_cursor.execute(void, &[_]PathPart(void){
-            .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .hash_map_get = hash_buffer("even") },
-        });
-        const even_list_slice_slot = try root_cursor.db.slice(even_list_slot, 0, 2);
-
-        // save the newly-made slice
-        _ = try root_cursor.execute(void, &[_]PathPart(void){
-            .{ .array_list_get = .append_copy },
-            .hash_map_create,
-            .{ .hash_map_get = hash_buffer("even-slice") },
-            .{ .value = .{ .slot = even_list_slice_slot } },
-        });
-
-        // append to the slice
-        _ = try root_cursor.execute(void, &[_]PathPart(void){
-            .{ .array_list_get = .append_copy },
-            .hash_map_create,
-            .{ .hash_map_get = hash_buffer("even-slice") },
-            .linked_array_list_create,
-            .{ .path = &[_]PathPart(void){
-                .{ .linked_array_list_get = .append },
-                .{ .value = .{ .uint = 42 } },
-            } },
-        });
-
-        // read the new value from the slice
-        try expectEqual(42, try root_cursor.readInt(void, &[_]PathPart(void){
-            .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .hash_map_get = hash_buffer("even-slice") },
-            .{ .linked_array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-        }));
-        try expectEqual(42, try root_cursor.readInt(void, &[_]PathPart(void){
-            .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .hash_map_get = hash_buffer("even-slice") },
-            .{ .linked_array_list_get = .{ .index = .{ .index = 2, .reverse = false } } },
-        }));
-    }
+    try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5 + 1, 10, 5);
+    try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT + 1, 0, 2);
+    try testSlice(allocator, kind, opts, 2, 1, 1);
+    try testSlice(allocator, kind, opts, 1, 0, 0);
 
     // concat linked_array_list
     try testConcat(allocator, kind, opts, xitdb.SLOT_COUNT * 5 + 1, xitdb.SLOT_COUNT + 1);
