@@ -954,16 +954,21 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 if (left_block.ptr == right_block.ptr) {
                     var slot_i: usize = 0;
                     var new_root_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
+                    // left slot
                     if (next_slots[0]) |slot| {
                         new_root_block[slot_i] = slot;
                     } else {
                         new_root_block[slot_i] = left_block.block[left_block.i];
                     }
                     slot_i += 1;
-                    for (left_block.block[left_block.i + 1 .. right_block.i]) |slot| {
-                        new_root_block[slot_i] = slot;
-                        slot_i += 1;
+                    // middle slots
+                    if (left_block.i != right_block.i) {
+                        for (left_block.block[left_block.i + 1 .. right_block.i]) |slot| {
+                            new_root_block[slot_i] = slot;
+                            slot_i += 1;
+                        }
                     }
+                    // right slot
                     if (next_slots[1]) |slot| {
                         new_root_block[slot_i] = slot;
                     } else {
@@ -973,12 +978,15 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 } else {
                     var slot_i: usize = 0;
                     var new_left_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
+
+                    // first slot
                     if (next_slots[0]) |slot| {
                         new_left_block[slot_i] = slot;
                     } else {
                         new_left_block[slot_i] = left_block.block[left_block.i];
                     }
                     slot_i += 1;
+                    // rest of slots
                     for (left_block.block[left_block.i + 1 ..]) |slot| {
                         new_left_block[slot_i] = slot;
                         slot_i += 1;
@@ -987,10 +995,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     slot_i = 0;
                     var new_right_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
+                    // first slots
                     for (right_block.block[0..right_block.i]) |slot| {
                         new_right_block[slot_i] = slot;
                         slot_i += 1;
                     }
+                    // last slot
                     if (next_slots[1]) |slot| {
                         new_right_block[slot_i] = slot;
                     } else {
