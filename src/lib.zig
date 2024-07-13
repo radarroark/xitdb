@@ -934,7 +934,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             var right_blocks = std.ArrayList(LinkedArrayListBlockInfo).init(self.allocator);
             defer right_blocks.deinit();
             {
-                const key = offset + size;
+                const key = if (offset + size == 0) 0 else offset + size - 1;
                 const last_key = if (header.size == 0) 0 else header.size - 1;
                 const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
                 try self.readLinkedArrayListBlocks(header.ptr, key, shift, &right_blocks);
