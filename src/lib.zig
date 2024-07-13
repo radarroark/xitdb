@@ -1976,7 +1976,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     // if the slot's leaf count is at its maximum,
                     // we have to skip to the next slot
                     if (slot_leaf_count == max_leaf_count) {
-                        if (i + 1 < SLOT_COUNT) {
+                        if (i < SLOT_COUNT - 1) {
                             next_key -= slot_leaf_count;
                             i += 1;
                         } else {
@@ -1985,14 +1985,14 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                     // if the next slot has anything in it, consider this a gap
                     // and skip to the next block
-                    else if (i + 1 < SLOT_COUNT and slot_block[i + 1].size > 0) {
+                    else if (i < SLOT_COUNT - 1 and slot_block[i + 1].size > 0) {
                         next_key -= slot_leaf_count;
                         i += 1;
                     }
                     break;
                 } else if (next_key < slot_leaf_count) {
                     break;
-                } else if (i + 1 < SLOT_COUNT) {
+                } else if (i < SLOT_COUNT - 1) {
                     next_key -= slot_leaf_count;
                     i += 1;
                 } else {
