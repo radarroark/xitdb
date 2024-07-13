@@ -838,7 +838,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 test "read and write" {
     const allocator = std.testing.allocator;
 
-    try testMain(allocator, .memory, .{ .capacity = 100000 });
+    try testMain(allocator, .memory, .{ .capacity = 10000 });
 
     try testMain(allocator, .file, .{ .dir = std.fs.cwd(), .path = "main.db" });
 

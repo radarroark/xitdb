@@ -135,6 +135,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
     return struct {
         allocator: std.mem.Allocator,
         core: Core,
+        tx_start: ?u64,
 
         pub const Core = switch (db_kind) {
             .memory => struct {
@@ -288,6 +289,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             .size = 0,
                             .position = 0,
                         },
+                        .tx_start = null,
                     };
 
                     try self.writeHeader();
@@ -298,6 +300,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     var self = Database(db_kind){
                         .allocator = allocator,
                         .core = .{ .file = opts.file },
+                        .tx_start = null,
                     };
 
                     const meta = try self.core.file.metadata();
@@ -1274,6 +1277,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     return cursor.slot_ptr;
                 },
             };
+
             const write_mode: WriteMode = if (allow_write)
                 switch (cursor) {
                     .db_start => .write,
@@ -1281,6 +1285,18 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
             else
                 .read_only;
+
+            const is_tx_start = write_mode == .write and self.tx_start == null;
+            if (is_tx_start) {
+                try self.core.seekFromEnd(0);
+                self.tx_start = try self.core.getPos();
+            }
+            defer {
+                if (is_tx_start) {
+                    self.tx_start = null;
+                }
+            }
+
             switch (part) {
                 .array_list_create => {
                     if (!allow_write) return error.WriteNotAllowed;
@@ -1309,22 +1325,28 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         if (tag != .array_list) {
                             return error.UnexpectedTag;
                         }
-                        const next_pos = cursor.slot_ptr.slot.value;
-                        // read existing block
                         const reader = self.core.reader();
-                        try self.core.seekTo(next_pos);
+                        const writer = self.core.writer();
+
+                        // read existing block
+                        var array_list_start = cursor.slot_ptr.slot.value;
+                        try self.core.seekTo(array_list_start);
                         var header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
                         try self.core.seekTo(header.ptr);
                         var array_list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                         try reader.readNoEof(&array_list_index_block);
-                        // copy it to the end
-                        const writer = self.core.writer();
-                        try self.core.seekFromEnd(0);
-                        const array_list_start = try self.core.getPos();
-                        const next_array_list_ptr = array_list_start + byteSizeOf(ArrayListHeader);
-                        header.ptr = next_array_list_ptr;
-                        try writer.writeInt(ArrayListHeaderInt, @bitCast(header), .big);
-                        try writer.writeAll(&array_list_index_block);
+
+                        // copy it to the end unless it was made in this transaction
+                        const tx_start = self.tx_start orelse return error.ExpectedTxStart;
+                        if (array_list_start < tx_start) {
+                            try self.core.seekFromEnd(0);
+                            array_list_start = try self.core.getPos();
+                            const next_array_list_ptr = array_list_start + byteSizeOf(ArrayListHeader);
+                            header.ptr = next_array_list_ptr;
+                            try writer.writeInt(ArrayListHeaderInt, @bitCast(header), .big);
+                            try writer.writeAll(&array_list_index_block);
+                        }
+
                         // make slot point to list
                         const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = Slot.init(array_list_start, .array_list) };
                         try self.core.seekTo(next_slot_ptr.position);
@@ -1439,22 +1461,28 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         if (tag != .linked_array_list) {
                             return error.UnexpectedTag;
                         }
-                        const next_pos = cursor.slot_ptr.slot.value;
-                        // read existing block
                         const reader = self.core.reader();
-                        try self.core.seekTo(next_pos);
+                        const writer = self.core.writer();
+
+                        var array_list_start = cursor.slot_ptr.slot.value;
+                        // read existing block
+                        try self.core.seekTo(array_list_start);
                         var header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
                         try self.core.seekTo(header.ptr);
                         var array_list_index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                         try reader.readNoEof(&array_list_index_block);
-                        // copy it to the end
-                        const writer = self.core.writer();
-                        try self.core.seekFromEnd(0);
-                        const array_list_start = try self.core.getPos();
-                        const next_array_list_ptr = array_list_start + byteSizeOf(ArrayListHeader);
-                        header.ptr = next_array_list_ptr;
-                        try writer.writeInt(ArrayListHeaderInt, @bitCast(header), .big);
-                        try writer.writeAll(&array_list_index_block);
+
+                        // copy it to the end unless it was made in this transaction
+                        const tx_start = self.tx_start orelse return error.ExpectedTxStart;
+                        if (array_list_start < tx_start) {
+                            try self.core.seekFromEnd(0);
+                            array_list_start = try self.core.getPos();
+                            const next_array_list_ptr = array_list_start + byteSizeOf(ArrayListHeader);
+                            header.ptr = next_array_list_ptr;
+                            try writer.writeInt(ArrayListHeaderInt, @bitCast(header), .big);
+                            try writer.writeAll(&array_list_index_block);
+                        }
+
                         // make slot point to list
                         const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = Slot.init(array_list_start, .linked_array_list) };
                         try self.core.seekTo(next_slot_ptr.position);
@@ -1532,17 +1560,24 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         if (tag != .hash_map) {
                             return error.UnexpectedTag;
                         }
-                        const next_pos = cursor.slot_ptr.slot.value;
-                        // read existing block
                         const reader = self.core.reader();
-                        try self.core.seekTo(next_pos);
+                        const writer = self.core.writer();
+
+                        var map_start = cursor.slot_ptr.slot.value;
+                        // read existing block
+                        try self.core.seekTo(map_start);
                         var map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                         try reader.readNoEof(&map_index_block);
-                        // copy it to the end
-                        const writer = self.core.writer();
-                        try self.core.seekFromEnd(0);
-                        const map_start = try self.core.getPos();
-                        try writer.writeAll(&map_index_block);
+
+                        // copy it to the end unless it was made in this transaction
+                        const tx_start = self.tx_start orelse return error.ExpectedTxStart;
+                        if (map_start < tx_start) {
+                            // copy it to the end
+                            try self.core.seekFromEnd(0);
+                            map_start = try self.core.getPos();
+                            try writer.writeAll(&map_index_block);
+                        }
+
                         // make slot point to map
                         const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = Slot.init(map_start, .hash_map) };
                         try self.core.seekTo(next_slot_ptr.position);
@@ -1691,17 +1726,20 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 .index => {
                     var next_ptr = ptr;
                     if (write_mode == .write_immutable) {
-                        // read existing block
-                        try self.core.seekTo(ptr);
-                        var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                        try reader.readNoEof(&index_block);
-                        // copy it to the end
-                        try self.core.seekFromEnd(0);
-                        next_ptr = try self.core.getPos();
-                        try writer.writeAll(&index_block);
-                        // make slot point to block
-                        try self.core.seekTo(slot_pos);
-                        try writer.writeInt(SlotInt, @bitCast(Slot.init(next_ptr, .index)), .big);
+                        const tx_start = self.tx_start orelse return error.ExpectedTxStart;
+                        if (next_ptr < tx_start) {
+                            // read existing block
+                            try self.core.seekTo(ptr);
+                            var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                            try reader.readNoEof(&index_block);
+                            // copy it to the end
+                            try self.core.seekFromEnd(0);
+                            next_ptr = try self.core.getPos();
+                            try writer.writeAll(&index_block);
+                            // make slot point to block
+                            try self.core.seekTo(slot_pos);
+                            try writer.writeInt(SlotInt, @bitCast(Slot.init(next_ptr, .index)), .big);
+                        }
                     }
                     return self.readMapSlot(next_ptr, key_hash, key_offset + 1, write_mode, return_value_slot);
                 },
@@ -1842,18 +1880,21 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                     var next_ptr = ptr;
                     if (write_mode == .write_immutable) {
-                        // read existing block
-                        try self.core.seekTo(ptr);
-                        var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                        try reader.readNoEof(&index_block);
-                        // copy it to the end
-                        const writer = self.core.writer();
-                        try self.core.seekFromEnd(0);
-                        next_ptr = try self.core.getPos();
-                        try writer.writeAll(&index_block);
-                        // make slot point to block
-                        try self.core.seekTo(slot_pos);
-                        try writer.writeInt(SlotInt, @bitCast(Slot.init(next_ptr, .index)), .big);
+                        const tx_start = self.tx_start orelse return error.ExpectedTxStart;
+                        if (next_ptr < tx_start) {
+                            // read existing block
+                            try self.core.seekTo(ptr);
+                            var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                            try reader.readNoEof(&index_block);
+                            // copy it to the end
+                            const writer = self.core.writer();
+                            try self.core.seekFromEnd(0);
+                            next_ptr = try self.core.getPos();
+                            try writer.writeAll(&index_block);
+                            // make slot point to block
+                            try self.core.seekTo(slot_pos);
+                            try writer.writeInt(SlotInt, @bitCast(Slot.init(next_ptr, .index)), .big);
+                        }
                     }
                     return self.readArrayListSlot(next_ptr, key, shift - 1, write_mode);
                 }
@@ -2020,14 +2061,17 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     var next_ptr = ptr;
                     if (write_mode == .write_immutable) {
-                        // read existing block
-                        try self.core.seekTo(ptr);
-                        var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
-                        try reader.readNoEof(&index_block);
-                        // copy it to the end
-                        try self.core.seekFromEnd(0);
-                        next_ptr = try self.core.getPos();
-                        try writer.writeAll(&index_block);
+                        const tx_start = self.tx_start orelse return error.ExpectedTxStart;
+                        if (next_ptr < tx_start) {
+                            // read existing block
+                            try self.core.seekTo(ptr);
+                            var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
+                            try reader.readNoEof(&index_block);
+                            // copy it to the end
+                            try self.core.seekFromEnd(0);
+                            next_ptr = try self.core.getPos();
+                            try writer.writeAll(&index_block);
+                        }
                     }
 
                     const next_slot_ptr = try self.readLinkedArrayListSlot(next_ptr, next_key, shift - 1, write_mode);
