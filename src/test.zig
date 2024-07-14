@@ -786,6 +786,12 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         _ = try root_cursor.execute(void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_create,
+            .{ .hash_map_get_key = foo_key },
+            .{ .write = .{ .bytes = "foo" } },
+        });
+        _ = try root_cursor.execute(void, &[_]PathPart(void){
+            .{ .array_list_get = .append_copy },
+            .hash_map_create,
             .{ .hash_map_get_value = foo_key },
             .{ .write = .{ .uint = 42 } },
         });
@@ -806,10 +812,13 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         var i: u64 = 0;
         while (try iter.next()) |*next_cursor| {
             const hash = (try next_cursor.readHash(void, &[_]PathPart(void){})).?;
+            const key_cursor = try next_cursor.keyCursor();
             const value_cursor = try next_cursor.valueCursor();
             if (hash == foo_key) {
-                const value = (try value_cursor.readInt(void, &[_]PathPart(void){})).?;
-                try expectEqual(42, value);
+                const key = (try key_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){})).?;
+                defer allocator.free(key);
+                try std.testing.expectEqualStrings("foo", key);
+                try expectEqual(42, (try value_cursor.readInt(void, &[_]PathPart(void){})).?);
             } else {
                 const value = (try value_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){})).?;
                 defer allocator.free(value);

@@ -123,6 +123,7 @@ pub fn PathPart(comptime Ctx: type) type {
             append,
         },
         hash_map_create,
+        hash_map_get_key: Hash,
         hash_map_get_value: Hash,
         hash_map_remove: Hash,
         write: union(enum) {
@@ -667,7 +668,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 };
             }
 
-            pub fn valueCursor(self: Cursor) !Cursor {
+            pub fn keyCursor(self: Cursor) !Cursor {
                 const core_reader = self.db.core.reader();
 
                 const slot_ptr = self.read_slot_cursor.slot_ptr;
@@ -680,6 +681,30 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
 
                 const slot_position = ptr + HASH_SIZE;
+                try self.db.core.seekTo(slot_position);
+                const key_slot: Slot = @bitCast(try core_reader.readInt(SlotInt, .big));
+
+                return Cursor{
+                    .read_slot_cursor = .{
+                        .slot_ptr = .{ .position = slot_position, .slot = key_slot },
+                    },
+                    .db = self.db,
+                };
+            }
+
+            pub fn valueCursor(self: Cursor) !Cursor {
+                const core_reader = self.db.core.reader();
+
+                const slot_ptr = self.read_slot_cursor.slot_ptr;
+                const slot = slot_ptr.slot;
+                const ptr = slot.value;
+                const tag = try Tag.init(slot);
+
+                if (tag != .hash) {
+                    return error.UnexpectedTag;
+                }
+
+                const slot_position = ptr + HASH_SIZE + byteSizeOf(Slot);
                 try self.db.core.seekTo(slot_position);
                 const value_slot: Slot = @bitCast(try core_reader.readInt(SlotInt, .big));
 
@@ -1583,6 +1608,21 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                     }
                 },
+                .hash_map_get_key => {
+                    if (cursor != .slot_ptr) return error.NotImplemented;
+
+                    if (cursor.slot_ptr.slot.tag == 0) {
+                        return error.KeyNotFound;
+                    }
+                    const tag = try Tag.init(cursor.slot_ptr.slot);
+                    if (tag != .hash_map) {
+                        return error.UnexpectedTag;
+                    }
+                    const next_map_start = cursor.slot_ptr.slot.value;
+
+                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_get_key, 0, write_mode, .key);
+                    return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
+                },
                 .hash_map_get_value => {
                     if (cursor != .slot_ptr) return error.NotImplemented;
 
@@ -1595,7 +1635,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                     const next_map_start = cursor.slot_ptr.slot.value;
 
-                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_get_value, 0, write_mode, true);
+                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_get_value, 0, write_mode, .value);
                     return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                 },
                 .hash_map_remove => {
@@ -1614,7 +1654,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                     const next_map_start = cursor.slot_ptr.slot.value;
 
-                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_remove, 0, .read_only, false);
+                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_remove, 0, .read_only, .parent);
 
                     const writer = self.core.writer();
                     try self.core.seekTo(next_slot_ptr.position);
@@ -1686,7 +1726,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
         // hash_map
 
-        fn readMapSlot(self: *Database(db_kind), index_pos: u64, key_hash: Hash, key_offset: u8, write_mode: WriteMode, return_value_slot: bool) !SlotPointer {
+        const HashMapReturn = enum {
+            parent,
+            key,
+            value,
+        };
+
+        fn readMapSlot(self: *Database(db_kind), index_pos: u64, key_hash: Hash, key_offset: u8, write_mode: WriteMode, hash_map_return: HashMapReturn) !SlotPointer {
             if (key_offset >= (HASH_SIZE * 8) / BIT_COUNT) {
                 return error.KeyOffsetExceeded;
             }
@@ -1705,13 +1751,20 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     // write hash
                     const hash_pos = try self.core.getPos();
                     try writer.writeAll(std.mem.asBytes(&key_hash)[0..HASH_SIZE]);
+                    // write empty key slot
+                    const key_slot_pos = try self.core.getPos();
+                    try writer.writeInt(SlotInt, 0, .big);
                     // write empty value slot
                     const value_slot_pos = try self.core.getPos();
                     try writer.writeInt(SlotInt, 0, .big);
                     // point slot to hash pos
                     try self.core.seekTo(slot_pos);
                     try writer.writeInt(SlotInt, @bitCast(Slot.init(hash_pos, .hash)), .big);
-                    return SlotPointer{ .position = value_slot_pos, .slot = slot };
+                    switch (hash_map_return) {
+                        .parent => return SlotPointer{ .position = slot_pos, .slot = slot },
+                        .key => return SlotPointer{ .position = key_slot_pos, .slot = @bitCast(@as(SlotInt, 0)) },
+                        .value => return SlotPointer{ .position = value_slot_pos, .slot = @bitCast(@as(SlotInt, 0)) },
+                    }
                 } else {
                     return error.KeyNotFound;
                 }
@@ -1739,7 +1792,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             try writer.writeInt(SlotInt, @bitCast(Slot.init(next_ptr, .index)), .big);
                         }
                     }
-                    return self.readMapSlot(next_ptr, key_hash, key_offset + 1, write_mode, return_value_slot);
+                    return self.readMapSlot(next_ptr, key_hash, key_offset + 1, write_mode, hash_map_return);
                 },
                 .hash => {
                     try self.core.seekTo(ptr);
@@ -1752,31 +1805,36 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         if (write_mode == .write_immutable) {
                             const tx_start = self.tx_start orelse return error.ExpectedTxStart;
                             if (ptr < tx_start) {
+                                const key_slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
                                 const value_slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
                                 try self.core.seekFromEnd(0);
                                 // write hash
                                 const hash_pos = try self.core.getPos();
                                 try writer.writeAll(std.mem.asBytes(&key_hash)[0..HASH_SIZE]);
+                                // write key slot
+                                const next_key_slot_pos = try self.core.getPos();
+                                try writer.writeInt(SlotInt, @bitCast(key_slot), .big);
                                 // write value slot
                                 const next_value_slot_pos = try self.core.getPos();
                                 try writer.writeInt(SlotInt, @bitCast(value_slot), .big);
                                 // point slot to hash pos
                                 try self.core.seekTo(slot_pos);
                                 try writer.writeInt(SlotInt, @bitCast(Slot.init(hash_pos, .hash)), .big);
-                                if (return_value_slot) {
-                                    return SlotPointer{ .position = next_value_slot_pos, .slot = value_slot };
-                                } else {
-                                    return SlotPointer{ .position = slot_pos, .slot = slot };
+                                switch (hash_map_return) {
+                                    .parent => return SlotPointer{ .position = slot_pos, .slot = slot },
+                                    .key => return SlotPointer{ .position = next_key_slot_pos, .slot = key_slot },
+                                    .value => return SlotPointer{ .position = next_value_slot_pos, .slot = value_slot },
                                 }
                             }
                         }
-
-                        if (return_value_slot) {
-                            const value_slot_pos = try self.core.getPos();
-                            const value_slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
-                            return SlotPointer{ .position = value_slot_pos, .slot = value_slot };
-                        } else {
-                            return SlotPointer{ .position = slot_pos, .slot = slot };
+                        const key_slot_pos = try self.core.getPos();
+                        const key_slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+                        const value_slot_pos = try self.core.getPos();
+                        const value_slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+                        switch (hash_map_return) {
+                            .parent => return SlotPointer{ .position = slot_pos, .slot = slot },
+                            .key => return SlotPointer{ .position = key_slot_pos, .slot = key_slot },
+                            .value => return SlotPointer{ .position = value_slot_pos, .slot = value_slot },
                         }
                     } else {
                         if (write_mode == .write or write_mode == .write_immutable) {
@@ -1791,7 +1849,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             try writer.writeAll(&index_block);
                             try self.core.seekTo(next_index_pos + (byteSizeOf(Slot) * next_i));
                             try writer.writeInt(SlotInt, @bitCast(slot), .big);
-                            const next_slot_ptr = try self.readMapSlot(next_index_pos, key_hash, key_offset + 1, write_mode, return_value_slot);
+                            const next_slot_ptr = try self.readMapSlot(next_index_pos, key_hash, key_offset + 1, write_mode, hash_map_return);
                             try self.core.seekTo(slot_pos);
                             try writer.writeInt(SlotInt, @bitCast(Slot.init(next_index_pos, .index)), .big);
                             return next_slot_ptr;
