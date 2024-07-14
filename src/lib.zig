@@ -124,7 +124,7 @@ pub fn PathPart(comptime Ctx: type) type {
             append,
         },
         hash_map_create,
-        hash_map_get: Hash,
+        hash_map_get_value: Hash,
         hash_map_remove: Hash,
         write: union(enum) {
             slot: Slot,
@@ -1584,7 +1584,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                     }
                 },
-                .hash_map_get => {
+                .hash_map_get_value => {
                     if (cursor != .slot_ptr) return error.NotImplemented;
 
                     if (cursor.slot_ptr.slot.tag == 0) {
@@ -1596,7 +1596,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                     const next_map_start = cursor.slot_ptr.slot.value;
 
-                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_get, 0, write_mode, true);
+                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_get_value, 0, write_mode, true);
                     return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                 },
                 .hash_map_remove => {
