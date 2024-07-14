@@ -126,7 +126,7 @@ pub fn PathPart(comptime Ctx: type) type {
         hash_map_create,
         hash_map_get: Hash,
         hash_map_remove: Hash,
-        value: union(enum) {
+        write: union(enum) {
             slot: Slot,
             uint: u64,
             bytes: []const u8,
@@ -1639,7 +1639,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     return next_slot_ptr;
                 },
-                .value => {
+                .write => {
                     if (!allow_write) return error.WriteNotAllowed;
 
                     if (path.len > 1) return error.ValueMustBeAtEnd;
@@ -1648,12 +1648,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     const core_writer = self.core.writer();
 
-                    const slot: Slot = switch (part.value) {
+                    const slot: Slot = switch (part.write) {
                         .slot => blk: {
-                            _ = try Tag.init(part.value.slot); // make sure tag is valid
-                            break :blk part.value.slot;
+                            _ = try Tag.init(part.write.slot); // make sure tag is valid
+                            break :blk part.write.slot;
                         },
-                        .uint => Slot.init(part.value.uint, .uint),
+                        .uint => Slot.init(part.write.uint, .uint),
                         .bytes => blk: {
                             var next_cursor = Cursor{
                                 .read_slot_cursor = ReadSlotCursor{
@@ -1662,7 +1662,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 .db = self,
                             };
                             var writer = try next_cursor.writer(void, &[_]PathPart(void){});
-                            try writer.writeAll(part.value.bytes);
+                            try writer.writeAll(part.write.bytes);
                             try writer.finish();
                             break :blk writer.slot;
                         },
