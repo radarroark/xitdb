@@ -1750,26 +1750,33 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     };
                     if (existing_key_hash == key_hash) {
                         if (write_mode == .write_immutable) {
-                            const value_slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
-                            try self.core.seekFromEnd(0);
-                            // write hash
-                            const hash_pos = try self.core.getPos();
-                            try writer.writeAll(std.mem.asBytes(&key_hash)[0..HASH_SIZE]);
-                            // write value slot
-                            const next_value_slot_pos = try self.core.getPos();
-                            try writer.writeInt(SlotInt, @bitCast(value_slot), .big);
-                            // point slot to hash pos
-                            try self.core.seekTo(slot_pos);
-                            try writer.writeInt(SlotInt, @bitCast(Slot.init(hash_pos, .hash)), .big);
-                            return SlotPointer{ .position = next_value_slot_pos, .slot = value_slot };
-                        } else {
-                            if (return_value_slot) {
-                                const value_slot_pos = try self.core.getPos();
+                            const tx_start = self.tx_start orelse return error.ExpectedTxStart;
+                            if (ptr < tx_start) {
                                 const value_slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
-                                return SlotPointer{ .position = value_slot_pos, .slot = value_slot };
-                            } else {
-                                return SlotPointer{ .position = slot_pos, .slot = slot };
+                                try self.core.seekFromEnd(0);
+                                // write hash
+                                const hash_pos = try self.core.getPos();
+                                try writer.writeAll(std.mem.asBytes(&key_hash)[0..HASH_SIZE]);
+                                // write value slot
+                                const next_value_slot_pos = try self.core.getPos();
+                                try writer.writeInt(SlotInt, @bitCast(value_slot), .big);
+                                // point slot to hash pos
+                                try self.core.seekTo(slot_pos);
+                                try writer.writeInt(SlotInt, @bitCast(Slot.init(hash_pos, .hash)), .big);
+                                if (return_value_slot) {
+                                    return SlotPointer{ .position = next_value_slot_pos, .slot = value_slot };
+                                } else {
+                                    return SlotPointer{ .position = slot_pos, .slot = slot };
+                                }
                             }
+                        }
+
+                        if (return_value_slot) {
+                            const value_slot_pos = try self.core.getPos();
+                            const value_slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+                            return SlotPointer{ .position = value_slot_pos, .slot = value_slot };
+                        } else {
+                            return SlotPointer{ .position = slot_pos, .slot = slot };
                         }
                     } else {
                         if (write_mode == .write or write_mode == .write_immutable) {
