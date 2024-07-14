@@ -1974,25 +1974,20 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             const key = header.size;
             var next_shift = header.shift;
 
-            // check if root node is full
-            var root_is_full = true;
-            {
+            const root_is_full = blk: {
                 try self.core.seekTo(index_pos);
                 var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                 try reader.readNoEof(&index_block);
 
+                var slot_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
                 var stream = std.io.fixedBufferStream(&index_block);
                 var block_reader = stream.reader();
-                for (0..SLOT_COUNT) |_| {
-                    const slot: LinkedArrayListSlot = @bitCast(try block_reader.readInt(LinkedArrayListSlotInt, .big));
-                    const max_leaf_count = if (next_shift == 0) 1 else next_shift * SLOT_COUNT;
-                    const slot_leaf_count: u64 = if (next_shift == 0) (if (slot.slot.tag == 0) 0 else 1) else slot.size;
-                    if (slot_leaf_count < max_leaf_count and slot.slot.flag == 0) {
-                        root_is_full = false;
-                        break;
-                    }
+                for (&slot_block) |*block_slot| {
+                    block_slot.* = @bitCast(try block_reader.readInt(LinkedArrayListSlotInt, .big));
                 }
-            }
+
+                break :blk null == keyAndIndexForLinkedArrayList(&slot_block, key, next_shift);
+            };
 
             if (root_is_full) {
                 // root overflow
@@ -2040,7 +2035,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             return count;
         }
 
-        fn keyAndIndexForLinkedArrayList(slot_block: []LinkedArrayListSlot, key: u64, shift: u6) !struct { key: u64, index: u4 } {
+        fn keyAndIndexForLinkedArrayList(slot_block: []LinkedArrayListSlot, key: u64, shift: u6) ?struct { key: u64, index: u4 } {
             var next_key = key;
             var i: u4 = 0;
             const max_leaf_count = if (shift == 0) 1 else shift * SLOT_COUNT;
@@ -2054,7 +2049,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             next_key -= slot_leaf_count;
                             i += 1;
                         } else {
-                            return error.SkipLeafCountError;
+                            return null;
                         }
                     }
                     break;
@@ -2064,7 +2059,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     next_key -= slot_leaf_count;
                     i += 1;
                 } else {
-                    return error.SkipLeafCountError;
+                    return null;
                 }
             }
             return .{ .key = next_key, .index = i };
@@ -2087,7 +2082,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
             }
 
-            const key_and_index = try keyAndIndexForLinkedArrayList(&slot_block, key, shift);
+            const key_and_index = keyAndIndexForLinkedArrayList(&slot_block, key, shift) orelse return error.NoAvailableSlots;
             const next_key = key_and_index.key;
             const i = key_and_index.index;
             const slot = slot_block[i];
@@ -2171,7 +2166,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 block_slot.* = @bitCast(try block_reader.readInt(LinkedArrayListSlotInt, .big));
             }
 
-            const key_and_index = try keyAndIndexForLinkedArrayList(&slot_block, key, shift);
+            const key_and_index = keyAndIndexForLinkedArrayList(&slot_block, key, shift) orelse return error.NoAvailableSlots;
             const next_key = key_and_index.key;
             const i = key_and_index.index;
             const leaf_count = countLinkedArrayListLeafCount(&slot_block, shift, i);
