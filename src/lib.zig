@@ -1974,37 +1974,24 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             const key = header.size;
             var shift = header.shift;
 
-            const root_is_full = blk: {
-                try self.core.seekTo(ptr);
-                var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
-                try reader.readNoEof(&index_block);
-
-                var slot_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
-                var stream = std.io.fixedBufferStream(&index_block);
-                var block_reader = stream.reader();
-                for (&slot_block) |*block_slot| {
-                    block_slot.* = @bitCast(try block_reader.readInt(LinkedArrayListSlotInt, .big));
-                }
-
-                break :blk null == keyAndIndexForLinkedArrayList(&slot_block, key, shift);
+            const slot_ptr = self.readLinkedArrayListSlot(ptr, key, shift, write_mode) catch |err| switch (err) {
+                error.NoAvailableSlots => blk: {
+                    // root overflow
+                    try self.core.seekFromEnd(0);
+                    const next_ptr = try self.core.getPos();
+                    var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
+                    try writer.writeAll(&index_block);
+                    try self.core.seekTo(next_ptr);
+                    try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{
+                        .slot = Slot.initWithFlag(ptr, .index),
+                        .size = header.size,
+                    }), .big);
+                    ptr = next_ptr;
+                    shift += 1;
+                    break :blk try self.readLinkedArrayListSlot(ptr, key, shift, write_mode);
+                },
+                else => return err,
             };
-
-            if (root_is_full) {
-                // root overflow
-                try self.core.seekFromEnd(0);
-                const next_ptr = try self.core.getPos();
-                var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
-                try writer.writeAll(&index_block);
-                try self.core.seekTo(next_ptr);
-                try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{
-                    .slot = Slot.initWithFlag(ptr, .index),
-                    .size = header.size,
-                }), .big);
-                ptr = next_ptr;
-                shift += 1;
-            }
-
-            const slot_ptr = try self.readLinkedArrayListSlot(ptr, key, shift, write_mode);
 
             return .{
                 .header = .{
