@@ -806,11 +806,12 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         var i: u64 = 0;
         while (try iter.next()) |*next_cursor| {
             const hash = (try next_cursor.readHash(void, &[_]PathPart(void){})).?;
+            const value_cursor = try next_cursor.valueCursor();
             if (hash == foo_key) {
-                const value = (try next_cursor.readInt(void, &[_]PathPart(void){})).?;
+                const value = (try value_cursor.readInt(void, &[_]PathPart(void){})).?;
                 try expectEqual(42, value);
             } else {
-                const value = (try next_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){})).?;
+                const value = (try value_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){})).?;
                 defer allocator.free(value);
                 try expectEqual(hash, hash_buffer(value));
             }

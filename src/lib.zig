@@ -521,21 +521,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 const ptr = slot.value;
                 const tag = try Tag.init(slot);
 
-                const position = switch (tag) {
-                    .bytes => ptr,
-                    .hash => blk: {
-                        try self.db.core.seekTo(ptr + HASH_SIZE);
-                        const value_slot: Slot = @bitCast(try core_reader.readInt(SlotInt, .big));
-                        const value_tag = try Tag.init(value_slot);
-                        if (value_tag != .bytes) {
-                            return error.UnexpectedTag;
-                        }
-                        break :blk value_slot.value;
-                    },
-                    else => return error.UnexpectedTag,
-                };
+                if (tag != .bytes) {
+                    return error.UnexpectedTag;
+                }
 
-                try self.db.core.seekTo(position);
+                try self.db.core.seekTo(ptr);
                 const size: u64 = @intCast(try core_reader.readInt(u64, .big));
                 const start_position = try self.db.core.getPos();
 
@@ -579,21 +569,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 const ptr = slot.value;
                 const tag = try Tag.init(slot);
 
-                const position = switch (tag) {
-                    .bytes => ptr,
-                    .hash => blk: {
-                        try self.db.core.seekTo(ptr + HASH_SIZE);
-                        const value_slot: Slot = @bitCast(try core_reader.readInt(SlotInt, .big));
-                        const value_tag = try Tag.init(value_slot);
-                        if (value_tag != .bytes) {
-                            return error.UnexpectedTag;
-                        }
-                        break :blk value_slot.value;
-                    },
-                    else => return error.UnexpectedTag,
-                };
+                if (tag != .bytes) {
+                    return error.UnexpectedTag;
+                }
 
-                try self.db.core.seekTo(position);
+                try self.db.core.seekTo(ptr);
                 const value_size = try core_reader.readInt(u64, .big);
 
                 if (value_size > max_size) {
@@ -620,21 +600,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 const ptr = slot.value;
                 const tag = try Tag.init(slot);
 
-                const position = switch (tag) {
-                    .bytes => ptr,
-                    .hash => blk: {
-                        try self.db.core.seekTo(ptr + HASH_SIZE);
-                        const value_slot: Slot = @bitCast(try core_reader.readInt(SlotInt, .big));
-                        const value_tag = try Tag.init(value_slot);
-                        if (value_tag != .bytes) {
-                            return error.UnexpectedTag;
-                        }
-                        break :blk value_slot.value;
-                    },
-                    else => return error.UnexpectedTag,
-                };
+                if (tag != .bytes) {
+                    return error.UnexpectedTag;
+                }
 
-                try self.db.core.seekTo(position);
+                try self.db.core.seekTo(ptr);
                 const value_size = try core_reader.readInt(u64, .big);
                 const size = @min(buffer.len, value_size);
 
@@ -676,21 +646,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 const ptr = slot.value;
                 const tag = try Tag.init(slot);
 
-                const value = switch (tag) {
-                    .uint => ptr,
-                    .hash => blk: {
-                        const core_reader = self.db.core.reader();
-                        try self.db.core.seekTo(ptr + HASH_SIZE);
-                        const value_slot: Slot = @bitCast(try core_reader.readInt(SlotInt, .big));
-                        const value_tag = try Tag.init(value_slot);
-                        if (value_tag != .uint) {
-                            return error.UnexpectedTag;
-                        }
-                        break :blk value_slot.value;
-                    },
-                    else => return error.UnexpectedTag,
-                };
-                return value;
+                if (tag != .uint) {
+                    return error.UnexpectedTag;
+                }
+
+                return ptr;
             }
 
             pub fn readCursor(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?Cursor {
@@ -703,6 +663,30 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 return Cursor{
                     .read_slot_cursor = ReadSlotCursor{
                         .slot_ptr = slot_ptr,
+                    },
+                    .db = self.db,
+                };
+            }
+
+            pub fn valueCursor(self: Cursor) !Cursor {
+                const core_reader = self.db.core.reader();
+
+                const slot_ptr = self.read_slot_cursor.slot_ptr;
+                const slot = slot_ptr.slot;
+                const ptr = slot.value;
+                const tag = try Tag.init(slot);
+
+                if (tag != .hash) {
+                    return error.UnexpectedTag;
+                }
+
+                const slot_position = ptr + HASH_SIZE;
+                try self.db.core.seekTo(slot_position);
+                const value_slot: Slot = @bitCast(try core_reader.readInt(SlotInt, .big));
+
+                return Cursor{
+                    .read_slot_cursor = .{
+                        .slot_ptr = .{ .position = slot_position, .slot = value_slot },
                     },
                     .db = self.db,
                 };
