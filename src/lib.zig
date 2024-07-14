@@ -630,9 +630,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
 
                 try self.db.core.seekTo(ptr);
-                var hash = [_]u8{0} ** byteSizeOf(Hash);
-                try core_reader.readNoEof(&hash);
-                return std.mem.bytesToValue(Hash, &hash);
+                return try core_reader.readInt(Hash, .big);
             }
 
             pub fn readInt(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?u64 {
@@ -1750,7 +1748,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     try self.core.seekFromEnd(0);
                     // write hash
                     const hash_pos = try self.core.getPos();
-                    try writer.writeAll(std.mem.asBytes(&key_hash)[0..HASH_SIZE]);
+                    try writer.writeInt(Hash, key_hash, .big);
                     // write empty key slot
                     const key_slot_pos = try self.core.getPos();
                     try writer.writeInt(SlotInt, 0, .big);
@@ -1796,11 +1794,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 },
                 .hash => {
                     try self.core.seekTo(ptr);
-                    const existing_key_hash = blk: {
-                        var hash = [_]u8{0} ** byteSizeOf(Hash);
-                        try reader.readNoEof(&hash);
-                        break :blk std.mem.bytesToValue(Hash, &hash);
-                    };
+                    const existing_key_hash = try reader.readInt(Hash, .big);
                     if (existing_key_hash == key_hash) {
                         if (write_mode == .write_immutable) {
                             const tx_start = self.tx_start orelse return error.ExpectedTxStart;
@@ -1810,7 +1804,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 try self.core.seekFromEnd(0);
                                 // write hash
                                 const hash_pos = try self.core.getPos();
-                                try writer.writeAll(std.mem.asBytes(&key_hash)[0..HASH_SIZE]);
+                                try writer.writeInt(Hash, key_hash, .big);
                                 // write key slot
                                 const next_key_slot_pos = try self.core.getPos();
                                 try writer.writeInt(SlotInt, @bitCast(key_slot), .big);
