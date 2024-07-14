@@ -1970,12 +1970,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
             try self.core.seekTo(index_start);
             const header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
-            var index_pos = header.ptr;
+            var ptr = header.ptr;
             const key = header.size;
-            var next_shift = header.shift;
+            var shift = header.shift;
 
             const root_is_full = blk: {
-                try self.core.seekTo(index_pos);
+                try self.core.seekTo(ptr);
                 var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                 try reader.readNoEof(&index_block);
 
@@ -1986,30 +1986,30 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     block_slot.* = @bitCast(try block_reader.readInt(LinkedArrayListSlotInt, .big));
                 }
 
-                break :blk null == keyAndIndexForLinkedArrayList(&slot_block, key, next_shift);
+                break :blk null == keyAndIndexForLinkedArrayList(&slot_block, key, shift);
             };
 
             if (root_is_full) {
                 // root overflow
                 try self.core.seekFromEnd(0);
-                const next_index_pos = try self.core.getPos();
+                const next_ptr = try self.core.getPos();
                 var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                 try writer.writeAll(&index_block);
-                try self.core.seekTo(next_index_pos);
+                try self.core.seekTo(next_ptr);
                 try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{
-                    .slot = Slot.initWithFlag(index_pos, .index),
+                    .slot = Slot.initWithFlag(ptr, .index),
                     .size = header.size,
                 }), .big);
-                index_pos = next_index_pos;
-                next_shift += 1;
+                ptr = next_ptr;
+                shift += 1;
             }
 
-            const slot_ptr = try self.readLinkedArrayListSlot(index_pos, key, next_shift, write_mode);
+            const slot_ptr = try self.readLinkedArrayListSlot(ptr, key, shift, write_mode);
 
             return .{
                 .header = .{
-                    .shift = next_shift,
-                    .ptr = index_pos,
+                    .shift = shift,
+                    .ptr = ptr,
                     .size = header.size + 1,
                 },
                 .slot_ptr = slot_ptr,
