@@ -11,10 +11,10 @@ fn expectEqual(expected: anytype, actual: anytype) !void {
 }
 
 fn hash_buffer(buffer: []const u8) xitdb.Hash {
-    var hash = [_]u8{0} ** xitdb.HASH_INT_SIZE;
+    var hash = [_]u8{0} ** (@bitSizeOf(xitdb.Hash) / 8);
     var h = std.crypto.hash.Sha1.init(.{});
     h.update(buffer);
-    h.final(hash[0..xitdb.HASH_SIZE]);
+    h.final(&hash);
     return std.mem.bytesToValue(xitdb.Hash, &hash);
 }
 

@@ -11,9 +11,8 @@ const std = @import("std");
 pub const HASH_SIZE = std.crypto.hash.Sha1.digest_length;
 pub const Hash = u160;
 comptime {
-    std.debug.assert(@bitSizeOf(Hash) == HASH_SIZE * 8);
+    std.debug.assert(byteSizeOf(Hash) == HASH_SIZE);
 }
-pub const HASH_INT_SIZE = @sizeOf(Hash);
 
 fn byteSizeOf(T: type) u64 {
     return @bitSizeOf(T) / 8;
@@ -630,8 +629,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
 
                 try self.db.core.seekTo(ptr);
-                var hash = [_]u8{0} ** HASH_INT_SIZE;
-                try core_reader.readNoEof(hash[0..HASH_SIZE]);
+                var hash = [_]u8{0} ** byteSizeOf(Hash);
+                try core_reader.readNoEof(&hash);
                 return std.mem.bytesToValue(Hash, &hash);
             }
 
@@ -1745,8 +1744,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 .hash => {
                     try self.core.seekTo(ptr);
                     const existing_key_hash = blk: {
-                        var hash = [_]u8{0} ** HASH_INT_SIZE;
-                        try reader.readNoEof(hash[0..HASH_SIZE]);
+                        var hash = [_]u8{0} ** byteSizeOf(Hash);
+                        try reader.readNoEof(&hash);
                         break :blk std.mem.bytesToValue(Hash, &hash);
                     };
                     if (existing_key_hash == key_hash) {
