@@ -81,6 +81,13 @@ const LinkedArrayListHeader = packed struct {
     size: u64,
 };
 
+const HashMapKeyValueInt = u304;
+const HashMapKeyValue = packed struct {
+    value_slot: Slot,
+    key_slot: Slot,
+    hash: Hash,
+};
+
 const LinkedArrayListSlotInt = u136;
 pub const LinkedArrayListSlot = packed struct {
     size: u64,
@@ -1746,23 +1753,27 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             if (slot.tag == 0) {
                 if (write_mode == .write or write_mode == .write_immutable) {
                     try self.core.seekFromEnd(0);
-                    // write hash
+
+                    // write hash and key/val slots
                     const hash_pos = try self.core.getPos();
-                    try writer.writeInt(Hash, key_hash, .big);
-                    // write empty key slot
-                    const key_slot_pos = try self.core.getPos();
-                    try writer.writeInt(SlotInt, 0, .big);
-                    // write empty value slot
-                    const value_slot_pos = try self.core.getPos();
-                    try writer.writeInt(SlotInt, 0, .big);
+                    const key_slot_pos = hash_pos + byteSizeOf(Hash);
+                    const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
+                    const hash_map_kv = HashMapKeyValue{
+                        .value_slot = @bitCast(@as(SlotInt, 0)),
+                        .key_slot = @bitCast(@as(SlotInt, 0)),
+                        .hash = key_hash,
+                    };
+                    try writer.writeInt(HashMapKeyValueInt, @bitCast(hash_map_kv), .big);
+
                     // point slot to hash pos
                     try self.core.seekTo(slot_pos);
                     try writer.writeInt(SlotInt, @bitCast(Slot.init(hash_pos, .hash)), .big);
-                    switch (hash_map_return) {
-                        .parent => return SlotPointer{ .position = slot_pos, .slot = slot },
-                        .key => return SlotPointer{ .position = key_slot_pos, .slot = @bitCast(@as(SlotInt, 0)) },
-                        .value => return SlotPointer{ .position = value_slot_pos, .slot = @bitCast(@as(SlotInt, 0)) },
-                    }
+
+                    return switch (hash_map_return) {
+                        .parent => SlotPointer{ .position = slot_pos, .slot = slot },
+                        .key => SlotPointer{ .position = key_slot_pos, .slot = hash_map_kv.key_slot },
+                        .value => SlotPointer{ .position = value_slot_pos, .slot = hash_map_kv.value_slot },
+                    };
                 } else {
                     return error.KeyNotFound;
                 }
@@ -1794,49 +1805,46 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 },
                 .hash => {
                     try self.core.seekTo(ptr);
-                    const existing_key_hash = try reader.readInt(Hash, .big);
-                    if (existing_key_hash == key_hash) {
+                    const hash_map_kv: HashMapKeyValue = @bitCast(try reader.readInt(HashMapKeyValueInt, .big));
+
+                    if (hash_map_kv.hash == key_hash) {
                         if (write_mode == .write_immutable) {
                             const tx_start = self.tx_start orelse return error.ExpectedTxStart;
                             if (ptr < tx_start) {
-                                const key_slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
-                                const value_slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
                                 try self.core.seekFromEnd(0);
-                                // write hash
+
+                                // write hash and key/val slots
                                 const hash_pos = try self.core.getPos();
-                                try writer.writeInt(Hash, key_hash, .big);
-                                // write key slot
-                                const next_key_slot_pos = try self.core.getPos();
-                                try writer.writeInt(SlotInt, @bitCast(key_slot), .big);
-                                // write value slot
-                                const next_value_slot_pos = try self.core.getPos();
-                                try writer.writeInt(SlotInt, @bitCast(value_slot), .big);
+                                const key_slot_pos = hash_pos + byteSizeOf(Hash);
+                                const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
+                                try writer.writeInt(HashMapKeyValueInt, @bitCast(hash_map_kv), .big);
+
                                 // point slot to hash pos
                                 try self.core.seekTo(slot_pos);
                                 try writer.writeInt(SlotInt, @bitCast(Slot.init(hash_pos, .hash)), .big);
-                                switch (hash_map_return) {
-                                    .parent => return SlotPointer{ .position = slot_pos, .slot = slot },
-                                    .key => return SlotPointer{ .position = next_key_slot_pos, .slot = key_slot },
-                                    .value => return SlotPointer{ .position = next_value_slot_pos, .slot = value_slot },
-                                }
+
+                                return switch (hash_map_return) {
+                                    .parent => SlotPointer{ .position = slot_pos, .slot = slot },
+                                    .key => SlotPointer{ .position = key_slot_pos, .slot = hash_map_kv.key_slot },
+                                    .value => SlotPointer{ .position = value_slot_pos, .slot = hash_map_kv.value_slot },
+                                };
                             }
                         }
-                        const key_slot_pos = try self.core.getPos();
-                        const key_slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
-                        const value_slot_pos = try self.core.getPos();
-                        const value_slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
-                        switch (hash_map_return) {
-                            .parent => return SlotPointer{ .position = slot_pos, .slot = slot },
-                            .key => return SlotPointer{ .position = key_slot_pos, .slot = key_slot },
-                            .value => return SlotPointer{ .position = value_slot_pos, .slot = value_slot },
-                        }
+
+                        const key_slot_pos = ptr + byteSizeOf(Hash);
+                        const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
+                        return switch (hash_map_return) {
+                            .parent => SlotPointer{ .position = slot_pos, .slot = slot },
+                            .key => SlotPointer{ .position = key_slot_pos, .slot = hash_map_kv.key_slot },
+                            .value => SlotPointer{ .position = value_slot_pos, .slot = hash_map_kv.value_slot },
+                        };
                     } else {
                         if (write_mode == .write or write_mode == .write_immutable) {
                             // append new index block
                             if (key_offset + 1 >= (HASH_SIZE * 8) / BIT_COUNT) {
                                 return error.KeyOffsetExceeded;
                             }
-                            const next_i: u4 = @intCast((existing_key_hash >> (key_offset + 1) * BIT_COUNT) & MASK);
+                            const next_i: u4 = @intCast((hash_map_kv.hash >> (key_offset + 1) * BIT_COUNT) & MASK);
                             try self.core.seekFromEnd(0);
                             const next_index_pos = try self.core.getPos();
                             var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
