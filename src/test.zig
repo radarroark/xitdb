@@ -90,6 +90,26 @@ fn testSlice(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: an
                 .{ .linked_array_list_get = .{ .index = .{ .index = slice_size, .reverse = false } } },
             }));
 
+            // concat the slice with itself
+            const combo_list_slot = try cursor.db.concat(even_list_slice_slot, even_list_slice_slot);
+            _ = try cursor.execute(void, &[_]PathPart(void){
+                .{ .hash_map_get_value = hash_buffer("combo") },
+                .{ .write = .{ .slot = combo_list_slot } },
+            });
+
+            // check all values in the combo list
+            var combo_values = std.ArrayList(u64).init(self.allocator);
+            defer combo_values.deinit();
+            try combo_values.appendSlice(values.items[slice_offset .. slice_offset + slice_size]);
+            try combo_values.appendSlice(values.items[slice_offset .. slice_offset + slice_size]);
+            for (combo_values.items, 0..) |val, i| {
+                const n = try cursor.readInt(void, &[_]PathPart(void){
+                    .{ .hash_map_get_value = hash_buffer("combo") },
+                    .{ .linked_array_list_get = .{ .index = .{ .index = i, .reverse = false } } },
+                });
+                try expectEqual(val, n);
+            }
+
             // append to the slice
             _ = try cursor.execute(void, &[_]PathPart(void){
                 .{ .hash_map_get_value = hash_buffer("even-slice") },
@@ -835,6 +855,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5 + 1, 0, xitdb.SLOT_COUNT * 2);
         try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 3, xitdb.SLOT_COUNT);
         try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 3, xitdb.SLOT_COUNT * 2);
+        try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 2, 10, xitdb.SLOT_COUNT);
         try testSlice(allocator, kind, opts, 2, 0, 2);
         try testSlice(allocator, kind, opts, 2, 1, 1);
         try testSlice(allocator, kind, opts, 1, 0, 0);

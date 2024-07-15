@@ -1045,9 +1045,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 // clear the next slots
                 next_slots = .{ null, null };
 
+                const Side = enum { left, right };
+                const sides = [_]Side{ .left, .right };
+
                 // write the block(s)
                 try self.core.seekFromEnd(0);
-                for (&next_slots, next_blocks, orig_block_infos) |*next_slot, block_maybe, orig_block_info| {
+                for (&next_slots, next_blocks, orig_block_infos, sides) |*next_slot, block_maybe, orig_block_info, side| {
                     if (block_maybe) |block| {
                         // determine if the block changed compared to the original block
                         var eql = true;
@@ -1075,7 +1078,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                     leaf_count += slot.size;
                                 }
                             }
-                            next_slot.* = LinkedArrayListSlot{ .slot = Slot.initWithFlag(next_ptr, .index), .size = leaf_count };
+                            const slot = switch (side) {
+                                // only the left side needs to have the flag set,
+                                // because it can have a gap that affects indexing
+                                .left => Slot.initWithFlag(next_ptr, .index),
+                                .right => Slot.init(next_ptr, .index),
+                            };
+                            next_slot.* = LinkedArrayListSlot{ .slot = slot, .size = leaf_count };
                         }
                     }
                 }
