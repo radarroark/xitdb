@@ -1546,9 +1546,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 header.size - index.index - 1
                             else
                                 index.index;
-                            const last_key = header.size - 1;
-                            const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
-                            const final_slot_ptr = try self.readLinkedArrayListSlot(header.ptr, key, shift, write_mode);
+                            const final_slot_ptr = try self.readLinkedArrayListSlot(header.ptr, key, header.shift, write_mode);
                             return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = final_slot_ptr.slot_ptr });
                         },
                         .append => {
