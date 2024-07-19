@@ -1364,17 +1364,18 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         const reader = self.core.reader();
                         const writer = self.core.writer();
 
-                        // read existing block
                         var array_list_start = cursor.slot_ptr.slot.value;
-                        try self.core.seekTo(array_list_start);
-                        var header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
-                        try self.core.seekTo(header.ptr);
-                        var array_list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                        try reader.readNoEof(&array_list_index_block);
 
                         // copy it to the end unless it was made in this transaction
                         const tx_start = self.tx_start orelse return error.ExpectedTxStart;
                         if (array_list_start < tx_start) {
+                            // read existing block
+                            try self.core.seekTo(array_list_start);
+                            var header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
+                            try self.core.seekTo(header.ptr);
+                            var array_list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                            try reader.readNoEof(&array_list_index_block);
+                            // copy to the end
                             try self.core.seekFromEnd(0);
                             array_list_start = try self.core.getPos();
                             const next_array_list_ptr = array_list_start + byteSizeOf(ArrayListHeader);
@@ -1502,16 +1503,17 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         const writer = self.core.writer();
 
                         var array_list_start = cursor.slot_ptr.slot.value;
-                        // read existing block
-                        try self.core.seekTo(array_list_start);
-                        var header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
-                        try self.core.seekTo(header.ptr);
-                        var array_list_index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
-                        try reader.readNoEof(&array_list_index_block);
 
                         // copy it to the end unless it was made in this transaction
                         const tx_start = self.tx_start orelse return error.ExpectedTxStart;
                         if (array_list_start < tx_start) {
+                            // read existing block
+                            try self.core.seekTo(array_list_start);
+                            var header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
+                            try self.core.seekTo(header.ptr);
+                            var array_list_index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
+                            try reader.readNoEof(&array_list_index_block);
+                            // copy to the end
                             try self.core.seekFromEnd(0);
                             array_list_start = try self.core.getPos();
                             const next_array_list_ptr = array_list_start + byteSizeOf(LinkedArrayListHeader);
@@ -1599,15 +1601,15 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         const writer = self.core.writer();
 
                         var map_start = cursor.slot_ptr.slot.value;
-                        // read existing block
-                        try self.core.seekTo(map_start);
-                        var map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                        try reader.readNoEof(&map_index_block);
 
                         // copy it to the end unless it was made in this transaction
                         const tx_start = self.tx_start orelse return error.ExpectedTxStart;
                         if (map_start < tx_start) {
-                            // copy it to the end
+                            // read existing block
+                            try self.core.seekTo(map_start);
+                            var map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                            try reader.readNoEof(&map_index_block);
+                            // copy to the end
                             try self.core.seekFromEnd(0);
                             map_start = try self.core.getPos();
                             try writer.writeAll(&map_index_block);
