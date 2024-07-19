@@ -58,9 +58,10 @@ pub const Tag = enum(u7) {
     array_list = 2,
     linked_array_list = 3,
     hash_map = 4,
-    hash = 5,
-    bytes = 6,
-    uint = 7,
+    linked_array_hash_map = 5,
+    hash = 6,
+    bytes = 7,
+    uint = 8,
 
     pub fn init(slot: Slot) !Tag {
         return std.meta.intToEnum(Tag, slot.tag);
@@ -80,6 +81,16 @@ const LinkedArrayListHeader = packed struct {
     ptr: u64,
     size: u64,
 };
+
+const BlockInt = u1152;
+const LinkedArrayHashMapHeaderInt = u1288;
+const LinkedArrayHashMapHeader = packed struct {
+    map_block: BlockInt,
+    list_header: LinkedArrayListHeader,
+};
+comptime {
+    std.debug.assert(byteSizeOf(BlockInt) == INDEX_BLOCK_SIZE);
+}
 
 const HashMapKeyValueInt = u304;
 const HashMapKeyValue = packed struct {
@@ -133,6 +144,7 @@ pub fn PathPart(comptime Ctx: type) type {
         hash_map_get_key: Hash,
         hash_map_get_value: Hash,
         hash_map_remove: Hash,
+        linked_array_hash_map_create,
         write: union(enum) {
             slot: Slot,
             uint: u64,
@@ -1675,6 +1687,68 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     try writer.writeInt(SlotInt, 0, .big);
 
                     return next_slot_ptr;
+                },
+                .linked_array_hash_map_create => {
+                    if (!allow_write) return error.WriteNotAllowed;
+
+                    if (cursor != .slot_ptr) return error.NotImplemented;
+
+                    if (cursor.slot_ptr.slot.tag == 0) {
+                        const writer = self.core.writer();
+                        try self.core.seekFromEnd(0);
+                        // if slot was empty
+                        // insert linked array list
+                        const array_map_start = try self.core.getPos();
+                        const array_list_ptr = try self.core.getPos() + byteSizeOf(LinkedArrayHashMapHeader);
+                        try writer.writeInt(LinkedArrayHashMapHeaderInt, @bitCast(LinkedArrayHashMapHeader{
+                            .map_block = 0,
+                            .list_header = .{
+                                .shift = 0,
+                                .ptr = array_list_ptr,
+                                .size = 0,
+                            },
+                        }), .big);
+                        const array_list_index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
+                        try writer.writeAll(&array_list_index_block);
+                        // make slot point to array map
+                        const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = Slot.init(array_map_start, .linked_array_hash_map) };
+                        try self.core.seekTo(next_slot_ptr.position);
+                        try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
+                        return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
+                    } else {
+                        const tag = try Tag.init(cursor.slot_ptr.slot);
+                        if (tag != .linked_array_hash_map) {
+                            return error.UnexpectedTag;
+                        }
+                        const reader = self.core.reader();
+                        const writer = self.core.writer();
+
+                        var array_map_start = cursor.slot_ptr.slot.value;
+
+                        // copy it to the end unless it was made in this transaction
+                        const tx_start = self.tx_start orelse return error.ExpectedTxStart;
+                        if (array_map_start < tx_start) {
+                            // read existing array map
+                            try self.core.seekTo(array_map_start);
+                            var header: LinkedArrayHashMapHeader = @bitCast(try reader.readInt(LinkedArrayHashMapHeaderInt, .big));
+                            try self.core.seekTo(header.list_header.ptr);
+                            var array_list_index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
+                            try reader.readNoEof(&array_list_index_block);
+                            // copy to the end
+                            try self.core.seekFromEnd(0);
+                            array_map_start = try self.core.getPos();
+                            const next_array_list_ptr = array_map_start + byteSizeOf(LinkedArrayHashMapHeader);
+                            header.list_header.ptr = next_array_list_ptr;
+                            try writer.writeInt(LinkedArrayHashMapHeaderInt, @bitCast(header), .big);
+                            try writer.writeAll(&array_list_index_block);
+                        }
+
+                        // make slot point to array map
+                        const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = Slot.init(array_map_start, .linked_array_hash_map) };
+                        try self.core.seekTo(next_slot_ptr.position);
+                        try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
+                        return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
+                    }
                 },
                 .write => {
                     if (!allow_write) return error.WriteNotAllowed;

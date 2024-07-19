@@ -947,6 +947,43 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .ctx = .{ .allocator = allocator } },
         });
     }
+
+    // linked_array_hash_map
+    {
+        const init_opts = try initOpts(kind, opts);
+        var db = try Database(kind).init(allocator, init_opts);
+        defer {
+            db.deinit();
+            if (kind == .file) {
+                opts.dir.deleteFile(opts.path) catch {};
+            }
+        }
+        var root_cursor = db.rootCursor();
+
+        const Ctx = struct {
+            allocator: std.mem.Allocator,
+
+            pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
+                var values = std.ArrayList(u64).init(self.allocator);
+                defer values.deinit();
+
+                // create array map
+                for (0..xitdb.SLOT_COUNT + 1) |i| {
+                    const n = i * 2;
+                    try values.append(n);
+                    _ = try cursor.execute(void, &[_]PathPart(void){
+                        .{ .hash_map_get_value = hash_buffer("even") },
+                        .linked_array_hash_map_create,
+                    });
+                }
+            }
+        };
+        _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
+            .{ .array_list_get = .append_copy },
+            .hash_map_create,
+            .{ .ctx = .{ .allocator = allocator } },
+        });
+    }
 }
 
 test "read and write" {
