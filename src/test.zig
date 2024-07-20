@@ -56,7 +56,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: an
                 const n = i * 2;
                 try values.append(n);
                 _ = try cursor.execute(void, &[_]PathPart(void){
-                    .{ .hash_map_get_value = hash_buffer("even") },
+                    .{ .hash_map_get = .{ .value = hash_buffer("even") } },
                     .linked_array_list_create,
                     .{ .linked_array_list_get = .append },
                     .{ .write = .{ .uint = n } },
@@ -65,20 +65,20 @@ fn testSlice(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: an
 
             // slice list
             const even_list_slot = try cursor.execute(void, &[_]PathPart(void){
-                .{ .hash_map_get_value = hash_buffer("even") },
+                .{ .hash_map_get = .{ .value = hash_buffer("even") } },
             });
             const even_list_slice_slot = try cursor.db.slice(even_list_slot, slice_offset, slice_size);
 
             // save the newly-made slice
             _ = try cursor.execute(void, &[_]PathPart(void){
-                .{ .hash_map_get_value = hash_buffer("even-slice") },
+                .{ .hash_map_get = .{ .value = hash_buffer("even-slice") } },
                 .{ .write = .{ .slot = even_list_slice_slot } },
             });
 
             // check all values in the new slice
             for (values.items[slice_offset .. slice_offset + slice_size], 0..) |val, i| {
                 const n = try cursor.readInt(void, &[_]PathPart(void){
-                    .{ .hash_map_get_value = hash_buffer("even-slice") },
+                    .{ .hash_map_get = .{ .value = hash_buffer("even-slice") } },
                     .{ .linked_array_list_get = .{ .index = .{ .index = i, .reverse = false } } },
                 });
                 try expectEqual(val, n);
@@ -86,14 +86,14 @@ fn testSlice(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: an
 
             // there are no extra items
             try expectEqual(null, try cursor.readInt(void, &[_]PathPart(void){
-                .{ .hash_map_get_value = hash_buffer("even-slice") },
+                .{ .hash_map_get = .{ .value = hash_buffer("even-slice") } },
                 .{ .linked_array_list_get = .{ .index = .{ .index = slice_size, .reverse = false } } },
             }));
 
             // concat the slice with itself
             const combo_list_slot = try cursor.db.concat(even_list_slice_slot, even_list_slice_slot);
             _ = try cursor.execute(void, &[_]PathPart(void){
-                .{ .hash_map_get_value = hash_buffer("combo") },
+                .{ .hash_map_get = .{ .value = hash_buffer("combo") } },
                 .{ .write = .{ .slot = combo_list_slot } },
             });
 
@@ -104,7 +104,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: an
             try combo_values.appendSlice(values.items[slice_offset .. slice_offset + slice_size]);
             for (combo_values.items, 0..) |val, i| {
                 const n = try cursor.readInt(void, &[_]PathPart(void){
-                    .{ .hash_map_get_value = hash_buffer("combo") },
+                    .{ .hash_map_get = .{ .value = hash_buffer("combo") } },
                     .{ .linked_array_list_get = .{ .index = .{ .index = i, .reverse = false } } },
                 });
                 try expectEqual(val, n);
@@ -112,7 +112,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: an
 
             // append to the slice
             _ = try cursor.execute(void, &[_]PathPart(void){
-                .{ .hash_map_get_value = hash_buffer("even-slice") },
+                .{ .hash_map_get = .{ .value = hash_buffer("even-slice") } },
                 .linked_array_list_create,
                 .{ .path = &[_]PathPart(void){
                     .{ .linked_array_list_get = .append },
@@ -122,7 +122,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: an
 
             // read the new value from the slice
             try expectEqual(3, try cursor.readInt(void, &[_]PathPart(void){
-                .{ .hash_map_get_value = hash_buffer("even-slice") },
+                .{ .hash_map_get = .{ .value = hash_buffer("even-slice") } },
                 .{ .linked_array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             }));
         }
@@ -154,14 +154,14 @@ fn testConcat(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: a
 
             // create even list
             _ = try cursor.execute(void, &[_]PathPart(void){
-                .{ .hash_map_get_value = hash_buffer("even") },
+                .{ .hash_map_get = .{ .value = hash_buffer("even") } },
                 .linked_array_list_create,
             });
             for (0..list_a_size) |i| {
                 const n = i * 2;
                 try values.append(n);
                 _ = try cursor.execute(void, &[_]PathPart(void){
-                    .{ .hash_map_get_value = hash_buffer("even") },
+                    .{ .hash_map_get = .{ .value = hash_buffer("even") } },
                     .linked_array_list_create,
                     .{ .linked_array_list_get = .append },
                     .{ .write = .{ .uint = n } },
@@ -170,19 +170,19 @@ fn testConcat(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: a
 
             // get even list
             const even_list_slot = try cursor.execute(void, &[_]PathPart(void){
-                .{ .hash_map_get_value = hash_buffer("even") },
+                .{ .hash_map_get = .{ .value = hash_buffer("even") } },
             });
 
             // create odd list
             _ = try cursor.execute(void, &[_]PathPart(void){
-                .{ .hash_map_get_value = hash_buffer("odd") },
+                .{ .hash_map_get = .{ .value = hash_buffer("odd") } },
                 .linked_array_list_create,
             });
             for (0..list_b_size) |i| {
                 const n = (i * 2) + 1;
                 try values.append(n);
                 _ = try cursor.execute(void, &[_]PathPart(void){
-                    .{ .hash_map_get_value = hash_buffer("odd") },
+                    .{ .hash_map_get = .{ .value = hash_buffer("odd") } },
                     .linked_array_list_create,
                     .{ .linked_array_list_get = .append },
                     .{ .write = .{ .uint = n } },
@@ -191,20 +191,20 @@ fn testConcat(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: a
 
             // get odd list
             const odd_list_slot = try cursor.execute(void, &[_]PathPart(void){
-                .{ .hash_map_get_value = hash_buffer("odd") },
+                .{ .hash_map_get = .{ .value = hash_buffer("odd") } },
             });
 
             // concat the lists
             const combo_list_slot = try cursor.db.concat(even_list_slot, odd_list_slot);
             _ = try cursor.execute(void, &[_]PathPart(void){
-                .{ .hash_map_get_value = hash_buffer("combo") },
+                .{ .hash_map_get = .{ .value = hash_buffer("combo") } },
                 .{ .write = .{ .slot = combo_list_slot } },
             });
 
             // check all values in the new list
             for (values.items, 0..) |val, i| {
                 const n = try cursor.readInt(void, &[_]PathPart(void){
-                    .{ .hash_map_get_value = hash_buffer("combo") },
+                    .{ .hash_map_get = .{ .value = hash_buffer("combo") } },
                     .{ .linked_array_list_get = .{ .index = .{ .index = i, .reverse = false } } },
                 });
                 try expectEqual(val, n);
@@ -212,7 +212,7 @@ fn testConcat(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: a
 
             // there are no extra items
             try expectEqual(null, try cursor.readInt(void, &[_]PathPart(void){
-                .{ .hash_map_get_value = hash_buffer("combo") },
+                .{ .hash_map_get = .{ .value = hash_buffer("combo") } },
                 .{ .linked_array_list_get = .{ .index = .{ .index = values.items.len, .reverse = false } } },
             }));
         }
@@ -251,7 +251,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
                 .{ .array_list_get = .append_copy },
                 .hash_map_create,
-                .{ .hash_map_get_value = foo_key },
+                .{ .hash_map_get = .{ .value = foo_key } },
                 .{ .ctx = Ctx{} },
             });
         }
@@ -259,7 +259,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         // read foo
         const bar_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .hash_map_get_value = foo_key },
+            .{ .hash_map_get = .{ .value = foo_key } },
         })).?;
         defer allocator.free(bar_value);
         try std.testing.expectEqualStrings("bar", bar_value);
@@ -313,7 +313,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             };
             _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
                 .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .hash_map_get_value = foo_key },
+                .{ .hash_map_get = .{ .value = foo_key } },
                 .{ .ctx = Ctx{ .allocator = allocator } },
             });
         }
@@ -346,7 +346,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
                 .{ .array_list_get = .append_copy },
                 .hash_map_create,
-                .{ .hash_map_get_value = foo_key },
+                .{ .hash_map_get = .{ .value = foo_key } },
                 .{ .ctx = Ctx{ .allocator = allocator } },
             });
         }
@@ -356,23 +356,23 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         const foo_slot = try root_cursor.writeBytes("foo", .once, void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_create,
-            .{ .hash_map_get_value = bar_key },
+            .{ .hash_map_get = .{ .value = bar_key } },
         });
         try expectEqual(foo_slot, try root_cursor.writeBytes("foo", .once, void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_create,
-            .{ .hash_map_get_value = bar_key },
+            .{ .hash_map_get = .{ .value = bar_key } },
         }));
         try std.testing.expect(!foo_slot.eql(try root_cursor.writeBytes("foo", .replace, void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_create,
-            .{ .hash_map_get_value = bar_key },
+            .{ .hash_map_get = .{ .value = bar_key } },
         })));
 
         // read bar
         const foo_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .hash_map_get_value = bar_key },
+            .{ .hash_map_get = .{ .value = bar_key } },
         })).?;
         defer allocator.free(foo_value);
         try std.testing.expectEqualStrings("foo", foo_value);
@@ -392,14 +392,14 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             _ = root_cursor.execute(Ctx, &[_]PathPart(Ctx){
                 .{ .array_list_get = .append_copy },
                 .hash_map_create,
-                .{ .hash_map_get_value = hash_buffer("foo") },
+                .{ .hash_map_get = .{ .value = hash_buffer("foo") } },
                 .{ .ctx = Ctx{ .allocator = allocator } },
             }) catch {};
 
             // read foo
             const value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .hash_map_get_value = foo_key },
+                .{ .hash_map_get = .{ .value = foo_key } },
             })).?;
             defer allocator.free(value);
             try std.testing.expectEqualStrings("baz", value);
@@ -409,7 +409,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         var bar_buffer = [_]u8{0} ** 3;
         const bar_buffer_value = (try root_cursor.readBytes(&bar_buffer, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .hash_map_get_value = foo_key },
+            .{ .hash_map_get = .{ .value = foo_key } },
         })).?;
         try std.testing.expectEqualStrings("baz", bar_buffer_value);
 
@@ -417,7 +417,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         const bar_slot = try root_cursor.execute(void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_create,
-            .{ .hash_map_get_value = hash_buffer("bar") },
+            .{ .hash_map_get = .{ .value = hash_buffer("bar") } },
             .{ .write = .{ .bytes = "bar" } },
         });
 
@@ -425,12 +425,12 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         _ = try root_cursor.execute(void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_create,
-            .{ .hash_map_get_value = foo_key },
+            .{ .hash_map_get = .{ .value = foo_key } },
             .{ .write = .{ .slot = bar_slot } },
         });
         const baz_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .hash_map_get_value = foo_key },
+            .{ .hash_map_get = .{ .value = foo_key } },
         })).?;
         defer allocator.free(baz_value);
         try std.testing.expectEqualStrings("bar", baz_value);
@@ -438,7 +438,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         // can still read the old value
         const baz_value2 = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = .{ .index = 1, .reverse = true } } },
-            .{ .hash_map_get_value = foo_key },
+            .{ .hash_map_get = .{ .value = foo_key } },
         })).?;
         defer allocator.free(baz_value2);
         try std.testing.expectEqualStrings("baz", baz_value2);
@@ -447,7 +447,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         const not_found_key = hash_buffer("this doesn't exist");
         try expectEqual(null, try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .hash_map_get_value = not_found_key },
+            .{ .hash_map_get = .{ .value = not_found_key } },
         }));
 
         // write key that conflicts with foo
@@ -456,14 +456,14 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         _ = try root_cursor.execute(void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_create,
-            .{ .hash_map_get_value = conflict_key },
+            .{ .hash_map_get = .{ .value = conflict_key } },
             .{ .write = .{ .bytes = "hello" } },
         });
 
         // read conflicting key
         const hello_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .hash_map_get_value = conflict_key },
+            .{ .hash_map_get = .{ .value = conflict_key } },
         })).?;
         defer allocator.free(hello_value);
         try std.testing.expectEqualStrings("hello", hello_value);
@@ -471,7 +471,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         // we can still read foo
         const bar_value2 = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .hash_map_get_value = foo_key },
+            .{ .hash_map_get = .{ .value = foo_key } },
         })).?;
         defer allocator.free(bar_value2);
         try std.testing.expectEqualStrings("bar", bar_value2);
@@ -480,12 +480,12 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         _ = try root_cursor.execute(void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_create,
-            .{ .hash_map_get_value = conflict_key },
+            .{ .hash_map_get = .{ .value = conflict_key } },
             .{ .write = .{ .bytes = "goodbye" } },
         });
         const goodbye_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .hash_map_get_value = conflict_key },
+            .{ .hash_map_get = .{ .value = conflict_key } },
         })).?;
         defer allocator.free(goodbye_value);
         try std.testing.expectEqualStrings("goodbye", goodbye_value);
@@ -493,7 +493,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         // we can still read the old conflicting key
         const hello_value2 = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = .{ .index = 1, .reverse = true } } },
-            .{ .hash_map_get_value = conflict_key },
+            .{ .hash_map_get = .{ .value = conflict_key } },
         })).?;
         defer allocator.free(hello_value2);
         try std.testing.expectEqualStrings("hello", hello_value2);
@@ -502,14 +502,14 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         _ = try root_cursor.execute(void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_create,
-            .{ .hash_map_get_value = foo_key },
+            .{ .hash_map_get = .{ .value = foo_key } },
             .{ .write = .{ .uint = 42 } },
         });
 
         // read foo
         const int_value = try root_cursor.readInt(void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .hash_map_get_value = foo_key },
+            .{ .hash_map_get = .{ .value = foo_key } },
         });
         try expectEqual(42, int_value);
 
@@ -523,7 +523,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         // read foo
         try expectEqual(null, try root_cursor.readInt(void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-            .{ .hash_map_get_value = foo_key },
+            .{ .hash_map_get = .{ .value = foo_key } },
         }));
 
         // non-top-level list
@@ -532,7 +532,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             _ = try root_cursor.execute(void, &[_]PathPart(void){
                 .{ .array_list_get = .append_copy },
                 .hash_map_create,
-                .{ .hash_map_get_value = hash_buffer("fruits") },
+                .{ .hash_map_get = .{ .value = hash_buffer("fruits") } },
                 .array_list_create,
                 .{ .array_list_get = .append },
                 .{ .write = .{ .bytes = "apple" } },
@@ -541,7 +541,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             // read apple
             const apple_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .hash_map_get_value = hash_buffer("fruits") },
+                .{ .hash_map_get = .{ .value = hash_buffer("fruits") } },
                 .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             })).?;
             defer allocator.free(apple_value);
@@ -551,7 +551,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             _ = try root_cursor.execute(void, &[_]PathPart(void){
                 .{ .array_list_get = .append_copy },
                 .hash_map_create,
-                .{ .hash_map_get_value = hash_buffer("fruits") },
+                .{ .hash_map_get = .{ .value = hash_buffer("fruits") } },
                 .array_list_create,
                 .{ .array_list_get = .append },
                 .{ .write = .{ .bytes = "banana" } },
@@ -560,7 +560,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             // read banana
             const banana_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .hash_map_get_value = hash_buffer("fruits") },
+                .{ .hash_map_get = .{ .value = hash_buffer("fruits") } },
                 .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             })).?;
             defer allocator.free(banana_value);
@@ -569,7 +569,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             // can't read banana in older array_list
             try expectEqual(null, try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = .{ .index = 1, .reverse = true } } },
-                .{ .hash_map_get_value = hash_buffer("fruits") },
+                .{ .hash_map_get = .{ .value = hash_buffer("fruits") } },
                 .{ .array_list_get = .{ .index = .{ .index = 1, .reverse = false } } },
             }));
 
@@ -577,7 +577,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             _ = try root_cursor.execute(void, &[_]PathPart(void){
                 .{ .array_list_get = .append_copy },
                 .hash_map_create,
-                .{ .hash_map_get_value = hash_buffer("fruits") },
+                .{ .hash_map_get = .{ .value = hash_buffer("fruits") } },
                 .array_list_create,
                 .{ .path = &[_]PathPart(void){
                     .{ .array_list_get = .append },
@@ -592,7 +592,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             // read pear
             const pear_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .hash_map_get_value = hash_buffer("fruits") },
+                .{ .hash_map_get = .{ .value = hash_buffer("fruits") } },
                 .{ .array_list_get = .{ .index = .{ .index = 1, .reverse = true } } },
             })).?;
             defer allocator.free(pear_value);
@@ -601,7 +601,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             // read grape
             const grape_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .hash_map_get_value = hash_buffer("fruits") },
+                .{ .hash_map_get = .{ .value = hash_buffer("fruits") } },
                 .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
             })).?;
             defer allocator.free(grape_value);
@@ -628,7 +628,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             _ = try root_cursor.execute(void, &[_]PathPart(void){
                 .{ .array_list_get = .append_copy },
                 .hash_map_create,
-                .{ .hash_map_get_value = wat_key },
+                .{ .hash_map_get = .{ .value = wat_key } },
                 .{ .write = .{ .bytes = value } },
             });
         }
@@ -638,7 +638,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             defer allocator.free(value);
             const value2 = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = .{ .index = i, .reverse = false } } },
-                .{ .hash_map_get_value = wat_key },
+                .{ .hash_map_get = .{ .value = wat_key } },
             })).?;
             defer allocator.free(value2);
             try std.testing.expectEqualStrings(value, value2);
@@ -789,13 +789,13 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             _ = try root_cursor.execute(void, &[_]PathPart(void){
                 .{ .array_list_get = .append_copy },
                 .hash_map_create,
-                .{ .hash_map_get_value = wat_key },
+                .{ .hash_map_get = .{ .value = wat_key } },
                 .{ .write = .{ .bytes = value } },
             });
 
             const value2 = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
-                .{ .hash_map_get_value = wat_key },
+                .{ .hash_map_get = .{ .value = wat_key } },
             })).?;
             defer allocator.free(value2);
             try std.testing.expectEqualStrings(value, value2);
@@ -806,13 +806,13 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         _ = try root_cursor.execute(void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_create,
-            .{ .hash_map_get_key = foo_key },
+            .{ .hash_map_get = .{ .key = foo_key } },
             .{ .write = .{ .bytes = "foo" } },
         });
         _ = try root_cursor.execute(void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_create,
-            .{ .hash_map_get_value = foo_key },
+            .{ .hash_map_get = .{ .value = foo_key } },
             .{ .write = .{ .uint = 42 } },
         });
 
@@ -891,7 +891,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                     const n = i * 2;
                     try values.append(n);
                     _ = try cursor.execute(void, &[_]PathPart(void){
-                        .{ .hash_map_get_value = hash_buffer("even") },
+                        .{ .hash_map_get = .{ .value = hash_buffer("even") } },
                         .linked_array_list_create,
                         .{ .linked_array_list_get = .append },
                         .{ .write = .{ .uint = n } },
@@ -900,7 +900,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
                 // get list slot
                 const even_list_slot = try cursor.execute(void, &[_]PathPart(void){
-                    .{ .hash_map_get_value = hash_buffer("even") },
+                    .{ .hash_map_get = .{ .value = hash_buffer("even") } },
                 });
 
                 // concat the list with itself multiple times.
@@ -914,27 +914,27 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
                 // save the new list
                 _ = try cursor.execute(void, &[_]PathPart(void){
-                    .{ .hash_map_get_value = hash_buffer("combo") },
+                    .{ .hash_map_get = .{ .value = hash_buffer("combo") } },
                     .{ .write = .{ .slot = combo_list_slot } },
                 });
 
                 // append to the new list
                 _ = try cursor.execute(void, &[_]PathPart(void){
-                    .{ .hash_map_get_value = hash_buffer("combo") },
+                    .{ .hash_map_get = .{ .value = hash_buffer("combo") } },
                     .{ .linked_array_list_get = .append },
                     .{ .write = .{ .uint = 3 } },
                 });
 
                 // read the new value from the list
                 try expectEqual(3, try cursor.readInt(void, &[_]PathPart(void){
-                    .{ .hash_map_get_value = hash_buffer("combo") },
+                    .{ .hash_map_get = .{ .value = hash_buffer("combo") } },
                     .{ .linked_array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
                 }));
 
                 // append more to the new list
                 for (0..500) |_| {
                     _ = try cursor.execute(void, &[_]PathPart(void){
-                        .{ .hash_map_get_value = hash_buffer("combo") },
+                        .{ .hash_map_get = .{ .value = hash_buffer("combo") } },
                         .{ .linked_array_list_get = .append },
                         .{ .write = .{ .uint = 1 } },
                     });
@@ -972,7 +972,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                     const n = i * 2;
                     try values.append(n);
                     _ = try cursor.execute(void, &[_]PathPart(void){
-                        .{ .hash_map_get_value = hash_buffer("even") },
+                        .{ .hash_map_get = .{ .value = hash_buffer("even") } },
                         .linked_array_hash_map_create,
                     });
                 }

@@ -141,8 +141,10 @@ pub fn PathPart(comptime Ctx: type) type {
             append,
         },
         hash_map_create,
-        hash_map_get_key: Hash,
-        hash_map_get_value: Hash,
+        hash_map_get: union(enum) {
+            key: Hash,
+            value: Hash,
+        },
         hash_map_remove: Hash,
         linked_array_hash_map_create,
         write: union(enum) {
@@ -1634,7 +1636,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                     }
                 },
-                .hash_map_get_key => {
+                .hash_map_get => {
                     if (cursor != .slot_ptr) return error.NotImplemented;
 
                     if (cursor.slot_ptr.slot.tag == 0) {
@@ -1646,22 +1648,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                     const next_map_start = cursor.slot_ptr.slot.value;
 
-                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_get_key, 0, write_mode, .key);
-                    return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
-                },
-                .hash_map_get_value => {
-                    if (cursor != .slot_ptr) return error.NotImplemented;
-
-                    if (cursor.slot_ptr.slot.tag == 0) {
-                        return error.KeyNotFound;
-                    }
-                    const tag = try Tag.init(cursor.slot_ptr.slot);
-                    if (tag != .hash_map) {
-                        return error.UnexpectedTag;
-                    }
-                    const next_map_start = cursor.slot_ptr.slot.value;
-
-                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_get_value, 0, write_mode, .value);
+                    const next_slot_ptr = switch (part.hash_map_get) {
+                        .key => try self.readMapSlot(next_map_start, part.hash_map_get.key, 0, write_mode, .key),
+                        .value => try self.readMapSlot(next_map_start, part.hash_map_get.value, 0, write_mode, .value),
+                    };
                     return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                 },
                 .hash_map_remove => {
