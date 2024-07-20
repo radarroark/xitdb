@@ -1344,12 +1344,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         const writer = self.core.writer();
                         try self.core.seekFromEnd(0);
                         const array_list_start = try self.core.getPos();
-                        const array_list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                         const array_list_ptr = try self.core.getPos() + byteSizeOf(ArrayListHeader);
                         try writer.writeInt(ArrayListHeaderInt, @bitCast(ArrayListHeader{
                             .ptr = array_list_ptr,
                             .size = 0,
                         }), .big);
+                        const array_list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                         try writer.writeAll(&array_list_index_block);
                         // make slot point to list
                         const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = Slot.init(array_list_start, .array_list) };
@@ -1481,13 +1481,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         const writer = self.core.writer();
                         try self.core.seekFromEnd(0);
                         const array_list_start = try self.core.getPos();
-                        const array_list_index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                         const array_list_ptr = try self.core.getPos() + byteSizeOf(LinkedArrayListHeader);
                         try writer.writeInt(LinkedArrayListHeaderInt, @bitCast(LinkedArrayListHeader{
                             .shift = 0,
                             .ptr = array_list_ptr,
                             .size = 0,
                         }), .big);
+                        const array_list_index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                         try writer.writeAll(&array_list_index_block);
                         // make slot point to new list
                         const next_slot_ptr = SlotPointer{ .position = cursor.slot_ptr.position, .slot = Slot.init(array_list_start, .linked_array_list) };
