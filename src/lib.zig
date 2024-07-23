@@ -54,14 +54,15 @@ pub const Slot = packed struct {
     }
 };
 pub const Tag = enum(u7) {
-    index = 1,
-    array_list = 2,
-    linked_array_list = 3,
-    hash_map = 4,
-    linked_array_hash_map = 5,
-    hash = 6,
-    bytes = 7,
-    uint = 8,
+    empty = 1,
+    index = 2,
+    array_list = 3,
+    linked_array_list = 4,
+    hash_map = 5,
+    linked_array_hash_map = 6,
+    hash = 7,
+    bytes = 8,
+    uint = 9,
 
     pub fn init(slot: Slot) !Tag {
         return std.meta.intToEnum(Tag, slot.tag);
@@ -2070,7 +2071,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             const key = header.size;
             var shift = header.shift;
 
-            const slot_ptr = self.readLinkedArrayListSlot(ptr, key, shift, write_mode) catch |err| switch (err) {
+            var slot_ptr = self.readLinkedArrayListSlot(ptr, key, shift, write_mode) catch |err| switch (err) {
                 error.NoAvailableSlots => blk: {
                     // root overflow
                     try self.core.seekFromEnd(0);
@@ -2088,6 +2089,16 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 },
                 else => return err,
             };
+
+            // newly-appended slots must be set to .empty
+            // or else the indexing will be screwed up
+            const new_slot = Slot.init(0, .empty);
+            slot_ptr.slot_ptr.slot = new_slot;
+            try self.core.seekTo(slot_ptr.slot_ptr.position);
+            try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{ .slot = new_slot, .size = 0 }), .big);
+            if (header.size < SLOT_COUNT and shift > 0) {
+                return error.MustSetNewSlotsToEmpty;
+            }
 
             return .{
                 .header = .{

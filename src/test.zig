@@ -948,6 +948,27 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         });
     }
 
+    // append items to linked_array_list without setting their value
+    {
+        const init_opts = try initOpts(kind, opts);
+        var db = try Database(kind).init(allocator, init_opts);
+        defer {
+            db.deinit();
+            if (kind == .file) {
+                opts.dir.deleteFile(opts.path) catch {};
+            }
+        }
+        var root_cursor = db.rootCursor();
+
+        for (0..8) |_| {
+            _ = try root_cursor.execute(void, &[_]PathPart(void){
+                .{ .array_list_get = .append_copy },
+                .linked_array_list_create,
+                .{ .linked_array_list_get = .append },
+            });
+        }
+    }
+
     // linked_array_hash_map
     {
         const init_opts = try initOpts(kind, opts);
