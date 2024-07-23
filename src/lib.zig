@@ -871,7 +871,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             };
                         },
                         .linked_array_list => {
-                            const index = self.core.array_list.index;
+                            const index = self.core.linked_array_list.index;
                             const path = &[_]PathPart(void){.{ .linked_array_list_get = .{ .index = index } }};
                             const slot_ptr = self.cursor.db.readSlot(void, path, false, self.cursor.read_slot_cursor) catch |err| {
                                 switch (err) {
