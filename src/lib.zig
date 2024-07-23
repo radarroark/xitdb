@@ -127,19 +127,13 @@ pub fn PathPart(comptime Ctx: type) type {
     return union(enum) {
         array_list_create,
         array_list_get: union(enum) {
-            index: struct {
-                index: u64,
-                reverse: bool,
-            },
+            index: i65,
             append,
             append_copy,
         },
         linked_array_list_create,
         linked_array_list_get: union(enum) {
-            index: struct {
-                index: u64,
-                reverse: bool,
-            },
+            index: i65,
             append,
         },
         hash_map_create,
@@ -856,7 +850,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     switch (self.core) {
                         .array_list => {
                             const index = self.core.array_list.index;
-                            const path = &[_]PathPart(void){.{ .array_list_get = .{ .index = .{ .index = index, .reverse = false } } }};
+                            const path = &[_]PathPart(void){.{ .array_list_get = .{ .index = index } }};
                             const slot_ptr = self.cursor.db.readSlot(void, path, false, self.cursor.read_slot_cursor) catch |err| {
                                 switch (err) {
                                     error.KeyNotFound => return null,
@@ -873,7 +867,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         },
                         .linked_array_list => {
                             const index = self.core.array_list.index;
-                            const path = &[_]PathPart(void){.{ .linked_array_list_get = .{ .index = .{ .index = index, .reverse = false } } }};
+                            const path = &[_]PathPart(void){.{ .linked_array_list_get = .{ .index = index } }};
                             const slot_ptr = self.cursor.db.readSlot(void, path, false, self.cursor.read_slot_cursor) catch |err| {
                                 switch (err) {
                                     error.KeyNotFound => return null,
@@ -1456,13 +1450,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             try self.core.seekTo(next_array_list_start);
                             const reader = self.core.reader();
                             const header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
-                            if (index.index >= header.size) {
+                            if (index >= header.size or index < -@as(i65, header.size)) {
                                 return error.KeyNotFound;
                             }
-                            const key = if (index.reverse)
-                                header.size - index.index - 1
+                            const key: u64 = if (index < 0)
+                                @intCast(header.size - @abs(index))
                             else
-                                index.index;
+                                @intCast(index);
                             const last_key = header.size - 1;
                             const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
                             const final_slot_ptr = try self.readArrayListSlot(header.ptr, key, shift, write_mode);
@@ -1594,13 +1588,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             try self.core.seekTo(next_array_list_start);
                             const reader = self.core.reader();
                             const header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
-                            if (index.index >= header.size) {
+                            if (index >= header.size or index < -@as(i65, header.size)) {
                                 return error.KeyNotFound;
                             }
-                            const key = if (index.reverse)
-                                header.size - index.index - 1
+                            const key: u64 = if (index < 0)
+                                @intCast(header.size - @abs(index))
                             else
-                                index.index;
+                                @intCast(index);
                             const final_slot_ptr = try self.readLinkedArrayListSlot(header.ptr, key, header.shift, write_mode);
                             return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = final_slot_ptr.slot_ptr });
                         },
