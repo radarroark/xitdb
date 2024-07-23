@@ -1689,7 +1689,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         // if slot was empty
                         // insert linked array list
                         const array_map_start = try self.core.getPos();
-                        const array_list_ptr = try self.core.getPos() + byteSizeOf(LinkedArrayHashMapHeader);
+                        const array_list_ptr = array_map_start + byteSizeOf(LinkedArrayHashMapHeader);
                         try writer.writeInt(LinkedArrayHashMapHeaderInt, @bitCast(LinkedArrayHashMapHeader{
                             .map_block = 0,
                             .list_header = .{
