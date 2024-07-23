@@ -2106,7 +2106,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
         fn keyAndIndexForLinkedArrayList(slot_block: []LinkedArrayListSlot, key: u64, shift: u6) ?struct { key: u64, index: u4 } {
             var next_key = key;
             var i: u4 = 0;
-            const max_leaf_count = if (shift == 0) 1 else shift * SLOT_COUNT;
+            const max_leaf_count: u64 = if (shift == 0) 1 else std.math.pow(u64, SLOT_COUNT, shift);
             while (true) {
                 const slot_leaf_count: u64 = if (shift == 0) (if (slot_block[i].slot.tag == 0) 0 else 1) else slot_block[i].size;
                 if (next_key == slot_leaf_count) {
