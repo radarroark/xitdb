@@ -143,13 +143,16 @@ pub fn PathPart(comptime Ctx: type) type {
         },
         hash_map_create,
         hash_map_get: union(enum) {
+            parent: Hash,
             key: Hash,
             value: Hash,
         },
         hash_map_remove: Hash,
         linked_array_hash_map_create,
         linked_array_hash_map_get: union(enum) {
-            append: Hash,
+            parent: Hash,
+            key: Hash,
+            value: Hash,
         },
         write: union(enum) {
             slot: Slot,
@@ -1653,6 +1656,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     const next_map_start = cursor.slot_ptr.slot.value;
 
                     const next_slot_ptr = switch (part.hash_map_get) {
+                        .parent => try self.readMapSlot(next_map_start, part.hash_map_get.parent, 0, write_mode, .parent),
                         .key => try self.readMapSlot(next_map_start, part.hash_map_get.key, 0, write_mode, .key),
                         .value => try self.readMapSlot(next_map_start, part.hash_map_get.value, 0, write_mode, .value),
                     };
@@ -1745,28 +1749,53 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                 },
                 .linked_array_hash_map_get => {
+                    if (cursor != .slot_ptr) return error.NotImplemented;
+
                     switch (part.linked_array_hash_map_get) {
-                        .append => {
+                        .parent, .key, .value => {
                             if (!allow_write) return error.WriteNotAllowed;
 
-                            if (cursor != .slot_ptr) return error.NotImplemented;
-
-                            const next_slot_ptr = try self.readSlot(void, &[_]PathPart(void){
-                                .{ .linked_array_list_get = .append },
-                            }, allow_write, cursor);
-
-                            // save position of the new slot in the map
+                            // get slot from map
                             const map_start = cursor.slot_ptr.position + byteSizeOf(LinkedArrayListHeader);
                             const map_slot_ptr = SlotPointer{
                                 .position = std.math.maxInt(u64), // this shouldn't ever be read
                                 .slot = Slot.init(map_start, .hash_map),
                             };
-                            _ = try self.readSlot(void, &[_]PathPart(void){
-                                .{ .hash_map_get = .{ .value = part.linked_array_hash_map_get.append } },
-                                .{ .write = .{ .uint = next_slot_ptr.position } },
+                            const hash = switch (part.linked_array_hash_map_get) {
+                                .parent => part.linked_array_hash_map_get.parent,
+                                .key => part.linked_array_hash_map_get.key,
+                                .value => part.linked_array_hash_map_get.value,
+                            };
+                            const next_slot_ptr = try self.readSlot(void, &[_]PathPart(void){
+                                .{ .hash_map_get = .{ .parent = hash } },
                             }, allow_write, .{ .slot_ptr = map_slot_ptr });
 
-                            return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
+                            // add slot to linked array list
+                            _ = try self.readSlot(void, &[_]PathPart(void){
+                                .{ .linked_array_list_get = .append },
+                                .{ .write = .{ .slot = next_slot_ptr.slot } },
+                            }, allow_write, cursor);
+
+                            // get the correct slot pointer
+                            const reader = self.core.reader();
+                            const hash_pos = next_slot_ptr.slot.value;
+                            const key_slot_pos = hash_pos + byteSizeOf(Hash);
+                            const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
+                            const final_slot_ptr = switch (part.linked_array_hash_map_get) {
+                                .parent => next_slot_ptr,
+                                .key => blk: {
+                                    try self.core.seekTo(key_slot_pos);
+                                    const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+                                    break :blk SlotPointer{ .position = key_slot_pos, .slot = slot };
+                                },
+                                .value => blk: {
+                                    try self.core.seekTo(value_slot_pos);
+                                    const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+                                    break :blk SlotPointer{ .position = value_slot_pos, .slot = slot };
+                                },
+                            };
+
+                            return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = final_slot_ptr });
                         },
                     }
                 },
@@ -1869,11 +1898,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     try writer.writeInt(HashMapKeyValueInt, @bitCast(hash_map_kv), .big);
 
                     // point slot to hash pos
+                    const next_slot = Slot.init(hash_pos, .hash);
                     try self.core.seekTo(slot_pos);
-                    try writer.writeInt(SlotInt, @bitCast(Slot.init(hash_pos, .hash)), .big);
+                    try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
 
                     return switch (hash_map_return) {
-                        .parent => SlotPointer{ .position = slot_pos, .slot = slot },
+                        .parent => SlotPointer{ .position = slot_pos, .slot = next_slot },
                         .key => SlotPointer{ .position = key_slot_pos, .slot = hash_map_kv.key_slot },
                         .value => SlotPointer{ .position = value_slot_pos, .slot = hash_map_kv.value_slot },
                     };
@@ -1923,11 +1953,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 try writer.writeInt(HashMapKeyValueInt, @bitCast(hash_map_kv), .big);
 
                                 // point slot to hash pos
+                                const next_slot = Slot.init(hash_pos, .hash);
                                 try self.core.seekTo(slot_pos);
-                                try writer.writeInt(SlotInt, @bitCast(Slot.init(hash_pos, .hash)), .big);
+                                try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
 
                                 return switch (hash_map_return) {
-                                    .parent => SlotPointer{ .position = slot_pos, .slot = slot },
+                                    .parent => SlotPointer{ .position = slot_pos, .slot = next_slot },
                                     .key => SlotPointer{ .position = key_slot_pos, .slot = hash_map_kv.key_slot },
                                     .value => SlotPointer{ .position = value_slot_pos, .slot = hash_map_kv.value_slot },
                                 };
