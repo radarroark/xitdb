@@ -109,6 +109,7 @@ pub const LinkedArrayListSlot = packed struct {
 pub const SlotPointer = struct {
     position: u64,
     slot: Slot,
+    is_new: bool = false,
 };
 
 pub const LinkedArrayListSlotPointer = struct {
@@ -1792,11 +1793,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 .{ .hash_map_get = .{ .parent = hash } },
                             }, allow_write, .{ .slot_ptr = map_slot_ptr });
 
-                            // add slot to linked array list
-                            _ = try self.readSlot(void, &[_]PathPart(void){
-                                .{ .linked_array_list_get = .append },
-                                .{ .write = .{ .slot = next_slot_ptr.slot } },
-                            }, allow_write, cursor);
+                            // add slot to linked array list if the key wasn't already in the map
+                            if (next_slot_ptr.is_new) {
+                                _ = try self.readSlot(void, &[_]PathPart(void){
+                                    .{ .linked_array_list_get = .append },
+                                    .{ .write = .{ .slot = next_slot_ptr.slot } },
+                                }, allow_write, cursor);
+                            }
 
                             // get the correct slot pointer
                             const reader = self.core.reader();
@@ -1925,9 +1928,9 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
 
                     return switch (hash_map_return) {
-                        .parent => SlotPointer{ .position = slot_pos, .slot = next_slot },
-                        .key => SlotPointer{ .position = key_slot_pos, .slot = hash_map_kv.key_slot },
-                        .value => SlotPointer{ .position = value_slot_pos, .slot = hash_map_kv.value_slot },
+                        .parent => SlotPointer{ .position = slot_pos, .slot = next_slot, .is_new = true },
+                        .key => SlotPointer{ .position = key_slot_pos, .slot = hash_map_kv.key_slot, .is_new = true },
+                        .value => SlotPointer{ .position = value_slot_pos, .slot = hash_map_kv.value_slot, .is_new = true },
                     };
                 } else {
                     return error.KeyNotFound;
@@ -2075,7 +2078,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             if (slot.tag == 0) {
                 if (write_mode == .write or write_mode == .write_immutable) {
                     if (shift == 0) {
-                        return SlotPointer{ .position = slot_pos, .slot = slot };
+                        return SlotPointer{ .position = slot_pos, .slot = slot, .is_new = true };
                     } else {
                         const writer = self.core.writer();
                         try self.core.seekFromEnd(0);
@@ -2253,7 +2256,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 if (write_mode == .write or write_mode == .write_immutable) {
                     if (shift == 0) {
                         const leaf_count = countLinkedArrayListLeafCount(&slot_block, shift, i);
-                        return .{ .slot_ptr = .{ .position = slot_pos, .slot = slot.slot }, .leaf_count = leaf_count };
+                        return .{ .slot_ptr = .{ .position = slot_pos, .slot = slot.slot, .is_new = true }, .leaf_count = leaf_count };
                     } else {
                         try self.core.seekFromEnd(0);
                         const next_index_pos = try self.core.getPos();
