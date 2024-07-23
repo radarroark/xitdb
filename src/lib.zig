@@ -147,6 +147,9 @@ pub fn PathPart(comptime Ctx: type) type {
         },
         hash_map_remove: Hash,
         linked_array_hash_map_create,
+        linked_array_hash_map_get: union(enum) {
+            append,
+        },
         write: union(enum) {
             slot: Slot,
             uint: u64,
@@ -1551,7 +1554,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 return error.KeyNotFound;
                             } else {
                                 const tag = try Tag.init(cursor.slot_ptr.slot);
-                                if (tag != .linked_array_list) {
+                                if (tag != .linked_array_list and tag != .linked_array_hash_map) {
                                     return error.UnexpectedTag;
                                 }
                                 break :blk cursor.slot_ptr.slot.value;
@@ -1738,6 +1741,18 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         try self.core.seekTo(next_slot_ptr.position);
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                         return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
+                    }
+                },
+                .linked_array_hash_map_get => {
+                    switch (part.linked_array_hash_map_get) {
+                        .append => {
+                            if (!allow_write) return error.WriteNotAllowed;
+
+                            const next_slot_ptr = try self.readSlot(void, &[_]PathPart(void){
+                                .{ .linked_array_list_get = .append },
+                            }, allow_write, cursor);
+                            return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
+                        },
                     }
                 },
                 .write => {

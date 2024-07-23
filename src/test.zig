@@ -974,6 +974,8 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                     _ = try cursor.execute(void, &[_]PathPart(void){
                         .{ .hash_map_get = .{ .value = hash_buffer("even") } },
                         .linked_array_hash_map_create,
+                        .{ .linked_array_hash_map_get = .append },
+                        .{ .write = .{ .uint = n } },
                     });
                 }
             }
