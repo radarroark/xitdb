@@ -1022,6 +1022,15 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                     .{ .hash_map_get = .{ .value = hash_buffer("even") } },
                 });
                 try expectEqual(xitdb.SLOT_COUNT + 1, cursor.db.count(even_list_slot));
+
+                // check all values in the new array map
+                for (values.items, 0..) |val, i| {
+                    const n = try cursor.readInt(void, &[_]PathPart(void){
+                        .{ .hash_map_get = .{ .value = hash_buffer("even") } },
+                        .{ .linked_array_hash_map_get_index = .{ .value = i } },
+                    });
+                    try expectEqual(val, n);
+                }
             }
         };
         _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){

@@ -149,6 +149,11 @@ pub fn PathPart(comptime Ctx: type) type {
             key: Hash,
             value: Hash,
         },
+        linked_array_hash_map_get_index: union(enum) {
+            kv_pair: i65,
+            key: i65,
+            value: i65,
+        },
         write: union(enum) {
             slot: Slot,
             uint: u64,
@@ -1797,6 +1802,37 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     const key_slot_pos = hash_pos + byteSizeOf(Hash);
                     const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
                     const final_slot_ptr = switch (part.linked_array_hash_map_get) {
+                        .kv_pair => next_slot_ptr,
+                        .key => blk: {
+                            try self.core.seekTo(key_slot_pos);
+                            const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+                            break :blk SlotPointer{ .position = key_slot_pos, .slot = slot };
+                        },
+                        .value => blk: {
+                            try self.core.seekTo(value_slot_pos);
+                            const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+                            break :blk SlotPointer{ .position = value_slot_pos, .slot = slot };
+                        },
+                    };
+
+                    return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = final_slot_ptr });
+                },
+                .linked_array_hash_map_get_index => {
+                    const index = switch (part.linked_array_hash_map_get_index) {
+                        .kv_pair => part.linked_array_hash_map_get_index.kv_pair,
+                        .key => part.linked_array_hash_map_get_index.key,
+                        .value => part.linked_array_hash_map_get_index.value,
+                    };
+                    const next_slot_ptr = try self.readSlot(void, &[_]PathPart(void){
+                        .{ .linked_array_list_get = .{ .index = index } },
+                    }, allow_write, cursor);
+
+                    // get the correct slot pointer
+                    const reader = self.core.reader();
+                    const hash_pos = next_slot_ptr.slot.value;
+                    const key_slot_pos = hash_pos + byteSizeOf(Hash);
+                    const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
+                    const final_slot_ptr = switch (part.linked_array_hash_map_get_index) {
                         .kv_pair => next_slot_ptr,
                         .key => blk: {
                             try self.core.seekTo(key_slot_pos);
