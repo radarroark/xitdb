@@ -1814,6 +1814,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = final_slot_ptr });
                 },
                 .linked_array_hash_map_get_index => {
+                    if (cursor != .slot_ptr) return error.NotImplemented;
+
                     const index = switch (part.linked_array_hash_map_get_index) {
                         .kv_pair => part.linked_array_hash_map_get_index.kv_pair,
                         .key => part.linked_array_hash_map_get_index.key,
