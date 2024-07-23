@@ -992,10 +992,12 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 for (0..xitdb.SLOT_COUNT + 1) |i| {
                     const n = i * 2;
                     try values.append(n);
+                    const key = try std.fmt.allocPrint(self.allocator, "wat{}", .{i});
+                    defer self.allocator.free(key);
                     _ = try cursor.execute(void, &[_]PathPart(void){
                         .{ .hash_map_get = .{ .value = hash_buffer("even") } },
                         .linked_array_hash_map_create,
-                        .{ .linked_array_hash_map_get = .append },
+                        .{ .linked_array_hash_map_get = .{ .append = hash_buffer(key) } },
                         .{ .write = .{ .uint = n } },
                     });
                 }

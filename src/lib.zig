@@ -149,7 +149,7 @@ pub fn PathPart(comptime Ctx: type) type {
         hash_map_remove: Hash,
         linked_array_hash_map_create,
         linked_array_hash_map_get: union(enum) {
-            append,
+            append: Hash,
         },
         write: union(enum) {
             slot: Slot,
@@ -1749,9 +1749,23 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         .append => {
                             if (!allow_write) return error.WriteNotAllowed;
 
+                            if (cursor != .slot_ptr) return error.NotImplemented;
+
                             const next_slot_ptr = try self.readSlot(void, &[_]PathPart(void){
                                 .{ .linked_array_list_get = .append },
                             }, allow_write, cursor);
+
+                            // save position of the new slot in the map
+                            const map_start = cursor.slot_ptr.position + byteSizeOf(LinkedArrayListHeader);
+                            const map_slot_ptr = SlotPointer{
+                                .position = std.math.maxInt(u64), // this shouldn't ever be read
+                                .slot = Slot.init(map_start, .hash_map),
+                            };
+                            _ = try self.readSlot(void, &[_]PathPart(void){
+                                .{ .hash_map_get = .{ .value = part.linked_array_hash_map_get.append } },
+                                .{ .write = .{ .uint = next_slot_ptr.position } },
+                            }, allow_write, .{ .slot_ptr = map_slot_ptr });
+
                             return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                         },
                     }
