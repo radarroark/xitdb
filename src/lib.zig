@@ -1785,11 +1785,16 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }, allow_write, .{ .slot_ptr = map_slot_ptr });
 
                     // add slot to linked array list if the key wasn't already in the map
-                    if (next_slot_ptr.is_new) {
-                        _ = try self.readSlot(void, &[_]PathPart(void){
-                            .{ .linked_array_list_get = .append },
-                            .{ .write = .{ .slot = next_slot_ptr.slot } },
-                        }, allow_write, cursor);
+                    if (allow_write) {
+                        if (next_slot_ptr.is_new) {
+                            _ = try self.readSlot(void, &[_]PathPart(void){
+                                .{ .linked_array_list_get = .append },
+                                .{ .write = .{ .slot = next_slot_ptr.slot } },
+                            }, allow_write, cursor);
+                        } else {
+                            // TODO: update existing slot in the list with next_slot_ptr.slot
+                            // so it is correct after updating an existing kv pair
+                        }
                     }
 
                     // get the correct slot pointer
