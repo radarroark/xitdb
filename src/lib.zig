@@ -1302,6 +1302,28 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             return Slot.init(list_start, .linked_array_list);
         }
 
+        pub fn count(self: *Database(db_kind), slot: Slot) !u64 {
+            const reader = self.core.reader();
+            switch (try Tag.init(slot)) {
+                .array_list => {
+                    try self.core.seekTo(slot.value);
+                    const header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
+                    return header.size;
+                },
+                .linked_array_list => {
+                    try self.core.seekTo(slot.value);
+                    const header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
+                    return header.size;
+                },
+                .linked_array_hash_map => {
+                    try self.core.seekTo(slot.value);
+                    const header: LinkedArrayHashMapHeader = @bitCast(try reader.readInt(LinkedArrayHashMapHeaderInt, .big));
+                    return header.list_header.size;
+                },
+                else => return error.UnexpectedTag,
+            }
+        }
+
         // private
 
         fn writeHeader(self: *Database(db_kind)) !void {
@@ -2156,22 +2178,22 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
         }
 
         fn countLinkedArrayListLeafCount(block: []LinkedArrayListSlot, shift: u6, i: u4) u64 {
-            var count: u64 = 0;
+            var n: u64 = 0;
             // for leaf nodes, count all non-empty slots along with the slot being accessed
             if (shift == 0) {
                 for (block, 0..) |block_slot, block_i| {
                     if (block_slot.slot.tag != 0 or block_i == i) {
-                        count += 1;
+                        n += 1;
                     }
                 }
             }
             // for non-leaf nodes, add up their sizes
             else {
                 for (block) |block_slot| {
-                    count += block_slot.size;
+                    n += block_slot.size;
                 }
             }
-            return count;
+            return n;
         }
 
         fn keyAndIndexForLinkedArrayList(slot_block: []LinkedArrayListSlot, key: u64, shift: u6) ?struct { key: u64, index: u4 } {

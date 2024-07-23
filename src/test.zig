@@ -767,6 +767,12 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             i += 1;
         }
         try expectEqual(10, i);
+
+        // get list slot
+        const list_slot = try root_cursor.execute(void, &[_]PathPart(void){
+            .{ .array_list_get = .{ .index = .{ .index = 0, .reverse = true } } },
+        });
+        try expectEqual(10, db.count(list_slot));
     }
 
     // iterate over inner hash_map
@@ -902,6 +908,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 const even_list_slot = try cursor.execute(void, &[_]PathPart(void){
                     .{ .hash_map_get = .{ .value = hash_buffer("even") } },
                 });
+                try expectEqual(xitdb.SLOT_COUNT + 1, cursor.db.count(even_list_slot));
 
                 // concat the list with itself multiple times.
                 // since each list has 17 items, each concat
@@ -1001,6 +1008,12 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                         .{ .write = .{ .uint = n } },
                     });
                 }
+
+                // get array map slot
+                const even_list_slot = try cursor.execute(void, &[_]PathPart(void){
+                    .{ .hash_map_get = .{ .value = hash_buffer("even") } },
+                });
+                try expectEqual(xitdb.SLOT_COUNT + 1, cursor.db.count(even_list_slot));
             }
         };
         _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
