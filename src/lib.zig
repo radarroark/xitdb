@@ -1768,55 +1768,49 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 .linked_array_hash_map_get => {
                     if (cursor != .slot_ptr) return error.NotImplemented;
 
-                    switch (part.linked_array_hash_map_get) {
-                        .parent, .key, .value => {
-                            if (!allow_write) return error.WriteNotAllowed;
+                    // get slot from map
+                    const map_start = cursor.slot_ptr.position + byteSizeOf(LinkedArrayListHeader);
+                    const map_slot_ptr = SlotPointer{
+                        .position = std.math.maxInt(u64), // this shouldn't ever be read
+                        .slot = Slot.init(map_start, .hash_map),
+                    };
+                    const hash = switch (part.linked_array_hash_map_get) {
+                        .parent => part.linked_array_hash_map_get.parent,
+                        .key => part.linked_array_hash_map_get.key,
+                        .value => part.linked_array_hash_map_get.value,
+                    };
+                    const next_slot_ptr = try self.readSlot(void, &[_]PathPart(void){
+                        .{ .hash_map_get = .{ .parent = hash } },
+                    }, allow_write, .{ .slot_ptr = map_slot_ptr });
 
-                            // get slot from map
-                            const map_start = cursor.slot_ptr.position + byteSizeOf(LinkedArrayListHeader);
-                            const map_slot_ptr = SlotPointer{
-                                .position = std.math.maxInt(u64), // this shouldn't ever be read
-                                .slot = Slot.init(map_start, .hash_map),
-                            };
-                            const hash = switch (part.linked_array_hash_map_get) {
-                                .parent => part.linked_array_hash_map_get.parent,
-                                .key => part.linked_array_hash_map_get.key,
-                                .value => part.linked_array_hash_map_get.value,
-                            };
-                            const next_slot_ptr = try self.readSlot(void, &[_]PathPart(void){
-                                .{ .hash_map_get = .{ .parent = hash } },
-                            }, allow_write, .{ .slot_ptr = map_slot_ptr });
-
-                            // add slot to linked array list if the key wasn't already in the map
-                            if (next_slot_ptr.is_new) {
-                                _ = try self.readSlot(void, &[_]PathPart(void){
-                                    .{ .linked_array_list_get = .append },
-                                    .{ .write = .{ .slot = next_slot_ptr.slot } },
-                                }, allow_write, cursor);
-                            }
-
-                            // get the correct slot pointer
-                            const reader = self.core.reader();
-                            const hash_pos = next_slot_ptr.slot.value;
-                            const key_slot_pos = hash_pos + byteSizeOf(Hash);
-                            const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
-                            const final_slot_ptr = switch (part.linked_array_hash_map_get) {
-                                .parent => next_slot_ptr,
-                                .key => blk: {
-                                    try self.core.seekTo(key_slot_pos);
-                                    const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
-                                    break :blk SlotPointer{ .position = key_slot_pos, .slot = slot };
-                                },
-                                .value => blk: {
-                                    try self.core.seekTo(value_slot_pos);
-                                    const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
-                                    break :blk SlotPointer{ .position = value_slot_pos, .slot = slot };
-                                },
-                            };
-
-                            return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = final_slot_ptr });
-                        },
+                    // add slot to linked array list if the key wasn't already in the map
+                    if (next_slot_ptr.is_new) {
+                        _ = try self.readSlot(void, &[_]PathPart(void){
+                            .{ .linked_array_list_get = .append },
+                            .{ .write = .{ .slot = next_slot_ptr.slot } },
+                        }, allow_write, cursor);
                     }
+
+                    // get the correct slot pointer
+                    const reader = self.core.reader();
+                    const hash_pos = next_slot_ptr.slot.value;
+                    const key_slot_pos = hash_pos + byteSizeOf(Hash);
+                    const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
+                    const final_slot_ptr = switch (part.linked_array_hash_map_get) {
+                        .parent => next_slot_ptr,
+                        .key => blk: {
+                            try self.core.seekTo(key_slot_pos);
+                            const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+                            break :blk SlotPointer{ .position = key_slot_pos, .slot = slot };
+                        },
+                        .value => blk: {
+                            try self.core.seekTo(value_slot_pos);
+                            const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+                            break :blk SlotPointer{ .position = value_slot_pos, .slot = slot };
+                        },
+                    };
+
+                    return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = final_slot_ptr });
                 },
                 .write => {
                     if (!allow_write) return error.WriteNotAllowed;
