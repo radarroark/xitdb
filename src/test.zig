@@ -755,7 +755,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         var inner_cursor = (try root_cursor.readCursor(void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = -1 } },
         })).?;
-        var iter = try inner_cursor.iter(.array_list);
+        var iter = try inner_cursor.iter();
         defer iter.deinit();
         var i: u64 = 0;
         while (try iter.next()) |*next_cursor| {
@@ -833,7 +833,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         var inner_cursor = (try root_cursor.readCursor(void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = -1 } },
         })).?;
-        var iter = try inner_cursor.iter(.hash_map);
+        var iter = try inner_cursor.iter();
         defer iter.deinit();
         var i: u64 = 0;
         while (try iter.next()) |*next_cursor| {
@@ -909,6 +909,18 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                     .{ .hash_map_get = .{ .value = hash_buffer("even") } },
                 });
                 try expectEqual(xitdb.SLOT_COUNT + 1, cursor.db.count(even_list_slot));
+
+                // iterate over list
+                var inner_cursor = (try cursor.readCursor(void, &[_]PathPart(void){
+                    .{ .hash_map_get = .{ .value = hash_buffer("even") } },
+                })).?;
+                var iter = try inner_cursor.iter();
+                defer iter.deinit();
+                var i: u64 = 0;
+                while (try iter.next()) |_| {
+                    i += 1;
+                }
+                try expectEqual(xitdb.SLOT_COUNT + 1, i);
 
                 // concat the list with itself multiple times.
                 // since each list has 17 items, each concat
@@ -1031,6 +1043,18 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                     });
                     try expectEqual(val, n);
                 }
+
+                // iterate over array map
+                var inner_cursor = (try cursor.readCursor(void, &[_]PathPart(void){
+                    .{ .hash_map_get = .{ .value = hash_buffer("even") } },
+                })).?;
+                var iter = try inner_cursor.iter();
+                defer iter.deinit();
+                var i: u64 = 0;
+                while (try iter.next()) |_| {
+                    i += 1;
+                }
+                try expectEqual(xitdb.SLOT_COUNT + 1, i);
             }
         };
         _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){

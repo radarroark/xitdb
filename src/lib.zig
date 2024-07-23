@@ -761,12 +761,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 cursor: Cursor,
                 core: IterCore,
 
-                pub const IterKind = enum {
-                    array_list,
-                    linked_array_list,
-                    hash_map,
-                };
-                pub const IterCore = union(IterKind) {
+                pub const IterCore = union(enum) {
                     array_list: struct {
                         index: u64,
                     },
@@ -784,14 +779,14 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     };
                 };
 
-                pub fn init(cursor: Cursor, iter_db_kind: IterKind) !Iter {
-                    const core: IterCore = switch (iter_db_kind) {
+                pub fn init(cursor: Cursor) !Iter {
+                    const core: IterCore = switch (try Tag.init(cursor.read_slot_cursor.slot_ptr.slot)) {
                         .array_list => .{
                             .array_list = .{
                                 .index = 0,
                             },
                         },
-                        .linked_array_list => .{
+                        .linked_array_list, .linked_array_hash_map => .{
                             .linked_array_list = .{
                                 .index = 0,
                             },
@@ -836,6 +831,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 },
                             },
                         },
+                        else => return error.UnexpectedTag,
                     };
                     return .{
                         .cursor = cursor,
@@ -946,8 +942,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
             };
 
-            pub fn iter(self: Cursor, iter_db_kind: Iter.IterKind) !Iter {
-                return try Iter.init(self, iter_db_kind);
+            pub fn iter(self: Cursor) !Iter {
+                return try Iter.init(self);
             }
         };
 
