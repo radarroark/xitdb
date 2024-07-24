@@ -1355,7 +1355,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
         fn readSlot(self: *Database(db_kind), comptime Ctx: type, path: []const PathPart(Ctx), allow_write: bool, cursor: ReadSlotCursor) anyerror!SlotPointer {
             const part = if (path.len > 0) path[0] else switch (cursor) {
-                .db_start => return SlotPointer{ .position = 0, .slot = .{} },
+                .db_start => return error.PathNotFound,
                 .slot_ptr => {
                     if (!allow_write and cursor.slot_ptr.slot.tag == 0) {
                         return error.KeyNotFound;
