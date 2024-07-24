@@ -1118,9 +1118,9 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                     defer iter.deinit();
                     var i: u64 = 0;
                     while (try iter.next()) |*next_cursor| {
-                        const value_cursor = try next_cursor.valueCursor();
-                        const n = (try value_cursor.readSlot(.read_only, void, &[_]PathPart(void){})).?.value;
-                        try expectEqual(values.items[i], n);
+                        const kv_slot = (try next_cursor.readSlot(.read_only, void, &[_]PathPart(void){})).?;
+                        const kv_pair = try next_cursor.db.readKeyValuePair(kv_slot);
+                        try expectEqual(values.items[i], kv_pair.value_slot.value);
                         i += 1;
                     }
                     try expectEqual(xitdb.SLOT_COUNT + 1, i);

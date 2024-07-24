@@ -616,54 +616,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 };
             }
 
-            pub fn keyCursor(self: Cursor) !Cursor {
-                const core_reader = self.db.core.reader();
-
-                const slot_ptr = self.read_slot_cursor.slot_ptr;
-                const slot = slot_ptr.slot;
-                const ptr = slot.value;
-                const tag = try Tag.init(slot);
-
-                if (tag != .kv_pair) {
-                    return error.UnexpectedTag;
-                }
-
-                const slot_position = ptr + HASH_SIZE;
-                try self.db.core.seekTo(slot_position);
-                const key_slot: Slot = @bitCast(try core_reader.readInt(SlotInt, .big));
-
-                return Cursor{
-                    .read_slot_cursor = .{
-                        .slot_ptr = .{ .position = slot_position, .slot = key_slot },
-                    },
-                    .db = self.db,
-                };
-            }
-
-            pub fn valueCursor(self: Cursor) !Cursor {
-                const core_reader = self.db.core.reader();
-
-                const slot_ptr = self.read_slot_cursor.slot_ptr;
-                const slot = slot_ptr.slot;
-                const ptr = slot.value;
-                const tag = try Tag.init(slot);
-
-                if (tag != .kv_pair) {
-                    return error.UnexpectedTag;
-                }
-
-                const slot_position = ptr + HASH_SIZE + byteSizeOf(Slot);
-                try self.db.core.seekTo(slot_position);
-                const value_slot: Slot = @bitCast(try core_reader.readInt(SlotInt, .big));
-
-                return Cursor{
-                    .read_slot_cursor = .{
-                        .slot_ptr = .{ .position = slot_position, .slot = value_slot },
-                    },
-                    .db = self.db,
-                };
-            }
-
             pub fn writeBytes(self: *Cursor, buffer: []const u8, mode: enum { once, replace }, comptime Ctx: type, path: []const PathPart(Ctx)) !Slot {
                 var cursor_writer = try self.writer(Ctx, path);
                 if (mode == .replace or cursor_writer.slot_ptr.slot.tag == 0) {
