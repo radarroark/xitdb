@@ -257,12 +257,15 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         }
 
         // read foo
-        const bar_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-            .{ .array_list_get = .{ .index = -1 } },
-            .{ .hash_map_get = .{ .value = foo_key } },
-        })).?;
-        defer allocator.free(bar_value);
-        try std.testing.expectEqualStrings("bar", bar_value);
+        {
+            const bar_slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
+                .{ .array_list_get = .{ .index = -1 } },
+                .{ .hash_map_get = .{ .value = foo_key } },
+            })).?;
+            const bar_value = try db.readBytesAlloc(allocator, MAX_READ_BYTES, bar_slot);
+            defer allocator.free(bar_value);
+            try std.testing.expectEqualStrings("bar", bar_value);
+        }
 
         // read foo from ctx
         {
@@ -272,7 +275,8 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
                     try std.testing.expect(cursor.pointer() != null);
 
-                    const value = (try cursor.readBytesAlloc(self.allocator, MAX_READ_BYTES, void, &[_]PathPart(void){})).?;
+                    const value_slot = (try cursor.readSlot(.read_only, void, &[_]PathPart(void){})).?;
+                    const value = try cursor.db.readBytesAlloc(self.allocator, MAX_READ_BYTES, value_slot);
                     defer self.allocator.free(value);
                     try std.testing.expectEqualStrings("bar", value);
 
@@ -338,7 +342,8 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                     try writer.writeAll("a");
                     try writer.finish();
 
-                    const value = (try cursor.readBytesAlloc(self.allocator, MAX_READ_BYTES, void, &[_]PathPart(void){})).?;
+                    const value_slot = (try cursor.readSlot(.read_only, void, &[_]PathPart(void){})).?;
+                    const value = try cursor.db.readBytesAlloc(self.allocator, MAX_READ_BYTES, value_slot);
                     defer self.allocator.free(value);
                     try std.testing.expectEqualStrings("baz", value);
                 }
@@ -353,29 +358,34 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
         // write bar -> foo with writeBytes
         const bar_key = hash_buffer("bar");
-        const foo_slot = try root_cursor.writeBytes("foo", .once, void, &[_]PathPart(void){
-            .{ .array_list_get = .append_copy },
-            .hash_map_create,
-            .{ .hash_map_get = .{ .value = bar_key } },
-        });
-        try expectEqual(foo_slot, try root_cursor.writeBytes("foo", .once, void, &[_]PathPart(void){
-            .{ .array_list_get = .append_copy },
-            .hash_map_create,
-            .{ .hash_map_get = .{ .value = bar_key } },
-        }));
-        try std.testing.expect(!foo_slot.eql(try root_cursor.writeBytes("foo", .replace, void, &[_]PathPart(void){
-            .{ .array_list_get = .append_copy },
-            .hash_map_create,
-            .{ .hash_map_get = .{ .value = bar_key } },
-        })));
+        {
+            const foo_slot = try root_cursor.writeBytes("foo", .once, void, &[_]PathPart(void){
+                .{ .array_list_get = .append_copy },
+                .hash_map_create,
+                .{ .hash_map_get = .{ .value = bar_key } },
+            });
+            try expectEqual(foo_slot, try root_cursor.writeBytes("foo", .once, void, &[_]PathPart(void){
+                .{ .array_list_get = .append_copy },
+                .hash_map_create,
+                .{ .hash_map_get = .{ .value = bar_key } },
+            }));
+            try std.testing.expect(!foo_slot.eql(try root_cursor.writeBytes("foo", .replace, void, &[_]PathPart(void){
+                .{ .array_list_get = .append_copy },
+                .hash_map_create,
+                .{ .hash_map_get = .{ .value = bar_key } },
+            })));
+        }
 
         // read bar
-        const foo_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-            .{ .array_list_get = .{ .index = -1 } },
-            .{ .hash_map_get = .{ .value = bar_key } },
-        })).?;
-        defer allocator.free(foo_value);
-        try std.testing.expectEqualStrings("foo", foo_value);
+        {
+            const foo_slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
+                .{ .array_list_get = .{ .index = -1 } },
+                .{ .hash_map_get = .{ .value = bar_key } },
+            })).?;
+            const foo_value = try db.readBytesAlloc(allocator, MAX_READ_BYTES, foo_slot);
+            defer allocator.free(foo_value);
+            try std.testing.expectEqualStrings("foo", foo_value);
+        }
 
         // if error in ctx, db doesn't change
         {
@@ -397,21 +407,25 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             }) catch {};
 
             // read foo
-            const value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+            const value_slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = foo_key } },
             })).?;
+            const value = try db.readBytesAlloc(allocator, MAX_READ_BYTES, value_slot);
             defer allocator.free(value);
             try std.testing.expectEqualStrings("baz", value);
         }
 
         // read foo into stack-allocated buffer
-        var bar_buffer = [_]u8{0} ** 3;
-        const bar_buffer_value = (try root_cursor.readBytes(&bar_buffer, void, &[_]PathPart(void){
-            .{ .array_list_get = .{ .index = -1 } },
-            .{ .hash_map_get = .{ .value = foo_key } },
-        })).?;
-        try std.testing.expectEqualStrings("baz", bar_buffer_value);
+        {
+            const bar_slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
+                .{ .array_list_get = .{ .index = -1 } },
+                .{ .hash_map_get = .{ .value = foo_key } },
+            })).?;
+            var bar_buffer = [_]u8{0} ** 3;
+            const bar_buffer_value = try db.readBytes(&bar_buffer, bar_slot);
+            try std.testing.expectEqualStrings("baz", bar_buffer_value);
+        }
 
         // write bar and get pointer to it
         const bar_slot = (try root_cursor.readSlot(.read_write, void, &[_]PathPart(void){
@@ -428,24 +442,26 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .hash_map_get = .{ .value = foo_key } },
             .{ .write = .{ .slot = bar_slot } },
         });
-        const baz_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+        const baz_slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = -1 } },
             .{ .hash_map_get = .{ .value = foo_key } },
         })).?;
+        const baz_value = try db.readBytesAlloc(allocator, MAX_READ_BYTES, baz_slot);
         defer allocator.free(baz_value);
         try std.testing.expectEqualStrings("bar", baz_value);
 
         // can still read the old value
-        const baz_value2 = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+        const baz_slot2 = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = -2 } },
             .{ .hash_map_get = .{ .value = foo_key } },
         })).?;
+        const baz_value2 = try db.readBytesAlloc(allocator, MAX_READ_BYTES, baz_slot2);
         defer allocator.free(baz_value2);
         try std.testing.expectEqualStrings("baz", baz_value2);
 
         // key not found
         const not_found_key = hash_buffer("this doesn't exist");
-        try expectEqual(null, try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+        try expectEqual(null, try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = -1 } },
             .{ .hash_map_get = .{ .value = not_found_key } },
         }));
@@ -461,18 +477,20 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         });
 
         // read conflicting key
-        const hello_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+        const hello_slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = -1 } },
             .{ .hash_map_get = .{ .value = conflict_key } },
         })).?;
+        const hello_value = try db.readBytesAlloc(allocator, MAX_READ_BYTES, hello_slot);
         defer allocator.free(hello_value);
         try std.testing.expectEqualStrings("hello", hello_value);
 
         // we can still read foo
-        const bar_value2 = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+        const bar_slot2 = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = -1 } },
             .{ .hash_map_get = .{ .value = foo_key } },
         })).?;
+        const bar_value2 = try db.readBytesAlloc(allocator, MAX_READ_BYTES, bar_slot2);
         defer allocator.free(bar_value2);
         try std.testing.expectEqualStrings("bar", bar_value2);
 
@@ -483,18 +501,20 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             .{ .hash_map_get = .{ .value = conflict_key } },
             .{ .write = .{ .bytes = "goodbye" } },
         });
-        const goodbye_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+        const goodbye_slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = -1 } },
             .{ .hash_map_get = .{ .value = conflict_key } },
         })).?;
+        const goodbye_value = try db.readBytesAlloc(allocator, MAX_READ_BYTES, goodbye_slot);
         defer allocator.free(goodbye_value);
         try std.testing.expectEqualStrings("goodbye", goodbye_value);
 
         // we can still read the old conflicting key
-        const hello_value2 = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+        const hello_slot2 = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = -2 } },
             .{ .hash_map_get = .{ .value = conflict_key } },
         })).?;
+        const hello_value2 = try db.readBytesAlloc(allocator, MAX_READ_BYTES, hello_slot2);
         defer allocator.free(hello_value2);
         try std.testing.expectEqualStrings("hello", hello_value2);
 
@@ -539,11 +559,12 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             });
 
             // read apple
-            const apple_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+            const apple_slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = hash_buffer("fruits") } },
                 .{ .array_list_get = .{ .index = -1 } },
             })).?;
+            const apple_value = try db.readBytesAlloc(allocator, MAX_READ_BYTES, apple_slot);
             defer allocator.free(apple_value);
             try std.testing.expectEqualStrings("apple", apple_value);
 
@@ -558,16 +579,17 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             });
 
             // read banana
-            const banana_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+            const banana_slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = hash_buffer("fruits") } },
                 .{ .array_list_get = .{ .index = -1 } },
             })).?;
+            const banana_value = try db.readBytesAlloc(allocator, MAX_READ_BYTES, banana_slot);
             defer allocator.free(banana_value);
             try std.testing.expectEqualStrings("banana", banana_value);
 
             // can't read banana in older array_list
-            try expectEqual(null, try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+            try expectEqual(null, try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = -2 } },
                 .{ .hash_map_get = .{ .value = hash_buffer("fruits") } },
                 .{ .array_list_get = .{ .index = 1 } },
@@ -590,20 +612,22 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             });
 
             // read pear
-            const pear_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+            const pear_slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = hash_buffer("fruits") } },
                 .{ .array_list_get = .{ .index = -2 } },
             })).?;
+            const pear_value = try db.readBytesAlloc(allocator, MAX_READ_BYTES, pear_slot);
             defer allocator.free(pear_value);
             try std.testing.expectEqualStrings("pear", pear_value);
 
             // read grape
-            const grape_value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+            const grape_slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = hash_buffer("fruits") } },
                 .{ .array_list_get = .{ .index = -1 } },
             })).?;
+            const grape_value = try db.readBytesAlloc(allocator, MAX_READ_BYTES, grape_slot);
             defer allocator.free(grape_value);
             try std.testing.expectEqualStrings("grape", grape_value);
         }
@@ -636,10 +660,11 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         for (0..xitdb.SLOT_COUNT + 1) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
-            const value2 = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+            const slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = i } },
                 .{ .hash_map_get = .{ .value = wat_key } },
             })).?;
+            const value2 = try db.readBytesAlloc(allocator, MAX_READ_BYTES, slot);
             defer allocator.free(value2);
             try std.testing.expectEqualStrings(value, value2);
         }
@@ -671,10 +696,11 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         for (0..xitdb.SLOT_COUNT + 1) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
-            const value2 = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+            const slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .array_list_get = .{ .index = i } },
             })).?;
+            const value2 = try db.readBytesAlloc(allocator, MAX_READ_BYTES, slot);
             defer allocator.free(value2);
             try std.testing.expectEqualStrings(value, value2);
         }
@@ -688,12 +714,15 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         });
 
         // read last value
-        const value = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-            .{ .array_list_get = .{ .index = -1 } },
-            .{ .array_list_get = .{ .index = -1 } },
-        })).?;
-        defer allocator.free(value);
-        try std.testing.expectEqualStrings("hello", value);
+        {
+            const slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
+                .{ .array_list_get = .{ .index = -1 } },
+                .{ .array_list_get = .{ .index = -1 } },
+            })).?;
+            const value = try db.readBytesAlloc(allocator, MAX_READ_BYTES, slot);
+            defer allocator.free(value);
+            try std.testing.expectEqualStrings("hello", value);
+        }
 
         // overwrite last value with goodbye
         _ = try root_cursor.readSlot(.read_write, void, &[_]PathPart(void){
@@ -704,20 +733,26 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         });
 
         // read last value
-        const value2 = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-            .{ .array_list_get = .{ .index = -1 } },
-            .{ .array_list_get = .{ .index = -1 } },
-        })).?;
-        defer allocator.free(value2);
-        try std.testing.expectEqualStrings("goodbye", value2);
+        {
+            const slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
+                .{ .array_list_get = .{ .index = -1 } },
+                .{ .array_list_get = .{ .index = -1 } },
+            })).?;
+            const value = try db.readBytesAlloc(allocator, MAX_READ_BYTES, slot);
+            defer allocator.free(value);
+            try std.testing.expectEqualStrings("goodbye", value);
+        }
 
         // previous last value is still hello
-        const value3 = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
-            .{ .array_list_get = .{ .index = -2 } },
-            .{ .array_list_get = .{ .index = -1 } },
-        })).?;
-        defer allocator.free(value3);
-        try std.testing.expectEqualStrings("hello", value3);
+        {
+            const slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
+                .{ .array_list_get = .{ .index = -2 } },
+                .{ .array_list_get = .{ .index = -1 } },
+            })).?;
+            const value = try db.readBytesAlloc(allocator, MAX_READ_BYTES, slot);
+            defer allocator.free(value);
+            try std.testing.expectEqualStrings("hello", value);
+        }
     }
 
     // iterate over inner array_list
@@ -743,10 +778,11 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 .{ .write = .{ .bytes = value } },
             });
 
-            const value2 = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+            const slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .array_list_get = .{ .index = -1 } },
             })).?;
+            const value2 = try db.readBytesAlloc(allocator, MAX_READ_BYTES, slot);
             defer allocator.free(value2);
             try std.testing.expectEqualStrings(value, value2);
         }
@@ -761,7 +797,8 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         while (try iter.next()) |*next_cursor| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
-            const value2 = (try next_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){})).?;
+            const slot = (try next_cursor.readSlot(.read_only, void, &[_]PathPart(void){})).?;
+            const value2 = try db.readBytesAlloc(allocator, MAX_READ_BYTES, slot);
             defer allocator.free(value2);
             try std.testing.expectEqualStrings(value, value2);
             i += 1;
@@ -799,10 +836,11 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 .{ .write = .{ .bytes = value } },
             });
 
-            const value2 = (try root_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){
+            const slot = (try root_cursor.readSlot(.read_only, void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = wat_key } },
             })).?;
+            const value2 = try db.readBytesAlloc(allocator, MAX_READ_BYTES, slot);
             defer allocator.free(value2);
             try std.testing.expectEqualStrings(value, value2);
         }
@@ -837,16 +875,19 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         defer iter.deinit();
         var i: u64 = 0;
         while (try iter.next()) |*next_cursor| {
-            const hash = (try next_cursor.readHash(void, &[_]PathPart(void){})).?;
+            const kv_slot = (try next_cursor.readSlot(.read_only, void, &[_]PathPart(void){})).?;
+            const hash = try db.readHash(kv_slot);
             const key_cursor = try next_cursor.keyCursor();
             const value_cursor = try next_cursor.valueCursor();
             if (hash == foo_key) {
-                const key = (try key_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){})).?;
+                const key_slot = (try key_cursor.readSlot(.read_only, void, &[_]PathPart(void){})).?;
+                const key = try db.readBytesAlloc(allocator, MAX_READ_BYTES, key_slot);
                 defer allocator.free(key);
                 try std.testing.expectEqualStrings("foo", key);
                 try expectEqual(42, (try value_cursor.readSlot(.read_only, void, &[_]PathPart(void){})).?.value);
             } else {
-                const value = (try value_cursor.readBytesAlloc(allocator, MAX_READ_BYTES, void, &[_]PathPart(void){})).?;
+                const value_slot = (try value_cursor.readSlot(.read_only, void, &[_]PathPart(void){})).?;
+                const value = try db.readBytesAlloc(allocator, MAX_READ_BYTES, value_slot);
                 defer allocator.free(value);
                 try expectEqual(hash, hash_buffer(value));
             }
@@ -1065,10 +1106,11 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                         })).?.value;
                         try expectEqual(val, n);
 
-                        const hash = (try cursor.readHash(void, &[_]PathPart(void){
+                        const kv_slot = (try cursor.readSlot(.read_only, void, &[_]PathPart(void){
                             .{ .hash_map_get = .{ .value = hash_buffer("even") } },
                             .{ .array_hash_map_get_by_index = .{ .kv_pair = i } },
                         })).?;
+                        const hash = try cursor.db.readHash(kv_slot);
                         const index = (try cursor.readSlot(.read_only, void, &[_]PathPart(void){
                             .{ .hash_map_get = .{ .value = hash_buffer("even") } },
                             .{ .array_hash_map_get = .{ .metadata = hash } },
