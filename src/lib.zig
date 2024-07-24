@@ -123,6 +123,12 @@ const LinkedArrayListBlockInfo = struct {
     parent_slot: LinkedArrayListSlot,
 };
 
+const HashMapSlotKind = enum {
+    kv_pair,
+    key,
+    value,
+};
+
 pub fn PathPart(comptime Ctx: type) type {
     return union(enum) {
         array_list_create,
@@ -137,19 +143,19 @@ pub fn PathPart(comptime Ctx: type) type {
             append,
         },
         hash_map_create,
-        hash_map_get: union(enum) {
+        hash_map_get: union(HashMapSlotKind) {
             kv_pair: Hash,
             key: Hash,
             value: Hash,
         },
         hash_map_remove: Hash,
         array_hash_map_create,
-        array_hash_map_get: union(enum) {
+        array_hash_map_get: union(HashMapSlotKind) {
             kv_pair: Hash,
             key: Hash,
             value: Hash,
         },
-        array_hash_map_get_index: union(enum) {
+        array_hash_map_get_index: union(HashMapSlotKind) {
             kv_pair: i65,
             key: i65,
             value: i65,
@@ -1914,13 +1920,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
         // hash_map
 
-        const HashMapReturn = enum {
-            kv_pair,
-            key,
-            value,
-        };
-
-        fn readMapSlot(self: *Database(db_kind), index_pos: u64, key_hash: Hash, key_offset: u8, write_mode: WriteMode, hash_map_return: HashMapReturn) !SlotPointer {
+        fn readMapSlot(self: *Database(db_kind), index_pos: u64, key_hash: Hash, key_offset: u8, write_mode: WriteMode, hash_map_return: HashMapSlotKind) !SlotPointer {
             if (key_offset >= (HASH_SIZE * 8) / BIT_COUNT) {
                 return error.KeyOffsetExceeded;
             }
