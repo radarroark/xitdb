@@ -988,7 +988,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         }
     }
 
-    // linked_array_hash_map
+    // array_hash_map
     {
         const init_opts = try initOpts(kind, opts);
         var db = try Database(kind).init(allocator, init_opts);
@@ -1015,16 +1015,16 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                     defer self.allocator.free(key);
                     _ = try cursor.execute(void, &[_]PathPart(void){
                         .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                        .linked_array_hash_map_create,
-                        .{ .linked_array_hash_map_get = .{ .value = hash_buffer(key) } },
+                        .array_hash_map_create,
+                        .{ .array_hash_map_get = .{ .value = hash_buffer(key) } },
                         .{ .write = .{ .uint = n } },
                     });
 
                     // adding it again should not affect the size
                     _ = try cursor.execute(void, &[_]PathPart(void){
                         .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                        .linked_array_hash_map_create,
-                        .{ .linked_array_hash_map_get = .{ .value = hash_buffer(key) } },
+                        .array_hash_map_create,
+                        .{ .array_hash_map_get = .{ .value = hash_buffer(key) } },
                         .{ .write = .{ .uint = n } },
                     });
                 }
@@ -1039,7 +1039,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 for (values.items, 0..) |val, i| {
                     const n = try cursor.readInt(void, &[_]PathPart(void){
                         .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                        .{ .linked_array_hash_map_get_index = .{ .value = i } },
+                        .{ .array_hash_map_get_index = .{ .value = i } },
                     });
                     try expectEqual(val, n);
                 }
