@@ -1000,68 +1000,94 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         }
         var root_cursor = db.rootCursor();
 
-        const Ctx = struct {
-            allocator: std.mem.Allocator,
+        // create array map
+        {
+            const Ctx = struct {
+                allocator: std.mem.Allocator,
 
-            pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
-                var values = std.ArrayList(u64).init(self.allocator);
-                defer values.deinit();
-
-                // create array map
-                for (0..xitdb.SLOT_COUNT + 1) |i| {
-                    const n = i * 2;
-                    try values.append(n);
-                    const key = try std.fmt.allocPrint(self.allocator, "wat{}", .{i});
-                    defer self.allocator.free(key);
-                    _ = try cursor.execute(void, &[_]PathPart(void){
-                        .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                        .array_hash_map_create,
-                        .{ .array_hash_map_get = .{ .value = hash_buffer(key) } },
-                        .{ .write = .{ .uint = n } },
-                    });
-
-                    // adding it again should not affect the size
-                    _ = try cursor.execute(void, &[_]PathPart(void){
-                        .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                        .array_hash_map_create,
-                        .{ .array_hash_map_get = .{ .value = hash_buffer(key) } },
-                        .{ .write = .{ .uint = n } },
-                    });
+                pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
+                    for (0..xitdb.SLOT_COUNT + 1) |i| {
+                        const n = i * 2;
+                        const key = try std.fmt.allocPrint(self.allocator, "wat{}", .{i});
+                        defer self.allocator.free(key);
+                        _ = try cursor.execute(void, &[_]PathPart(void){
+                            .{ .hash_map_get = .{ .value = hash_buffer("even") } },
+                            .array_hash_map_create,
+                            .{ .array_hash_map_get = .{ .value = hash_buffer(key) } },
+                            .{ .write = .{ .uint = n } },
+                        });
+                    }
                 }
+            };
+            _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
+                .{ .array_list_get = .append_copy },
+                .hash_map_create,
+                .{ .ctx = .{ .allocator = allocator } },
+            });
+        }
 
-                // get array map slot
-                const even_list_slot = try cursor.execute(void, &[_]PathPart(void){
-                    .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                });
-                try expectEqual(xitdb.SLOT_COUNT + 1, cursor.db.count(even_list_slot));
+        // update array map and verify it works
+        {
+            const Ctx = struct {
+                allocator: std.mem.Allocator,
 
-                // check all values in the new array map
-                for (values.items, 0..) |val, i| {
-                    const n = try cursor.readInt(void, &[_]PathPart(void){
+                pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
+                    var values = std.ArrayList(u64).init(self.allocator);
+                    defer values.deinit();
+
+                    // update array map
+                    for (0..xitdb.SLOT_COUNT + 1) |i| {
+                        var n = i * 2;
+                        const key = try std.fmt.allocPrint(self.allocator, "wat{}", .{i});
+                        defer self.allocator.free(key);
+
+                        n = n * 2;
+                        try values.append(n);
+                        _ = try cursor.execute(void, &[_]PathPart(void){
+                            .{ .hash_map_get = .{ .value = hash_buffer("even") } },
+                            .array_hash_map_create,
+                            .{ .array_hash_map_get = .{ .value = hash_buffer(key) } },
+                            .{ .write = .{ .uint = n } },
+                        });
+                    }
+
+                    // get array map slot
+                    const even_list_slot = try cursor.execute(void, &[_]PathPart(void){
                         .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                        .{ .array_hash_map_get_index = .{ .value = i } },
                     });
-                    try expectEqual(val, n);
-                }
+                    try expectEqual(xitdb.SLOT_COUNT + 1, cursor.db.count(even_list_slot));
 
-                // iterate over array map
-                var inner_cursor = (try cursor.readCursor(void, &[_]PathPart(void){
-                    .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                })).?;
-                var iter = try inner_cursor.iter();
-                defer iter.deinit();
-                var i: u64 = 0;
-                while (try iter.next()) |_| {
-                    i += 1;
+                    // check all values in the new array map
+                    for (values.items, 0..) |val, i| {
+                        const n = try cursor.readInt(void, &[_]PathPart(void){
+                            .{ .hash_map_get = .{ .value = hash_buffer("even") } },
+                            .{ .array_hash_map_get_index = .{ .value = i } },
+                        });
+                        try expectEqual(val, n);
+                    }
+
+                    // iterate over array map
+                    var inner_cursor = (try cursor.readCursor(void, &[_]PathPart(void){
+                        .{ .hash_map_get = .{ .value = hash_buffer("even") } },
+                    })).?;
+                    var iter = try inner_cursor.iter();
+                    defer iter.deinit();
+                    var i: u64 = 0;
+                    while (try iter.next()) |*next_cursor| {
+                        const value_cursor = try next_cursor.valueCursor();
+                        const n = try value_cursor.readInt(void, &[_]PathPart(void){});
+                        try expectEqual(values.items[i], n);
+                        i += 1;
+                    }
+                    try expectEqual(xitdb.SLOT_COUNT + 1, i);
                 }
-                try expectEqual(xitdb.SLOT_COUNT + 1, i);
-            }
-        };
-        _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
-            .{ .array_list_get = .append_copy },
-            .hash_map_create,
-            .{ .ctx = .{ .allocator = allocator } },
-        });
+            };
+            _ = try root_cursor.execute(Ctx, &[_]PathPart(Ctx){
+                .{ .array_list_get = .append_copy },
+                .hash_map_create,
+                .{ .ctx = .{ .allocator = allocator } },
+            });
+        }
     }
 }
 

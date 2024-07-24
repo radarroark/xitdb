@@ -93,8 +93,9 @@ comptime {
     std.debug.assert(byteSizeOf(BlockInt) == INDEX_BLOCK_SIZE);
 }
 
-const HashMapKeyValueInt = u304;
+const HashMapKeyValueInt = u368;
 const HashMapKeyValue = packed struct {
+    index: u64 = 0, // only used by array hash map
     value_slot: Slot,
     key_slot: Slot,
     hash: Hash,
@@ -1774,6 +1775,9 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 .array_hash_map_get => {
                     if (cursor != .slot_ptr) return error.NotImplemented;
 
+                    const reader = self.core.reader();
+                    const writer = self.core.writer();
+
                     // get slot from map
                     const map_start = cursor.slot_ptr.slot.value + byteSizeOf(ArrayListHeader);
                     const map_slot_ptr = SlotPointer{
@@ -1792,18 +1796,30 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     if (allow_write) {
                         if (next_slot_ptr.is_new) {
                             // add slot to list
+                            const list_size = try self.count(cursor.slot_ptr.slot);
                             _ = try self.readSlot(void, &[_]PathPart(void){
                                 .{ .array_list_get = .append },
                                 .{ .write = .{ .slot = next_slot_ptr.slot } },
                             }, allow_write, cursor);
+                            // update the kv_pair's index
+                            try self.core.seekTo(next_slot_ptr.slot.value);
+                            var hash_map_kv: HashMapKeyValue = @bitCast(try reader.readInt(HashMapKeyValueInt, .big));
+                            hash_map_kv.index = list_size;
+                            try self.core.seekTo(next_slot_ptr.slot.value);
+                            try writer.writeInt(HashMapKeyValueInt, @bitCast(hash_map_kv), .big);
                         } else {
-                            // TODO: update existing slot in the list with next_slot_ptr.slot
-                            // so it is correct after updating an existing kv pair
+                            // update existing slot in the list with next_slot_ptr.slot
+                            // so the array list is in sync with the hash map
+                            try self.core.seekTo(next_slot_ptr.slot.value);
+                            const hash_map_kv: HashMapKeyValue = @bitCast(try reader.readInt(HashMapKeyValueInt, .big));
+                            _ = try self.readSlot(void, &[_]PathPart(void){
+                                .{ .array_list_get = .{ .index = hash_map_kv.index } },
+                                .{ .write = .{ .slot = next_slot_ptr.slot } },
+                            }, allow_write, cursor);
                         }
                     }
 
                     // get the correct slot pointer
-                    const reader = self.core.reader();
                     const hash_pos = next_slot_ptr.slot.value;
                     const key_slot_pos = hash_pos + byteSizeOf(Hash);
                     const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
