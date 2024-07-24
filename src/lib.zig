@@ -543,8 +543,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
             };
 
-            pub fn execute(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !Slot {
-                return (try self.db.readSlot(Ctx, path, true, self.read_slot_cursor)).slot;
+            pub fn readSlot(self: Cursor, permission: enum { read_write, read_only }, comptime Ctx: type, path: []const PathPart(Ctx)) !Slot {
+                return (try self.db.readSlot(Ctx, path, permission == .read_write, self.read_slot_cursor)).slot;
             }
 
             pub fn reader(self: *Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?Reader {
