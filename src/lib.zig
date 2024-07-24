@@ -53,6 +53,7 @@ pub const Slot = packed struct {
         return self_int == other_int;
     }
 };
+
 pub const Tag = enum(u7) {
     empty = 1,
     index = 2,
@@ -548,8 +549,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
             };
 
-            pub fn readSlot(self: Cursor, user_write_mode: UserWriteMode, comptime Ctx: type, path: []const PathPart(Ctx)) !Slot {
-                return (try self.db.readSlot(user_write_mode, Ctx, path, self.read_slot_cursor)).slot;
+            pub fn readSlot(self: Cursor, user_write_mode: UserWriteMode, comptime Ctx: type, path: []const PathPart(Ctx)) !?Slot {
+                const slot_ptr = self.db.readSlot(user_write_mode, Ctx, path, self.read_slot_cursor) catch |err| switch (err) {
+                    error.KeyNotFound => return null,
+                    else => return err,
+                };
+                return slot_ptr.slot;
             }
 
             pub fn reader(self: *Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?Reader {
@@ -675,24 +680,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                 try self.db.core.seekTo(ptr);
                 return try core_reader.readInt(Hash, .big);
-            }
-
-            pub fn readInt(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?u64 {
-                const slot_ptr = self.db.readSlot(.read_only, Ctx, path, self.read_slot_cursor) catch |err| {
-                    switch (err) {
-                        error.KeyNotFound => return null,
-                        else => return err,
-                    }
-                };
-                const slot = slot_ptr.slot;
-                const ptr = slot.value;
-                const tag = try Tag.init(slot);
-
-                if (tag != .uint) {
-                    return error.UnexpectedTag;
-                }
-
-                return ptr;
             }
 
             pub fn readCursor(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?Cursor {
