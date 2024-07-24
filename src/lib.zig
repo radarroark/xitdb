@@ -156,7 +156,7 @@ pub fn PathPart(comptime Ctx: type) type {
             key: Hash,
             value: Hash,
         },
-        array_hash_map_get_index: union(HashMapSlotKind) {
+        array_hash_map_get_by_index: union(HashMapSlotKind) {
             kv_pair: i65,
             key: i65,
             value: i65,
@@ -1839,13 +1839,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = final_slot_ptr });
                 },
-                .array_hash_map_get_index => {
+                .array_hash_map_get_by_index => {
                     if (cursor != .slot_ptr) return error.NotImplemented;
 
-                    const index = switch (part.array_hash_map_get_index) {
-                        .kv_pair => part.array_hash_map_get_index.kv_pair,
-                        .key => part.array_hash_map_get_index.key,
-                        .value => part.array_hash_map_get_index.value,
+                    const index = switch (part.array_hash_map_get_by_index) {
+                        .kv_pair => part.array_hash_map_get_by_index.kv_pair,
+                        .key => part.array_hash_map_get_by_index.key,
+                        .value => part.array_hash_map_get_by_index.value,
                     };
                     const next_slot_ptr = try self.readSlot(void, &[_]PathPart(void){
                         .{ .array_list_get = .{ .index = index } },
@@ -1856,7 +1856,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     const hash_pos = next_slot_ptr.slot.value;
                     const key_slot_pos = hash_pos + byteSizeOf(Hash);
                     const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
-                    const final_slot_ptr = switch (part.array_hash_map_get_index) {
+                    const final_slot_ptr = switch (part.array_hash_map_get_by_index) {
                         .kv_pair => next_slot_ptr,
                         .key => blk: {
                             try self.core.seekTo(key_slot_pos);

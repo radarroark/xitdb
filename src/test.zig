@@ -1061,7 +1061,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                     for (values.items, 0..) |val, i| {
                         const n = try cursor.readInt(void, &[_]PathPart(void){
                             .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                            .{ .array_hash_map_get_index = .{ .value = i } },
+                            .{ .array_hash_map_get_by_index = .{ .value = i } },
                         });
                         try expectEqual(val, n);
                     }
