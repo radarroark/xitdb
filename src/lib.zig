@@ -177,8 +177,8 @@ pub fn PathPart(comptime Ctx: type) type {
 
 const WriteMode = enum {
     read_only,
-    write,
-    write_immutable,
+    read_write,
+    read_write_immutable,
 };
 
 pub const DatabaseKind = enum {
@@ -543,7 +543,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
             };
 
-            pub fn readSlot(self: Cursor, permission: enum { read_write, read_only }, comptime Ctx: type, path: []const PathPart(Ctx)) !Slot {
+            pub fn readSlot(self: Cursor, permission: enum { read_only, read_write }, comptime Ctx: type, path: []const PathPart(Ctx)) !Slot {
                 return (try self.db.readSlot(Ctx, path, permission == .read_write, self.read_slot_cursor)).slot;
             }
 
@@ -1366,13 +1366,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
             const write_mode: WriteMode = if (allow_write)
                 switch (cursor) {
-                    .db_start => .write,
-                    .slot_ptr => .write_immutable,
+                    .db_start => .read_write,
+                    .slot_ptr => .read_write_immutable,
                 }
             else
                 .read_only;
 
-            const is_tx_start = write_mode == .write and self.tx_start == null;
+            const is_tx_start = write_mode == .read_write and self.tx_start == null;
             if (is_tx_start) {
                 try self.core.seekFromEnd(0);
                 self.tx_start = try self.core.getPos();
@@ -1972,7 +1972,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
 
             if (slot.tag == 0) {
-                if (write_mode == .write or write_mode == .write_immutable) {
+                if (write_mode == .read_write or write_mode == .read_write_immutable) {
                     try self.core.seekFromEnd(0);
 
                     // write hash and key/val slots
@@ -2009,7 +2009,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             switch (tag) {
                 .index => {
                     var next_ptr = ptr;
-                    if (write_mode == .write_immutable) {
+                    if (write_mode == .read_write_immutable) {
                         const tx_start = self.tx_start orelse return error.ExpectedTxStart;
                         if (next_ptr < tx_start) {
                             // read existing block
@@ -2032,7 +2032,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     const hash_map_kv: HashMapKeyValue = @bitCast(try reader.readInt(HashMapKeyValueInt, .big));
 
                     if (hash_map_kv.hash == key_hash) {
-                        if (write_mode == .write_immutable) {
+                        if (write_mode == .read_write_immutable) {
                             const tx_start = self.tx_start orelse return error.ExpectedTxStart;
                             if (ptr < tx_start) {
                                 try self.core.seekFromEnd(0);
@@ -2068,7 +2068,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             .metadata => SlotPointer{ .position = metadata_slot_pos, .slot = hash_map_kv.metadata_slot },
                         };
                     } else {
-                        if (write_mode == .write or write_mode == .write_immutable) {
+                        if (write_mode == .read_write or write_mode == .read_write_immutable) {
                             // append new index block
                             if (key_offset + 1 >= (HASH_SIZE * 8) / BIT_COUNT) {
                                 return error.KeyOffsetExceeded;
@@ -2146,7 +2146,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
 
             if (slot.tag == 0) {
-                if (write_mode == .write or write_mode == .write_immutable) {
+                if (write_mode == .read_write or write_mode == .read_write_immutable) {
                     if (shift == 0) {
                         return SlotPointer{ .position = slot_pos, .slot = slot, .is_new = true };
                     } else {
@@ -2172,7 +2172,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         return error.UnexpectedTag;
                     }
                     var next_ptr = ptr;
-                    if (write_mode == .write_immutable) {
+                    if (write_mode == .read_write_immutable) {
                         const tx_start = self.tx_start orelse return error.ExpectedTxStart;
                         if (next_ptr < tx_start) {
                             // read existing block
@@ -2323,7 +2323,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             const slot_pos = index_pos + (byteSizeOf(LinkedArrayListSlot) * i);
 
             if (slot.slot.tag == 0) {
-                if (write_mode == .write or write_mode == .write_immutable) {
+                if (write_mode == .read_write or write_mode == .read_write_immutable) {
                     if (shift == 0) {
                         const leaf_count = countLinkedArrayListLeafCount(&slot_block, shift, i);
                         return .{ .slot_ptr = .{ .position = slot_pos, .slot = slot.slot, .is_new = true }, .leaf_count = leaf_count };
@@ -2357,7 +2357,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
 
                     var next_ptr = ptr;
-                    if (write_mode == .write_immutable) {
+                    if (write_mode == .read_write_immutable) {
                         const tx_start = self.tx_start orelse return error.ExpectedTxStart;
                         if (next_ptr < tx_start) {
                             // read existing block
@@ -2376,7 +2376,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     slot_block[i].size = next_slot_ptr.leaf_count;
                     const leaf_count = countLinkedArrayListLeafCount(&slot_block, shift, i);
 
-                    if (write_mode == .write_immutable) {
+                    if (write_mode == .read_write_immutable) {
                         // make slot point to block
                         try self.core.seekTo(slot_pos);
                         try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{ .slot = Slot.init(next_ptr, .index), .size = next_slot_ptr.leaf_count }), .big);
