@@ -1775,7 +1775,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     if (cursor != .slot_ptr) return error.NotImplemented;
 
                     // get slot from map
-                    const map_start = cursor.slot_ptr.position + byteSizeOf(ArrayListHeader);
+                    const map_start = cursor.slot_ptr.slot.value + byteSizeOf(ArrayListHeader);
                     const map_slot_ptr = SlotPointer{
                         .position = std.math.maxInt(u64), // this shouldn't ever be read
                         .slot = Slot.init(map_start, .hash_map),
