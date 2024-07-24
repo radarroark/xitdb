@@ -93,9 +93,9 @@ comptime {
     std.debug.assert(byteSizeOf(BlockInt) == INDEX_BLOCK_SIZE);
 }
 
-const HashMapKeyValueInt = u368;
+const HashMapKeyValueInt = u376;
 const HashMapKeyValue = packed struct {
-    index: u64 = 0, // only used by array hash map
+    metadata_slot: Slot = undefined,
     value_slot: Slot,
     key_slot: Slot,
     hash: Hash,
@@ -156,6 +156,7 @@ pub fn PathPart(comptime Ctx: type) type {
             key: Hash,
             value: Hash,
         },
+        array_hash_map_get_index: Hash,
         array_hash_map_get_by_index: union(HashMapSlotKind) {
             kv_pair: i65,
             key: i65,
@@ -1804,7 +1805,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             // update the kv_pair's index
                             try self.core.seekTo(next_slot_ptr.slot.value);
                             var hash_map_kv: HashMapKeyValue = @bitCast(try reader.readInt(HashMapKeyValueInt, .big));
-                            hash_map_kv.index = list_size;
+                            hash_map_kv.metadata_slot = Slot.init(list_size, .uint);
                             try self.core.seekTo(next_slot_ptr.slot.value);
                             try writer.writeInt(HashMapKeyValueInt, @bitCast(hash_map_kv), .big);
                         } else {
@@ -1812,8 +1813,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             // so the array list is in sync with the hash map
                             try self.core.seekTo(next_slot_ptr.slot.value);
                             const hash_map_kv: HashMapKeyValue = @bitCast(try reader.readInt(HashMapKeyValueInt, .big));
+                            if (try Tag.init(hash_map_kv.metadata_slot) != .uint) {
+                                return error.UnexpectedTag;
+                            }
                             _ = try self.readSlot(void, &[_]PathPart(void){
-                                .{ .array_list_get = .{ .index = hash_map_kv.index } },
+                                .{ .array_list_get = .{ .index = hash_map_kv.metadata_slot.value } },
                                 .{ .write = .{ .slot = next_slot_ptr.slot } },
                             }, allow_write, cursor);
                         }
@@ -1838,6 +1842,28 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     };
 
                     return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = final_slot_ptr });
+                },
+                .array_hash_map_get_index => {
+                    if (path.len > 1) return error.ValueMustBeAtEnd;
+
+                    if (cursor != .slot_ptr) return error.NotImplemented;
+
+                    const reader = self.core.reader();
+
+                    // get slot from map
+                    const map_start = cursor.slot_ptr.slot.value + byteSizeOf(ArrayListHeader);
+                    const map_slot_ptr = SlotPointer{
+                        .position = std.math.maxInt(u64), // this shouldn't ever be read
+                        .slot = Slot.init(map_start, .hash_map),
+                    };
+                    const next_slot_ptr = try self.readSlot(void, &[_]PathPart(void){
+                        .{ .hash_map_get = .{ .kv_pair = part.array_hash_map_get_index } },
+                    }, allow_write, .{ .slot_ptr = map_slot_ptr });
+
+                    try self.core.seekTo(next_slot_ptr.slot.value);
+                    const hash_map_kv: HashMapKeyValue = @bitCast(try reader.readInt(HashMapKeyValueInt, .big));
+                    const position = next_slot_ptr.slot.value + byteSizeOf(Hash) + (2 * byteSizeOf(Slot));
+                    return .{ .position = position, .slot = hash_map_kv.metadata_slot };
                 },
                 .array_hash_map_get_by_index => {
                     if (cursor != .slot_ptr) return error.NotImplemented;

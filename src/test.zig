@@ -1064,6 +1064,16 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                             .{ .array_hash_map_get_by_index = .{ .value = i } },
                         });
                         try expectEqual(val, n);
+
+                        const hash = (try cursor.readHash(void, &[_]PathPart(void){
+                            .{ .hash_map_get = .{ .value = hash_buffer("even") } },
+                            .{ .array_hash_map_get_by_index = .{ .kv_pair = i } },
+                        })).?;
+                        const index = (try cursor.readInt(void, &[_]PathPart(void){
+                            .{ .hash_map_get = .{ .value = hash_buffer("even") } },
+                            .{ .array_hash_map_get_index = hash },
+                        })).?;
+                        try expectEqual(index, i);
                     }
 
                     // iterate over array map
