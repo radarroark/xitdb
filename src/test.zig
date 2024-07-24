@@ -1107,11 +1107,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                             .{ .array_hash_map_get_by_index = .{ .kv_pair = i } },
                         })).?;
                         const kv_pair = try cursor.db.readKeyValuePair(kv_slot);
-                        const index = (try cursor.readSlot(.read_only, void, &[_]PathPart(void){
-                            .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                            .{ .array_hash_map_get = .{ .metadata = kv_pair.hash } },
-                        })).?.value;
-                        try expectEqual(index, i);
+                        try expectEqual(i, kv_pair.metadata_slot.value);
                     }
 
                     // iterate over array map
