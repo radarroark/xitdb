@@ -1071,7 +1071,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                         })).?;
                         const index = (try cursor.readInt(void, &[_]PathPart(void){
                             .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                            .{ .array_hash_map_get_index = hash },
+                            .{ .array_hash_map_get = .{ .metadata = hash } },
                         })).?;
                         try expectEqual(index, i);
                     }

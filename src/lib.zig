@@ -128,6 +128,7 @@ const HashMapSlotKind = enum {
     kv_pair,
     key,
     value,
+    metadata,
 };
 
 pub fn PathPart(comptime Ctx: type) type {
@@ -148,6 +149,7 @@ pub fn PathPart(comptime Ctx: type) type {
             kv_pair: Hash,
             key: Hash,
             value: Hash,
+            metadata: Hash,
         },
         hash_map_remove: Hash,
         array_hash_map_create,
@@ -155,12 +157,13 @@ pub fn PathPart(comptime Ctx: type) type {
             kv_pair: Hash,
             key: Hash,
             value: Hash,
+            metadata: Hash,
         },
-        array_hash_map_get_index: Hash,
         array_hash_map_get_by_index: union(HashMapSlotKind) {
             kv_pair: i65,
             key: i65,
             value: i65,
+            metadata: i65,
         },
         write: union(enum) {
             slot: Slot,
@@ -1685,6 +1688,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         .kv_pair => try self.readMapSlot(next_map_start, part.hash_map_get.kv_pair, 0, write_mode, .kv_pair),
                         .key => try self.readMapSlot(next_map_start, part.hash_map_get.key, 0, write_mode, .key),
                         .value => try self.readMapSlot(next_map_start, part.hash_map_get.value, 0, write_mode, .value),
+                        .metadata => try self.readMapSlot(next_map_start, part.hash_map_get.metadata, 0, write_mode, .metadata),
                     };
                     return self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = next_slot_ptr });
                 },
@@ -1789,6 +1793,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         .kv_pair => part.array_hash_map_get.kv_pair,
                         .key => part.array_hash_map_get.key,
                         .value => part.array_hash_map_get.value,
+                        .metadata => part.array_hash_map_get.metadata,
                     };
                     const next_slot_ptr = try self.readSlot(void, &[_]PathPart(void){
                         .{ .hash_map_get = .{ .kv_pair = hash } },
@@ -1827,6 +1832,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     const hash_pos = next_slot_ptr.slot.value;
                     const key_slot_pos = hash_pos + byteSizeOf(Hash);
                     const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
+                    const metadata_slot_pos = value_slot_pos + byteSizeOf(Slot);
                     const final_slot_ptr = switch (part.array_hash_map_get) {
                         .kv_pair => next_slot_ptr,
                         .key => blk: {
@@ -1839,31 +1845,14 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
                             break :blk SlotPointer{ .position = value_slot_pos, .slot = slot };
                         },
+                        .metadata => blk: {
+                            try self.core.seekTo(metadata_slot_pos);
+                            const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+                            break :blk SlotPointer{ .position = metadata_slot_pos, .slot = slot };
+                        },
                     };
 
                     return try self.readSlot(Ctx, path[1..], allow_write, .{ .slot_ptr = final_slot_ptr });
-                },
-                .array_hash_map_get_index => {
-                    if (path.len > 1) return error.ValueMustBeAtEnd;
-
-                    if (cursor != .slot_ptr) return error.NotImplemented;
-
-                    const reader = self.core.reader();
-
-                    // get slot from map
-                    const map_start = cursor.slot_ptr.slot.value + byteSizeOf(ArrayListHeader);
-                    const map_slot_ptr = SlotPointer{
-                        .position = std.math.maxInt(u64), // this shouldn't ever be read
-                        .slot = Slot.init(map_start, .hash_map),
-                    };
-                    const next_slot_ptr = try self.readSlot(void, &[_]PathPart(void){
-                        .{ .hash_map_get = .{ .kv_pair = part.array_hash_map_get_index } },
-                    }, allow_write, .{ .slot_ptr = map_slot_ptr });
-
-                    try self.core.seekTo(next_slot_ptr.slot.value);
-                    const hash_map_kv: HashMapKeyValue = @bitCast(try reader.readInt(HashMapKeyValueInt, .big));
-                    const position = next_slot_ptr.slot.value + byteSizeOf(Hash) + (2 * byteSizeOf(Slot));
-                    return .{ .position = position, .slot = hash_map_kv.metadata_slot };
                 },
                 .array_hash_map_get_by_index => {
                     if (cursor != .slot_ptr) return error.NotImplemented;
@@ -1872,6 +1861,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         .kv_pair => part.array_hash_map_get_by_index.kv_pair,
                         .key => part.array_hash_map_get_by_index.key,
                         .value => part.array_hash_map_get_by_index.value,
+                        .metadata => part.array_hash_map_get_by_index.metadata,
                     };
                     const next_slot_ptr = try self.readSlot(void, &[_]PathPart(void){
                         .{ .array_list_get = .{ .index = index } },
@@ -1882,6 +1872,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     const hash_pos = next_slot_ptr.slot.value;
                     const key_slot_pos = hash_pos + byteSizeOf(Hash);
                     const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
+                    const metadata_slot_pos = value_slot_pos + byteSizeOf(Slot);
                     const final_slot_ptr = switch (part.array_hash_map_get_by_index) {
                         .kv_pair => next_slot_ptr,
                         .key => blk: {
@@ -1893,6 +1884,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             try self.core.seekTo(value_slot_pos);
                             const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
                             break :blk SlotPointer{ .position = value_slot_pos, .slot = slot };
+                        },
+                        .metadata => blk: {
+                            try self.core.seekTo(metadata_slot_pos);
+                            const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+                            break :blk SlotPointer{ .position = metadata_slot_pos, .slot = slot };
                         },
                     };
 
@@ -1983,6 +1979,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     const hash_pos = try self.core.getPos();
                     const key_slot_pos = hash_pos + byteSizeOf(Hash);
                     const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
+                    const metadata_slot_pos = value_slot_pos + byteSizeOf(Slot);
                     const hash_map_kv = HashMapKeyValue{
                         .value_slot = @bitCast(@as(SlotInt, 0)),
                         .key_slot = @bitCast(@as(SlotInt, 0)),
@@ -1999,6 +1996,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         .kv_pair => SlotPointer{ .position = slot_pos, .slot = next_slot, .is_new = true },
                         .key => SlotPointer{ .position = key_slot_pos, .slot = hash_map_kv.key_slot, .is_new = true },
                         .value => SlotPointer{ .position = value_slot_pos, .slot = hash_map_kv.value_slot, .is_new = true },
+                        .metadata => SlotPointer{ .position = metadata_slot_pos, .slot = hash_map_kv.metadata_slot, .is_new = true },
                     };
                 } else {
                     return error.KeyNotFound;
@@ -2043,6 +2041,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 const hash_pos = try self.core.getPos();
                                 const key_slot_pos = hash_pos + byteSizeOf(Hash);
                                 const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
+                                const metadata_slot_pos = value_slot_pos + byteSizeOf(Slot);
                                 try writer.writeInt(HashMapKeyValueInt, @bitCast(hash_map_kv), .big);
 
                                 // point slot to hash pos
@@ -2054,16 +2053,19 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                     .kv_pair => SlotPointer{ .position = slot_pos, .slot = next_slot },
                                     .key => SlotPointer{ .position = key_slot_pos, .slot = hash_map_kv.key_slot },
                                     .value => SlotPointer{ .position = value_slot_pos, .slot = hash_map_kv.value_slot },
+                                    .metadata => SlotPointer{ .position = metadata_slot_pos, .slot = hash_map_kv.metadata_slot },
                                 };
                             }
                         }
 
                         const key_slot_pos = ptr + byteSizeOf(Hash);
                         const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
+                        const metadata_slot_pos = value_slot_pos + byteSizeOf(Slot);
                         return switch (hash_map_return) {
                             .kv_pair => SlotPointer{ .position = slot_pos, .slot = slot },
                             .key => SlotPointer{ .position = key_slot_pos, .slot = hash_map_kv.key_slot },
                             .value => SlotPointer{ .position = value_slot_pos, .slot = hash_map_kv.value_slot },
+                            .metadata => SlotPointer{ .position = metadata_slot_pos, .slot = hash_map_kv.metadata_slot },
                         };
                     } else {
                         if (write_mode == .write or write_mode == .write_immutable) {
