@@ -94,8 +94,8 @@ comptime {
     std.debug.assert(byteSizeOf(BlockInt) == INDEX_BLOCK_SIZE);
 }
 
-const HashMapKeyValueInt = u376;
-const HashMapKeyValue = packed struct {
+const HashMapKeyValuePairInt = u376;
+const HashMapKeyValuePair = packed struct {
     metadata_slot: Slot = undefined,
     value_slot: Slot,
     key_slot: Slot,
@@ -916,7 +916,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             return buffer[0..size];
         }
 
-        pub fn readHash(self: *Database(db_kind), slot: Slot) !Hash {
+        pub fn readKeyValuePair(self: *Database(db_kind), slot: Slot) !HashMapKeyValuePair {
             const core_reader = self.core.reader();
 
             if (try Tag.init(slot) != .kv_pair) {
@@ -924,7 +924,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             }
 
             try self.core.seekTo(slot.value);
-            return try core_reader.readInt(Hash, .big);
+            const hash_map_kv: HashMapKeyValuePair = @bitCast(try core_reader.readInt(HashMapKeyValuePairInt, .big));
+            return hash_map_kv;
         }
 
         pub fn slice(self: *Database(db_kind), list: Slot, offset: u64, size: u64) !Slot {
@@ -1771,15 +1772,15 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             }, read_slot_cursor);
                             // update the kv_pair's index
                             try self.core.seekTo(next_slot_ptr.slot.value);
-                            var hash_map_kv: HashMapKeyValue = @bitCast(try reader.readInt(HashMapKeyValueInt, .big));
+                            var hash_map_kv: HashMapKeyValuePair = @bitCast(try reader.readInt(HashMapKeyValuePairInt, .big));
                             hash_map_kv.metadata_slot = Slot.init(list_size, .uint);
                             try self.core.seekTo(next_slot_ptr.slot.value);
-                            try writer.writeInt(HashMapKeyValueInt, @bitCast(hash_map_kv), .big);
+                            try writer.writeInt(HashMapKeyValuePairInt, @bitCast(hash_map_kv), .big);
                         } else {
                             // update existing slot in the list with next_slot_ptr.slot
                             // so the array list is in sync with the hash map
                             try self.core.seekTo(next_slot_ptr.slot.value);
-                            const hash_map_kv: HashMapKeyValue = @bitCast(try reader.readInt(HashMapKeyValueInt, .big));
+                            const hash_map_kv: HashMapKeyValuePair = @bitCast(try reader.readInt(HashMapKeyValuePairInt, .big));
                             if (try Tag.init(hash_map_kv.metadata_slot) != .uint) {
                                 return error.UnexpectedTag;
                             }
@@ -1942,12 +1943,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     const key_slot_pos = hash_pos + byteSizeOf(Hash);
                     const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
                     const metadata_slot_pos = value_slot_pos + byteSizeOf(Slot);
-                    const hash_map_kv = HashMapKeyValue{
+                    const hash_map_kv = HashMapKeyValuePair{
                         .value_slot = @bitCast(@as(SlotInt, 0)),
                         .key_slot = @bitCast(@as(SlotInt, 0)),
                         .hash = key_hash,
                     };
-                    try writer.writeInt(HashMapKeyValueInt, @bitCast(hash_map_kv), .big);
+                    try writer.writeInt(HashMapKeyValuePairInt, @bitCast(hash_map_kv), .big);
 
                     // point slot to hash pos
                     const next_slot = Slot.init(hash_pos, .kv_pair);
@@ -1991,7 +1992,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 },
                 .kv_pair => {
                     try self.core.seekTo(ptr);
-                    const hash_map_kv: HashMapKeyValue = @bitCast(try reader.readInt(HashMapKeyValueInt, .big));
+                    const hash_map_kv: HashMapKeyValuePair = @bitCast(try reader.readInt(HashMapKeyValuePairInt, .big));
 
                     if (hash_map_kv.hash == key_hash) {
                         if (write_mode == .read_write_immutable) {
@@ -2004,7 +2005,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 const key_slot_pos = hash_pos + byteSizeOf(Hash);
                                 const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
                                 const metadata_slot_pos = value_slot_pos + byteSizeOf(Slot);
-                                try writer.writeInt(HashMapKeyValueInt, @bitCast(hash_map_kv), .big);
+                                try writer.writeInt(HashMapKeyValuePairInt, @bitCast(hash_map_kv), .big);
 
                                 // point slot to hash pos
                                 const next_slot = Slot.init(hash_pos, .kv_pair);

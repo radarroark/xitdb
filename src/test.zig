@@ -876,20 +876,16 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         var i: u64 = 0;
         while (try iter.next()) |*next_cursor| {
             const kv_slot = (try next_cursor.readSlot(.read_only, void, &[_]PathPart(void){})).?;
-            const hash = try db.readHash(kv_slot);
-            const key_cursor = try next_cursor.keyCursor();
-            const value_cursor = try next_cursor.valueCursor();
-            if (hash == foo_key) {
-                const key_slot = (try key_cursor.readSlot(.read_only, void, &[_]PathPart(void){})).?;
-                const key = try db.readBytesAlloc(allocator, MAX_READ_BYTES, key_slot);
+            const kv_pair = try db.readKeyValuePair(kv_slot);
+            if (kv_pair.hash == foo_key) {
+                const key = try db.readBytesAlloc(allocator, MAX_READ_BYTES, kv_pair.key_slot);
                 defer allocator.free(key);
                 try std.testing.expectEqualStrings("foo", key);
-                try expectEqual(42, (try value_cursor.readSlot(.read_only, void, &[_]PathPart(void){})).?.value);
+                try expectEqual(42, kv_pair.value_slot.value);
             } else {
-                const value_slot = (try value_cursor.readSlot(.read_only, void, &[_]PathPart(void){})).?;
-                const value = try db.readBytesAlloc(allocator, MAX_READ_BYTES, value_slot);
+                const value = try db.readBytesAlloc(allocator, MAX_READ_BYTES, kv_pair.value_slot);
                 defer allocator.free(value);
-                try expectEqual(hash, hash_buffer(value));
+                try expectEqual(kv_pair.hash, hash_buffer(value));
             }
             i += 1;
         }
@@ -1110,10 +1106,10 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                             .{ .hash_map_get = .{ .value = hash_buffer("even") } },
                             .{ .array_hash_map_get_by_index = .{ .kv_pair = i } },
                         })).?;
-                        const hash = try cursor.db.readHash(kv_slot);
+                        const kv_pair = try cursor.db.readKeyValuePair(kv_slot);
                         const index = (try cursor.readSlot(.read_only, void, &[_]PathPart(void){
                             .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                            .{ .array_hash_map_get = .{ .metadata = hash } },
+                            .{ .array_hash_map_get = .{ .metadata = kv_pair.hash } },
                         })).?.value;
                         try expectEqual(index, i);
                     }
