@@ -133,25 +133,25 @@ const HashMapSlotKind = enum {
 
 pub fn PathPart(comptime Ctx: type) type {
     return union(enum) {
-        array_list_create,
+        array_list_init,
         array_list_get: union(enum) {
             index: i65,
             append,
             append_copy,
         },
-        linked_array_list_create,
+        linked_array_list_init,
         linked_array_list_get: union(enum) {
             index: i65,
             append,
         },
-        hash_map_create,
+        hash_map_init,
         hash_map_get: union(HashMapSlotKind) {
             kv_pair: Hash,
             key: Hash,
             value: Hash,
         },
         hash_map_remove: Hash,
-        array_hash_map_create,
+        array_hash_map_init,
         array_hash_map_get: union(HashMapSlotKind) {
             kv_pair: Hash,
             key: Hash,
@@ -1306,7 +1306,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             }
 
             switch (part) {
-                .array_list_create => {
+                .array_list_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     if (read_slot_cursor != .slot_ptr) return error.NotImplemented;
@@ -1443,7 +1443,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         },
                     }
                 },
-                .linked_array_list_create => {
+                .linked_array_list_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     if (read_slot_cursor != .slot_ptr) return error.NotImplemented;
@@ -1547,7 +1547,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         },
                     }
                 },
-                .hash_map_create => {
+                .hash_map_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     if (read_slot_cursor != .slot_ptr) return error.NotImplemented;
@@ -1637,7 +1637,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     return next_slot_ptr;
                 },
-                .array_hash_map_create => {
+                .array_hash_map_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     if (read_slot_cursor != .slot_ptr) return error.NotImplemented;
