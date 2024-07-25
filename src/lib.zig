@@ -168,7 +168,6 @@ pub fn PathPart(comptime Ctx: type) type {
             bytes: []const u8,
         },
         ctx: Ctx,
-        path: []const PathPart(Ctx),
     };
 }
 
@@ -1854,11 +1853,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         try part.ctx.run(&next_cursor);
                         return next_cursor.read_slot_cursor.slot_ptr;
                     }
-                },
-                .path => {
-                    if (write_mode == .read_only) return error.WriteNotAllowed;
-                    _ = try self.readSlot(user_write_mode, Ctx, part.path, read_slot_cursor);
-                    return try self.readSlot(user_write_mode, Ctx, path[1..], read_slot_cursor);
                 },
             }
         }

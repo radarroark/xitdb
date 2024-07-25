@@ -114,10 +114,8 @@ fn testSlice(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: an
             _ = try cursor.writeSlot(void, &[_]PathPart(void){
                 .{ .hash_map_get = .{ .value = hash_buffer("even-slice") } },
                 .linked_array_list_init,
-                .{ .path = &[_]PathPart(void){
-                    .{ .linked_array_list_get = .append },
-                    .{ .write = .{ .uint = 3 } },
-                } },
+                .{ .linked_array_list_get = .append },
+                .{ .write = .{ .uint = 3 } },
             });
 
             // read the new value from the slice
@@ -604,20 +602,24 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 .{ .array_list_get = .{ .index = 1 } },
             }));
 
-            // write pear and grape
+            // write pear
             _ = try root_cursor.writeSlot(void, &[_]PathPart(void){
                 .{ .array_list_get = .append_copy },
                 .hash_map_init,
                 .{ .hash_map_get = .{ .value = hash_buffer("fruits") } },
                 .array_list_init,
-                .{ .path = &[_]PathPart(void){
-                    .{ .array_list_get = .append },
-                    .{ .write = .{ .bytes = "pear" } },
-                } },
-                .{ .path = &[_]PathPart(void){
-                    .{ .array_list_get = .append },
-                    .{ .write = .{ .bytes = "grape" } },
-                } },
+                .{ .array_list_get = .append },
+                .{ .write = .{ .bytes = "pear" } },
+            });
+
+            // write grape
+            _ = try root_cursor.writeSlot(void, &[_]PathPart(void){
+                .{ .array_list_get = .append_copy },
+                .hash_map_init,
+                .{ .hash_map_get = .{ .value = hash_buffer("fruits") } },
+                .array_list_init,
+                .{ .array_list_get = .append },
+                .{ .write = .{ .bytes = "grape" } },
             });
 
             // read pear
