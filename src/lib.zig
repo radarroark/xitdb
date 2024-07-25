@@ -548,19 +548,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
             };
 
-            pub fn readSlot(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?Slot {
-                const slot_ptr = self.db.readSlot(.read_only, Ctx, path, self.slot_ptr) catch |err| switch (err) {
-                    error.KeyNotFound => return null,
-                    else => return err,
-                };
-                return slot_ptr.slot;
-            }
-
-            pub fn writeSlot(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !Slot {
-                return (try self.db.readSlot(.read_write, Ctx, path, self.slot_ptr)).slot;
-            }
-
-            pub fn readCursor(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?Cursor {
+            pub fn readPath(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?Cursor {
                 const slot_ptr = self.db.readSlot(.read_only, Ctx, path, self.slot_ptr) catch |err| {
                     switch (err) {
                         error.KeyNotFound => return null,
@@ -573,7 +561,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 };
             }
 
-            pub fn writeCursor(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !Cursor {
+            pub fn writePath(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !Cursor {
                 const slot_ptr = try self.db.readSlot(.read_write, Ctx, path, self.slot_ptr);
                 return Cursor{
                     .slot_ptr = slot_ptr,
