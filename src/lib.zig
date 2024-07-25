@@ -545,21 +545,35 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
             };
 
-            pub fn readSlot(self: Cursor, user_write_mode: UserWriteMode, comptime Ctx: type, path: []const PathPart(Ctx)) !?Slot {
-                const slot_ptr = self.db.readSlot(user_write_mode, Ctx, path, self.read_slot_cursor) catch |err| switch (err) {
+            pub fn readSlot(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?Slot {
+                const slot_ptr = self.db.readSlot(.read_only, Ctx, path, self.read_slot_cursor) catch |err| switch (err) {
                     error.KeyNotFound => return null,
                     else => return err,
                 };
                 return slot_ptr.slot;
             }
 
-            pub fn readCursor(self: Cursor, user_write_mode: UserWriteMode, comptime Ctx: type, path: []const PathPart(Ctx)) !?Cursor {
-                const slot_ptr = self.db.readSlot(user_write_mode, Ctx, path, self.read_slot_cursor) catch |err| {
+            pub fn writeSlot(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !Slot {
+                return (try self.db.readSlot(.read_write, Ctx, path, self.read_slot_cursor)).slot;
+            }
+
+            pub fn readCursor(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?Cursor {
+                const slot_ptr = self.db.readSlot(.read_only, Ctx, path, self.read_slot_cursor) catch |err| {
                     switch (err) {
                         error.KeyNotFound => return null,
                         else => return err,
                     }
                 };
+                return Cursor{
+                    .read_slot_cursor = ReadSlotCursor{
+                        .slot_ptr = slot_ptr,
+                    },
+                    .db = self.db,
+                };
+            }
+
+            pub fn writeCursor(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !Cursor {
+                const slot_ptr = try self.db.readSlot(.read_write, Ctx, path, self.read_slot_cursor);
                 return Cursor{
                     .read_slot_cursor = ReadSlotCursor{
                         .slot_ptr = slot_ptr,
