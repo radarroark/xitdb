@@ -243,7 +243,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             const Ctx = struct {
                 pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
                     try std.testing.expect(cursor.pointer() == null);
-                    var writer = try cursor.writer(void, &[_]PathPart(void){});
+                    var writer = try cursor.writer();
                     try writer.writeAll("bar");
                     try writer.finish();
                 }
@@ -280,7 +280,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                     defer self.allocator.free(value);
                     try std.testing.expectEqualStrings("bar", value);
 
-                    var bar_reader = (try cursor.reader(void, &[_]PathPart(void){})).?;
+                    var bar_reader = try cursor.reader();
 
                     // read into buffer
                     var bar_bytes = [_]u8{0} ** 10;
@@ -330,7 +330,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
                     try std.testing.expect(cursor.pointer() != null);
 
-                    var writer = try cursor.writer(void, &[_]PathPart(void){});
+                    var writer = try cursor.writer();
                     try writer.writeAll("x");
                     try writer.writeAll("x");
                     try writer.writeAll("x");
@@ -359,21 +359,30 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         // write bar -> foo with writeBytes
         const bar_key = hash_buffer("bar");
         {
-            const foo_slot = try root_cursor.writeBytes("foo", .once, void, &[_]PathPart(void){
+            var bar_cursor = (try root_cursor.readCursor(.read_write, void, &[_]PathPart(void){
                 .{ .array_list_get = .append_copy },
                 .hash_map_create,
                 .{ .hash_map_get = .{ .value = bar_key } },
-            });
-            try expectEqual(foo_slot, try root_cursor.writeBytes("foo", .once, void, &[_]PathPart(void){
-                .{ .array_list_get = .append_copy },
-                .hash_map_create,
-                .{ .hash_map_get = .{ .value = bar_key } },
-            }));
-            try std.testing.expect(!foo_slot.eql(try root_cursor.writeBytes("foo", .replace, void, &[_]PathPart(void){
-                .{ .array_list_get = .append_copy },
-                .hash_map_create,
-                .{ .hash_map_get = .{ .value = bar_key } },
-            })));
+            })).?;
+            const foo_slot = try bar_cursor.writeBytes("foo", .once);
+            // writing again with .once returns the same slot
+            {
+                var next_bar_cursor = (try root_cursor.readCursor(.read_write, void, &[_]PathPart(void){
+                    .{ .array_list_get = .append_copy },
+                    .hash_map_create,
+                    .{ .hash_map_get = .{ .value = bar_key } },
+                })).?;
+                try expectEqual(foo_slot, try next_bar_cursor.writeBytes("foo", .once));
+            }
+            // writing again with .replace returns a new slot
+            {
+                var next_bar_cursor = (try root_cursor.readCursor(.read_write, void, &[_]PathPart(void){
+                    .{ .array_list_get = .append_copy },
+                    .hash_map_create,
+                    .{ .hash_map_get = .{ .value = bar_key } },
+                })).?;
+                try std.testing.expect(!foo_slot.eql(try next_bar_cursor.writeBytes("foo", .replace)));
+            }
         }
 
         // read bar
@@ -393,7 +402,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 allocator: std.mem.Allocator,
 
                 pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
-                    var writer = try cursor.writer(void, &[_]PathPart(void){});
+                    var writer = try cursor.writer();
                     try writer.writeAll("this value won't be visible");
                     try writer.finish();
                     return error.NotImplemented;
@@ -788,7 +797,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         }
 
         // iterate over array_list
-        var inner_cursor = (try root_cursor.readCursor(void, &[_]PathPart(void){
+        var inner_cursor = (try root_cursor.readCursor(.read_only, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = -1 } },
         })).?;
         var iter = try inner_cursor.iter();
@@ -868,7 +877,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         });
 
         // iterate over hash_map
-        var inner_cursor = (try root_cursor.readCursor(void, &[_]PathPart(void){
+        var inner_cursor = (try root_cursor.readCursor(.read_only, void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = -1 } },
         })).?;
         var iter = try inner_cursor.iter();
@@ -948,7 +957,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 try expectEqual(xitdb.SLOT_COUNT + 1, cursor.db.count(even_list_slot));
 
                 // iterate over list
-                var inner_cursor = (try cursor.readCursor(void, &[_]PathPart(void){
+                var inner_cursor = (try cursor.readCursor(.read_only, void, &[_]PathPart(void){
                     .{ .hash_map_get = .{ .value = hash_buffer("even") } },
                 })).?;
                 var iter = try inner_cursor.iter();
@@ -1111,7 +1120,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                     }
 
                     // iterate over array map
-                    var inner_cursor = (try cursor.readCursor(void, &[_]PathPart(void){
+                    var inner_cursor = (try cursor.readCursor(.read_only, void, &[_]PathPart(void){
                         .{ .hash_map_get = .{ .value = hash_buffer("even") } },
                     })).?;
                     var iter = try inner_cursor.iter();

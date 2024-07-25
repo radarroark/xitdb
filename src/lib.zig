@@ -553,56 +553,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 return slot_ptr.slot;
             }
 
-            pub fn reader(self: *Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?Reader {
-                const core_reader = self.db.core.reader();
-
-                const slot_ptr = self.db.readSlot(.read_only, Ctx, path, self.read_slot_cursor) catch |err| {
-                    switch (err) {
-                        error.KeyNotFound => return null,
-                        else => return err,
-                    }
-                };
-                const slot = slot_ptr.slot;
-                const ptr = slot.value;
-                const tag = try Tag.init(slot);
-
-                if (tag != .bytes) {
-                    return error.UnexpectedTag;
-                }
-
-                try self.db.core.seekTo(ptr);
-                const size: u64 = @intCast(try core_reader.readInt(u64, .big));
-                const start_position = try self.db.core.getPos();
-
-                return Reader{
-                    .parent = self,
-                    .size = size,
-                    .start_position = start_position,
-                    .relative_position = 0,
-                };
-            }
-
-            pub fn writer(self: *Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !Writer {
-                const slot_ptr = try self.db.readSlot(.read_write, Ctx, path, self.read_slot_cursor);
-
-                const core_writer = self.db.core.writer();
-                try self.db.core.seekFromEnd(0);
-                const ptr_pos = try self.db.core.getPos();
-                try core_writer.writeInt(u64, 0, .big);
-                const start_position = try self.db.core.getPos();
-
-                return Writer{
-                    .parent = self,
-                    .slot_ptr = slot_ptr,
-                    .size = 0,
-                    .slot = Slot.init(ptr_pos, .bytes),
-                    .start_position = start_position,
-                    .relative_position = 0,
-                };
-            }
-
-            pub fn readCursor(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?Cursor {
-                const slot_ptr = self.db.readSlot(.read_only, Ctx, path, self.read_slot_cursor) catch |err| {
+            pub fn readCursor(self: Cursor, user_write_mode: UserWriteMode, comptime Ctx: type, path: []const PathPart(Ctx)) !?Cursor {
+                const slot_ptr = self.db.readSlot(user_write_mode, Ctx, path, self.read_slot_cursor) catch |err| {
                     switch (err) {
                         error.KeyNotFound => return null,
                         else => return err,
@@ -616,8 +568,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 };
             }
 
-            pub fn writeBytes(self: *Cursor, buffer: []const u8, mode: enum { once, replace }, comptime Ctx: type, path: []const PathPart(Ctx)) !Slot {
-                var cursor_writer = try self.writer(Ctx, path);
+            pub fn writeBytes(self: *Cursor, buffer: []const u8, mode: enum { once, replace }) !Slot {
+                var cursor_writer = try self.writer();
                 if (mode == .replace or cursor_writer.slot_ptr.slot.tag == 0) {
                     try cursor_writer.writeAll(buffer);
                     try cursor_writer.finish();
@@ -625,6 +577,51 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 } else {
                     return cursor_writer.slot_ptr.slot;
                 }
+            }
+
+            pub fn reader(self: *Cursor) !Reader {
+                if (self.read_slot_cursor != .slot_ptr) {
+                    return error.InvalidAtTopLevel;
+                }
+
+                const core_reader = self.db.core.reader();
+                const slot = self.read_slot_cursor.slot_ptr.slot;
+
+                if (try Tag.init(slot) != .bytes) {
+                    return error.UnexpectedTag;
+                }
+
+                try self.db.core.seekTo(slot.value);
+                const size: u64 = @intCast(try core_reader.readInt(u64, .big));
+                const start_position = try self.db.core.getPos();
+
+                return Reader{
+                    .parent = self,
+                    .size = size,
+                    .start_position = start_position,
+                    .relative_position = 0,
+                };
+            }
+
+            pub fn writer(self: *Cursor) !Writer {
+                if (self.read_slot_cursor != .slot_ptr) {
+                    return error.InvalidAtTopLevel;
+                }
+
+                const core_writer = self.db.core.writer();
+                try self.db.core.seekFromEnd(0);
+                const ptr_pos = try self.db.core.getPos();
+                try core_writer.writeInt(u64, 0, .big);
+                const start_position = try self.db.core.getPos();
+
+                return Writer{
+                    .parent = self,
+                    .slot_ptr = self.read_slot_cursor.slot_ptr,
+                    .size = 0,
+                    .slot = Slot.init(ptr_pos, .bytes),
+                    .start_position = start_position,
+                    .relative_position = 0,
+                };
             }
 
             pub fn pointer(self: Cursor) ?Slot {
@@ -1274,7 +1271,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             };
 
             const part = if (path.len > 0) path[0] else switch (read_slot_cursor) {
-                .db_start => return error.PathNotFound,
+                .db_start => return error.InvalidAtTopLevel,
                 .slot_ptr => {
                     if (write_mode == .read_only and read_slot_cursor.slot_ptr.slot.tag == 0) {
                         return error.KeyNotFound;
@@ -1812,7 +1809,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 },
                                 .db = self,
                             };
-                            var writer = try next_cursor.writer(void, &[_]PathPart(void){});
+                            var writer = try next_cursor.writer();
                             try writer.writeAll(part.write.bytes);
                             try writer.finish();
                             break :blk writer.slot;
