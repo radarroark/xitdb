@@ -655,6 +655,9 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     hash_map: struct {
                         stack: std.ArrayList(MapLevel),
                     },
+                    array_hash_map: struct {
+                        index: u64,
+                    },
 
                     pub const MapLevel = struct {
                         position: u64,
@@ -665,7 +668,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                 pub fn init(cursor: Cursor) !Iter {
                     const core: IterCore = switch (try Tag.init(cursor.read_slot_cursor.slot_ptr.slot)) {
-                        .array_list, .array_hash_map => .{
+                        .array_list => .{
                             .array_list = .{
                                 .index = 0,
                             },
@@ -715,6 +718,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 },
                             },
                         },
+                        .array_hash_map => .{
+                            .array_hash_map = .{
+                                .index = 0,
+                            },
+                        },
                         else => return error.UnexpectedTag,
                     };
                     return .{
@@ -728,6 +736,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         .array_list => {},
                         .linked_array_list => {},
                         .hash_map => self.core.hash_map.stack.deinit(),
+                        .array_hash_map => {},
                     }
                 }
 
@@ -744,9 +753,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             };
                             self.core.array_list.index += 1;
                             return Cursor{
-                                .read_slot_cursor = ReadSlotCursor{
-                                    .slot_ptr = slot_ptr,
-                                },
+                                .read_slot_cursor = ReadSlotCursor{ .slot_ptr = slot_ptr },
                                 .db = self.cursor.db,
                             };
                         },
@@ -761,9 +768,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             };
                             self.core.linked_array_list.index += 1;
                             return Cursor{
-                                .read_slot_cursor = ReadSlotCursor{
-                                    .slot_ptr = slot_ptr,
-                                },
+                                .read_slot_cursor = ReadSlotCursor{ .slot_ptr = slot_ptr },
                                 .db = self.cursor.db,
                             };
                         },
@@ -821,6 +826,25 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 }
                             }
                             return null;
+                        },
+                        .array_hash_map => {
+                            const index = self.core.array_hash_map.index;
+                            const list_slot_ptr = SlotPointer{
+                                .position = self.cursor.read_slot_cursor.slot_ptr.position,
+                                .slot = Slot.init(self.cursor.read_slot_cursor.slot_ptr.slot.value, .array_list),
+                            };
+                            const path = &[_]PathPart(void){.{ .array_list_get = .{ .index = index } }};
+                            const slot_ptr = self.cursor.db.readSlot(.read_only, void, path, .{ .slot_ptr = list_slot_ptr }) catch |err| {
+                                switch (err) {
+                                    error.KeyNotFound => return null,
+                                    else => return err,
+                                }
+                            };
+                            self.core.array_hash_map.index += 1;
+                            return Cursor{
+                                .read_slot_cursor = ReadSlotCursor{ .slot_ptr = slot_ptr },
+                                .db = self.cursor.db,
+                            };
                         },
                     }
                 }
@@ -1370,7 +1394,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 return error.KeyNotFound;
                             } else {
                                 const tag = try Tag.init(read_slot_cursor.slot_ptr.slot);
-                                if (tag != .array_list and tag != .array_hash_map) {
+                                if (tag != .array_list) {
                                     return error.UnexpectedTag;
                                 }
                                 break :blk read_slot_cursor.slot_ptr.slot.value;
@@ -1719,13 +1743,17 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }, .{ .slot_ptr = map_slot_ptr });
 
                     if (write_mode != .read_only) {
+                        const list_slot_ptr = SlotPointer{
+                            .position = read_slot_cursor.slot_ptr.position,
+                            .slot = Slot.init(read_slot_cursor.slot_ptr.slot.value, .array_list),
+                        };
                         if (next_slot_ptr.is_new) {
                             // add slot to list
                             const list_size = try self.count(read_slot_cursor.slot_ptr.slot);
                             _ = try self.readSlot(user_write_mode, void, &[_]PathPart(void){
                                 .{ .array_list_get = .append },
                                 .{ .write = .{ .slot = next_slot_ptr.slot } },
-                            }, read_slot_cursor);
+                            }, .{ .slot_ptr = list_slot_ptr });
                             // update the kv_pair's index
                             try self.core.seekTo(next_slot_ptr.slot.value);
                             var kv_pair: KeyValuePair = @bitCast(try reader.readInt(KeyValuePairInt, .big));
@@ -1743,7 +1771,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             _ = try self.readSlot(user_write_mode, void, &[_]PathPart(void){
                                 .{ .array_list_get = .{ .index = kv_pair.metadata_slot.value } },
                                 .{ .write = .{ .slot = next_slot_ptr.slot } },
-                            }, read_slot_cursor);
+                            }, .{ .slot_ptr = list_slot_ptr });
                         }
                     }
 
@@ -1770,6 +1798,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 .array_hash_map_get_by_index => {
                     if (read_slot_cursor != .slot_ptr) return error.NotImplemented;
 
+                    const list_slot_ptr = SlotPointer{
+                        .position = read_slot_cursor.slot_ptr.position,
+                        .slot = Slot.init(read_slot_cursor.slot_ptr.slot.value, .array_list),
+                    };
                     const index = switch (part.array_hash_map_get_by_index) {
                         .kv_pair => part.array_hash_map_get_by_index.kv_pair,
                         .key => part.array_hash_map_get_by_index.key,
@@ -1777,7 +1809,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     };
                     const next_slot_ptr = try self.readSlot(user_write_mode, void, &[_]PathPart(void){
                         .{ .array_list_get = .{ .index = index } },
-                    }, read_slot_cursor);
+                    }, .{ .slot_ptr = list_slot_ptr });
 
                     // get the correct slot pointer
                     const reader = self.core.reader();
