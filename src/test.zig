@@ -64,15 +64,15 @@ fn testSlice(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: an
             }
 
             // slice list
-            const even_list_slot = (try cursor.readPath(void, &[_]PathPart(void){
+            const even_list_cursor = (try cursor.readPath(void, &[_]PathPart(void){
                 .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-            })).?.slot_ptr.slot;
-            const even_list_slice_slot = try cursor.db.slice(even_list_slot, slice_offset, slice_size);
+            })).?;
+            const even_list_slice_cursor = try even_list_cursor.slice(slice_offset, slice_size);
 
             // save the newly-made slice
             _ = try cursor.writePath(void, &[_]PathPart(void){
                 .{ .hash_map_get = .{ .value = hash_buffer("even-slice") } },
-                .{ .write = .{ .slot = even_list_slice_slot } },
+                .{ .write = .{ .slot = even_list_slice_cursor.slot_ptr.slot } },
             });
 
             // check all values in the new slice
@@ -91,10 +91,10 @@ fn testSlice(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: an
             }));
 
             // concat the slice with itself
-            const combo_list_slot = try cursor.db.concat(even_list_slice_slot, even_list_slice_slot);
+            const combo_list_cursor = try even_list_slice_cursor.concat(even_list_slice_cursor);
             _ = try cursor.writePath(void, &[_]PathPart(void){
                 .{ .hash_map_get = .{ .value = hash_buffer("combo") } },
-                .{ .write = .{ .slot = combo_list_slot } },
+                .{ .write = .{ .slot = combo_list_cursor.slot_ptr.slot } },
             });
 
             // check all values in the combo list
@@ -167,9 +167,9 @@ fn testConcat(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: a
             }
 
             // get even list
-            const even_list_slot = (try cursor.readPath(void, &[_]PathPart(void){
+            const even_list_cursor = (try cursor.readPath(void, &[_]PathPart(void){
                 .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-            })).?.slot_ptr.slot;
+            })).?;
 
             // create odd list
             _ = try cursor.writePath(void, &[_]PathPart(void){
@@ -188,15 +188,15 @@ fn testConcat(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: a
             }
 
             // get odd list
-            const odd_list_slot = (try cursor.readPath(void, &[_]PathPart(void){
+            const odd_list_cursor = (try cursor.readPath(void, &[_]PathPart(void){
                 .{ .hash_map_get = .{ .value = hash_buffer("odd") } },
-            })).?.slot_ptr.slot;
+            })).?;
 
             // concat the lists
-            const combo_list_slot = try cursor.db.concat(even_list_slot, odd_list_slot);
+            const combo_list_cursor = try even_list_cursor.concat(odd_list_cursor);
             _ = try cursor.writePath(void, &[_]PathPart(void){
                 .{ .hash_map_get = .{ .value = hash_buffer("combo") } },
-                .{ .write = .{ .slot = combo_list_slot } },
+                .{ .write = .{ .slot = combo_list_cursor.slot_ptr.slot } },
             });
 
             // check all values in the new list
@@ -816,10 +816,10 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         try expectEqual(10, i);
 
         // get list slot
-        const list_slot = (try root_cursor.readPath(void, &[_]PathPart(void){
+        const list_cursor = (try root_cursor.readPath(void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = -1 } },
-        })).?.slot_ptr.slot;
-        try expectEqual(10, db.count(list_slot));
+        })).?;
+        try expectEqual(10, list_cursor.count());
     }
 
     // iterate over inner hash_map
@@ -953,10 +953,10 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 }
 
                 // get list slot
-                const even_list_slot = (try cursor.readPath(void, &[_]PathPart(void){
+                const even_list_cursor = (try cursor.readPath(void, &[_]PathPart(void){
                     .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                })).?.slot_ptr.slot;
-                try expectEqual(xitdb.SLOT_COUNT + 1, cursor.db.count(even_list_slot));
+                })).?;
+                try expectEqual(xitdb.SLOT_COUNT + 1, even_list_cursor.count());
 
                 // iterate over list
                 var inner_cursor = (try cursor.readPath(void, &[_]PathPart(void){
@@ -974,15 +974,15 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                 // since each list has 17 items, each concat
                 // will create a gap, causing a root overflow
                 // before a normal array list would've.
-                var combo_list_slot = even_list_slot;
+                var combo_list_cursor = even_list_cursor;
                 for (0..16) |_| {
-                    combo_list_slot = try cursor.db.concat(combo_list_slot, even_list_slot);
+                    combo_list_cursor = try combo_list_cursor.concat(even_list_cursor);
                 }
 
                 // save the new list
                 _ = try cursor.writePath(void, &[_]PathPart(void){
                     .{ .hash_map_get = .{ .value = hash_buffer("combo") } },
-                    .{ .write = .{ .slot = combo_list_slot } },
+                    .{ .write = .{ .slot = combo_list_cursor.slot_ptr.slot } },
                 });
 
                 // append to the new list
@@ -1100,10 +1100,10 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
                     }
 
                     // get array map slot
-                    const even_list_slot = (try cursor.writePath(void, &[_]PathPart(void){
+                    const even_list_cursor = (try cursor.writePath(void, &[_]PathPart(void){
                         .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                    })).slot_ptr.slot;
-                    try expectEqual(xitdb.SLOT_COUNT + 1, cursor.db.count(even_list_slot));
+                    }));
+                    try expectEqual(xitdb.SLOT_COUNT + 1, even_list_cursor.count());
 
                     // check all values in the new array map
                     for (values.items, 0..) |val, i| {
