@@ -18,8 +18,8 @@ fn hash_buffer(buffer: []const u8) xitdb.Hash {
     return std.mem.bytesToValue(xitdb.Hash, &hash);
 }
 
-fn initOpts(comptime kind: DatabaseKind, opts: anytype) !Database(kind).InitOpts {
-    switch (kind) {
+fn initOpts(comptime db_kind: DatabaseKind, opts: anytype) !Database(db_kind).InitOpts {
+    switch (db_kind) {
         .file => {
             const file_or_err = opts.dir.openFile(opts.path, .{ .mode = .read_write, .lock = .exclusive });
             const file = try if (file_or_err == error.FileNotFound)
@@ -33,12 +33,12 @@ fn initOpts(comptime kind: DatabaseKind, opts: anytype) !Database(kind).InitOpts
     }
 }
 
-fn testSlice(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: anytype, comptime original_size: usize, comptime slice_offset: u64, comptime slice_size: u64) !void {
-    const init_opts = try initOpts(kind, opts);
-    var db = try Database(kind).init(allocator, init_opts);
+fn testSlice(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: anytype, comptime original_size: usize, comptime slice_offset: u64, comptime slice_size: u64) !void {
+    const init_opts = try initOpts(db_kind, opts);
+    var db = try Database(db_kind).init(allocator, init_opts);
     defer {
         db.deinit();
-        if (kind == .file) {
+        if (db_kind == .file) {
             opts.dir.deleteFile(opts.path) catch {};
         }
     }
@@ -47,7 +47,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: an
     const Ctx = struct {
         allocator: std.mem.Allocator,
 
-        pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
+        pub fn run(self: @This(), cursor: *xitdb.Cursor(db_kind)) !void {
             var values = std.ArrayList(u64).init(self.allocator);
             defer values.deinit();
 
@@ -132,12 +132,12 @@ fn testSlice(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: an
     });
 }
 
-fn testConcat(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: anytype, comptime list_a_size: usize, comptime list_b_size: usize) !void {
-    const init_opts = try initOpts(kind, opts);
-    var db = try Database(kind).init(allocator, init_opts);
+fn testConcat(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: anytype, comptime list_a_size: usize, comptime list_b_size: usize) !void {
+    const init_opts = try initOpts(db_kind, opts);
+    var db = try Database(db_kind).init(allocator, init_opts);
     defer {
         db.deinit();
-        if (kind == .file) {
+        if (db_kind == .file) {
             opts.dir.deleteFile(opts.path) catch {};
         }
     }
@@ -146,7 +146,7 @@ fn testConcat(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: a
     const Ctx = struct {
         allocator: std.mem.Allocator,
 
-        pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
+        pub fn run(self: @This(), cursor: *xitdb.Cursor(db_kind)) !void {
             var values = std.ArrayList(u64).init(self.allocator);
             defer values.deinit();
 
@@ -222,14 +222,14 @@ fn testConcat(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: a
     });
 }
 
-fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: anytype) !void {
+fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: anytype) !void {
     // array_list of hash_maps
     {
-        const init_opts = try initOpts(kind, opts);
-        var db = try Database(kind).init(allocator, init_opts);
+        const init_opts = try initOpts(db_kind, opts);
+        var db = try Database(db_kind).init(allocator, init_opts);
         defer {
             db.deinit();
-            if (kind == .file) {
+            if (db_kind == .file) {
                 opts.dir.deleteFile(opts.path) catch {};
             }
         }
@@ -239,7 +239,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         const foo_key = hash_buffer("foo");
         {
             const Ctx = struct {
-                pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
+                pub fn run(_: @This(), cursor: *xitdb.Cursor(db_kind)) !void {
                     try std.testing.expect(cursor.pointer() == null);
                     var writer = try cursor.writer();
                     try writer.writeAll("bar");
@@ -270,7 +270,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
+                pub fn run(self: @This(), cursor: *xitdb.Cursor(db_kind)) !void {
                     try std.testing.expect(cursor.pointer() != null);
 
                     const value_cursor = (try cursor.readPath(void, &[_]PathPart(void){})).?;
@@ -325,7 +325,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
+                pub fn run(self: @This(), cursor: *xitdb.Cursor(db_kind)) !void {
                     try std.testing.expect(cursor.pointer() != null);
 
                     var writer = try cursor.writer();
@@ -399,7 +399,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn run(_: @This(), cursor: *Database(kind).Cursor) !void {
+                pub fn run(_: @This(), cursor: *xitdb.Cursor(db_kind)) !void {
                     var writer = try cursor.writer();
                     try writer.writeAll("this value won't be visible");
                     try writer.finish();
@@ -646,11 +646,11 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
     // append to top-level array_list many times, filling up the array_list until a root overflow occurs
     {
-        const init_opts = try initOpts(kind, opts);
-        var db = try Database(kind).init(allocator, init_opts);
+        const init_opts = try initOpts(db_kind, opts);
+        var db = try Database(db_kind).init(allocator, init_opts);
         defer {
             db.deinit();
-            if (kind == .file) {
+            if (db_kind == .file) {
                 opts.dir.deleteFile(opts.path) catch {};
             }
         }
@@ -683,11 +683,11 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
     // append to inner array_list many times, filling up the array_list until a root overflow occurs
     {
-        const init_opts = try initOpts(kind, opts);
-        var db = try Database(kind).init(allocator, init_opts);
+        const init_opts = try initOpts(db_kind, opts);
+        var db = try Database(db_kind).init(allocator, init_opts);
         defer {
             db.deinit();
-            if (kind == .file) {
+            if (db_kind == .file) {
                 opts.dir.deleteFile(opts.path) catch {};
             }
         }
@@ -768,11 +768,11 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
     // iterate over inner array_list
     {
-        const init_opts = try initOpts(kind, opts);
-        var db = try Database(kind).init(allocator, init_opts);
+        const init_opts = try initOpts(db_kind, opts);
+        var db = try Database(db_kind).init(allocator, init_opts);
         defer {
             db.deinit();
-            if (kind == .file) {
+            if (db_kind == .file) {
                 opts.dir.deleteFile(opts.path) catch {};
             }
         }
@@ -824,11 +824,11 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
     // iterate over inner hash_map
     {
-        const init_opts = try initOpts(kind, opts);
-        var db = try Database(kind).init(allocator, init_opts);
+        const init_opts = try initOpts(db_kind, opts);
+        var db = try Database(db_kind).init(allocator, init_opts);
         defer {
             db.deinit();
-            if (kind == .file) {
+            if (db_kind == .file) {
                 opts.dir.deleteFile(opts.path) catch {};
             }
         }
@@ -905,29 +905,29 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
     {
         // slice linked_array_list
-        try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5 + 1, 10, 5);
-        try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5 + 1, 0, xitdb.SLOT_COUNT * 2);
-        try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 3, xitdb.SLOT_COUNT);
-        try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 3, xitdb.SLOT_COUNT * 2);
-        try testSlice(allocator, kind, opts, xitdb.SLOT_COUNT * 2, 10, xitdb.SLOT_COUNT);
-        try testSlice(allocator, kind, opts, 2, 0, 2);
-        try testSlice(allocator, kind, opts, 2, 1, 1);
-        try testSlice(allocator, kind, opts, 1, 0, 0);
+        try testSlice(allocator, db_kind, opts, xitdb.SLOT_COUNT * 5 + 1, 10, 5);
+        try testSlice(allocator, db_kind, opts, xitdb.SLOT_COUNT * 5 + 1, 0, xitdb.SLOT_COUNT * 2);
+        try testSlice(allocator, db_kind, opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 3, xitdb.SLOT_COUNT);
+        try testSlice(allocator, db_kind, opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 3, xitdb.SLOT_COUNT * 2);
+        try testSlice(allocator, db_kind, opts, xitdb.SLOT_COUNT * 2, 10, xitdb.SLOT_COUNT);
+        try testSlice(allocator, db_kind, opts, 2, 0, 2);
+        try testSlice(allocator, db_kind, opts, 2, 1, 1);
+        try testSlice(allocator, db_kind, opts, 1, 0, 0);
 
         // concat linked_array_list
-        try testConcat(allocator, kind, opts, xitdb.SLOT_COUNT * 5 + 1, xitdb.SLOT_COUNT + 1);
-        try testConcat(allocator, kind, opts, xitdb.SLOT_COUNT, xitdb.SLOT_COUNT);
-        try testConcat(allocator, kind, opts, 1, 1);
-        try testConcat(allocator, kind, opts, 0, 0);
+        try testConcat(allocator, db_kind, opts, xitdb.SLOT_COUNT * 5 + 1, xitdb.SLOT_COUNT + 1);
+        try testConcat(allocator, db_kind, opts, xitdb.SLOT_COUNT, xitdb.SLOT_COUNT);
+        try testConcat(allocator, db_kind, opts, 1, 1);
+        try testConcat(allocator, db_kind, opts, 0, 0);
     }
 
     // concat linked_array_list multiple times
     {
-        const init_opts = try initOpts(kind, opts);
-        var db = try Database(kind).init(allocator, init_opts);
+        const init_opts = try initOpts(db_kind, opts);
+        var db = try Database(db_kind).init(allocator, init_opts);
         defer {
             db.deinit();
-            if (kind == .file) {
+            if (db_kind == .file) {
                 opts.dir.deleteFile(opts.path) catch {};
             }
         }
@@ -936,7 +936,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
         const Ctx = struct {
             allocator: std.mem.Allocator,
 
-            pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
+            pub fn run(self: @This(), cursor: *xitdb.Cursor(db_kind)) !void {
                 var values = std.ArrayList(u64).init(self.allocator);
                 defer values.deinit();
 
@@ -1017,11 +1017,11 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
     // append items to linked_array_list without setting their value
     {
-        const init_opts = try initOpts(kind, opts);
-        var db = try Database(kind).init(allocator, init_opts);
+        const init_opts = try initOpts(db_kind, opts);
+        var db = try Database(db_kind).init(allocator, init_opts);
         defer {
             db.deinit();
-            if (kind == .file) {
+            if (db_kind == .file) {
                 opts.dir.deleteFile(opts.path) catch {};
             }
         }
@@ -1038,11 +1038,11 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
 
     // array_hash_map
     {
-        const init_opts = try initOpts(kind, opts);
-        var db = try Database(kind).init(allocator, init_opts);
+        const init_opts = try initOpts(db_kind, opts);
+        var db = try Database(db_kind).init(allocator, init_opts);
         defer {
             db.deinit();
-            if (kind == .file) {
+            if (db_kind == .file) {
                 opts.dir.deleteFile(opts.path) catch {};
             }
         }
@@ -1053,7 +1053,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
+                pub fn run(self: @This(), cursor: *xitdb.Cursor(db_kind)) !void {
                     for (0..xitdb.SLOT_COUNT + 1) |i| {
                         const n = i * 2;
                         const key = try std.fmt.allocPrint(self.allocator, "wat{}", .{i});
@@ -1079,7 +1079,7 @@ fn testMain(allocator: std.mem.Allocator, comptime kind: DatabaseKind, opts: any
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn run(self: @This(), cursor: *Database(kind).Cursor) !void {
+                pub fn run(self: @This(), cursor: *xitdb.Cursor(db_kind)) !void {
                     var values = std.ArrayList(u64).init(self.allocator);
                     defer values.deinit();
 
