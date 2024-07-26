@@ -1520,7 +1520,6 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
 
         pub const Writer = struct {
             parent: *Cursor(db_kind),
-            slot_ptr: SlotPointer,
             size: u64,
             slot: Slot,
             start_position: u64,
@@ -1532,15 +1531,10 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
                 try self.parent.db.core.seekTo(self.slot.value);
                 try core_writer.writeInt(u64, self.size, .big);
 
-                try self.parent.db.core.seekTo(self.slot_ptr.position);
+                try self.parent.db.core.seekTo(self.parent.slot_ptr.position);
                 try core_writer.writeInt(SlotInt, @bitCast(self.slot), .big);
 
-                // if the cursor is directly pointing to the slot we are updating,
-                // make sure it is updated as well, so subsequent reads with the
-                // cursor will see the new value.
-                if (self.parent.slot_ptr.position == self.slot_ptr.position) {
-                    self.parent.slot_ptr.slot = self.slot;
-                }
+                self.parent.slot_ptr.slot = self.slot;
             }
 
             pub fn writeAll(self: *Writer, bytes: []const u8) !void {
@@ -1683,13 +1677,13 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
         }
 
         pub fn writeBytes(self: *Cursor(db_kind), buffer: []const u8, mode: enum { once, replace }) !Slot {
-            var cursor_writer = try self.writer();
-            if (mode == .replace or cursor_writer.slot_ptr.slot.tag == 0) {
+            if (mode == .replace or self.slot_ptr.slot.tag == 0) {
+                var cursor_writer = try self.writer();
                 try cursor_writer.writeAll(buffer);
                 try cursor_writer.finish();
                 return cursor_writer.slot;
             } else {
-                return cursor_writer.slot_ptr.slot;
+                return self.slot_ptr.slot;
             }
         }
 
@@ -1722,7 +1716,6 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
 
             return Writer{
                 .parent = self,
-                .slot_ptr = self.slot_ptr,
                 .size = 0,
                 .slot = Slot.init(ptr_pos, .bytes),
                 .start_position = start_position,
