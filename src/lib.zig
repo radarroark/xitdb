@@ -569,6 +569,81 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 };
             }
 
+            pub fn readBytesAlloc(self: Cursor, allocator: std.mem.Allocator, max_size: usize) ![]u8 {
+                const core_reader = self.db.core.reader();
+
+                if (try Tag.init(self.slot_ptr.slot) != .bytes) {
+                    return error.UnexpectedTag;
+                }
+
+                try self.db.core.seekTo(self.slot_ptr.slot.value);
+                const value_size = try core_reader.readInt(u64, .big);
+
+                if (value_size > max_size) {
+                    return error.MaxSizeExceeded;
+                }
+
+                const value = try allocator.alloc(u8, value_size);
+                errdefer allocator.free(value);
+
+                try core_reader.readNoEof(value);
+                return value;
+            }
+
+            pub fn readBytes(self: Cursor, buffer: []u8) ![]u8 {
+                const core_reader = self.db.core.reader();
+
+                if (try Tag.init(self.slot_ptr.slot) != .bytes) {
+                    return error.UnexpectedTag;
+                }
+
+                try self.db.core.seekTo(self.slot_ptr.slot.value);
+                const value_size = try core_reader.readInt(u64, .big);
+                const size = @min(buffer.len, value_size);
+
+                try core_reader.readNoEof(buffer[0..size]);
+                return buffer[0..size];
+            }
+
+            pub const KeyValuePairCursor = struct {
+                metadata_cursor: ?Cursor,
+                value_cursor: ?Cursor,
+                key_cursor: ?Cursor,
+                hash: Hash,
+            };
+
+            pub fn readKeyValuePair(self: Cursor) !KeyValuePairCursor {
+                const core_reader = self.db.core.reader();
+
+                if (try Tag.init(self.slot_ptr.slot) != .kv_pair) {
+                    return error.UnexpectedTag;
+                }
+
+                try self.db.core.seekTo(self.slot_ptr.slot.value);
+                const kv_pair: KeyValuePair = @bitCast(try core_reader.readInt(KeyValuePairInt, .big));
+
+                const hash_pos = self.slot_ptr.slot.value;
+                const key_slot_pos = hash_pos + byteSizeOf(Hash);
+                const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
+                const metadata_slot_pos = value_slot_pos + byteSizeOf(Slot);
+
+                return .{
+                    .metadata_cursor = if (kv_pair.metadata_slot.tag != 0)
+                        .{ .slot_ptr = .{ .position = metadata_slot_pos, .slot = kv_pair.metadata_slot }, .db = self.db }
+                    else
+                        null,
+                    .value_cursor = if (kv_pair.value_slot.tag != 0)
+                        .{ .slot_ptr = .{ .position = value_slot_pos, .slot = kv_pair.value_slot }, .db = self.db }
+                    else
+                        null,
+                    .key_cursor = if (kv_pair.key_slot.tag != 0)
+                        .{ .slot_ptr = .{ .position = key_slot_pos, .slot = kv_pair.key_slot }, .db = self.db }
+                    else
+                        null,
+                    .hash = kv_pair.hash,
+                };
+            }
+
             pub fn writeBytes(self: *Cursor, buffer: []const u8, mode: enum { once, replace }) !Slot {
                 var cursor_writer = try self.writer();
                 if (mode == .replace or cursor_writer.slot_ptr.slot.tag == 0) {
@@ -832,54 +907,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 .slot_ptr = .{ .position = 0, .slot = Slot.init(INDEX_START, .array_list) },
                 .db = self,
             };
-        }
-
-        pub fn readBytesAlloc(self: *Database(db_kind), allocator: std.mem.Allocator, max_size: usize, slot: Slot) ![]u8 {
-            const core_reader = self.core.reader();
-
-            if (try Tag.init(slot) != .bytes) {
-                return error.UnexpectedTag;
-            }
-
-            try self.core.seekTo(slot.value);
-            const value_size = try core_reader.readInt(u64, .big);
-
-            if (value_size > max_size) {
-                return error.MaxSizeExceeded;
-            }
-
-            const value = try allocator.alloc(u8, value_size);
-            errdefer allocator.free(value);
-
-            try core_reader.readNoEof(value);
-            return value;
-        }
-
-        pub fn readBytes(self: *Database(db_kind), buffer: []u8, slot: Slot) ![]u8 {
-            const core_reader = self.core.reader();
-
-            if (try Tag.init(slot) != .bytes) {
-                return error.UnexpectedTag;
-            }
-
-            try self.core.seekTo(slot.value);
-            const value_size = try core_reader.readInt(u64, .big);
-            const size = @min(buffer.len, value_size);
-
-            try core_reader.readNoEof(buffer[0..size]);
-            return buffer[0..size];
-        }
-
-        pub fn readKeyValuePair(self: *Database(db_kind), slot: Slot) !KeyValuePair {
-            const core_reader = self.core.reader();
-
-            if (try Tag.init(slot) != .kv_pair) {
-                return error.UnexpectedTag;
-            }
-
-            try self.core.seekTo(slot.value);
-            const kv_pair: KeyValuePair = @bitCast(try core_reader.readInt(KeyValuePairInt, .big));
-            return kv_pair;
         }
 
         pub fn slice(self: *Database(db_kind), list: Slot, offset: u64, size: u64) !Slot {
