@@ -107,18 +107,18 @@ const KeyValuePair = packed struct {
 };
 
 const LinkedArrayListSlotInt = u136;
-pub const LinkedArrayListSlot = packed struct {
+const LinkedArrayListSlot = packed struct {
     size: u64,
     slot: Slot,
 };
 
-pub const SlotPointer = struct {
+const SlotPointer = struct {
     position: u64,
     slot: Slot,
     is_new: bool = false,
 };
 
-pub const LinkedArrayListSlotPointer = struct {
+const LinkedArrayListSlotPointer = struct {
     slot_ptr: SlotPointer,
     leaf_count: u64,
 };
