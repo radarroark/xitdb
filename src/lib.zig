@@ -1671,10 +1671,11 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
             const hash_pos = self.slot_ptr.slot.value;
             const key_slot_pos = hash_pos + byteSizeOf(Hash);
             const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
-            const metadata_slot_pos = value_slot_pos + byteSizeOf(Slot);
 
             return .{
-                .metadata_cursor = .{ .slot_ptr = .{ .position = metadata_slot_pos, .slot = kv_pair.metadata_slot }, .db = self.db },
+                // metadata cursor's position is null to prevent users from writing to it
+                // (it is meant for internal use only)
+                .metadata_cursor = .{ .slot_ptr = .{ .position = null, .slot = kv_pair.metadata_slot }, .db = self.db },
                 .value_cursor = .{ .slot_ptr = .{ .position = value_slot_pos, .slot = kv_pair.value_slot }, .db = self.db },
                 .key_cursor = .{ .slot_ptr = .{ .position = key_slot_pos, .slot = kv_pair.key_slot }, .db = self.db },
                 .hash = kv_pair.hash,
