@@ -1681,14 +1681,11 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
             };
         }
 
-        pub fn writeBytes(self: *Cursor(db_kind), buffer: []const u8, mode: enum { once, replace }) !Slot {
+        pub fn writeBytes(self: *Cursor(db_kind), buffer: []const u8, mode: enum { once, replace }) !void {
             if (mode == .replace or self.slot_ptr.slot.tag == 0) {
                 var cursor_writer = try self.writer();
                 try cursor_writer.writeAll(buffer);
                 try cursor_writer.finish();
-                return cursor_writer.slot;
-            } else {
-                return self.slot_ptr.slot;
             }
         }
 

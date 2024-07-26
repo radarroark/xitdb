@@ -360,7 +360,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
                 .hash_map_init,
                 .{ .hash_map_get = .{ .value = bar_key } },
             });
-            const foo_slot = try bar_cursor.writeBytes("foo", .once);
+            try bar_cursor.writeBytes("foo", .once);
             // writing again with .once returns the same slot
             {
                 var next_bar_cursor = try root_cursor.writePath(void, &[_]PathPart(void){
@@ -368,7 +368,8 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
                     .hash_map_init,
                     .{ .hash_map_get = .{ .value = bar_key } },
                 });
-                try expectEqual(foo_slot, try next_bar_cursor.writeBytes("foo", .once));
+                try next_bar_cursor.writeBytes("foo", .once);
+                try expectEqual(bar_cursor.slot_ptr.slot, next_bar_cursor.slot_ptr.slot);
             }
             // writing again with .replace returns a new slot
             {
@@ -377,7 +378,8 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
                     .hash_map_init,
                     .{ .hash_map_get = .{ .value = bar_key } },
                 });
-                try std.testing.expect(!foo_slot.eql(try next_bar_cursor.writeBytes("foo", .replace)));
+                try next_bar_cursor.writeBytes("foo", .replace);
+                try std.testing.expect(!bar_cursor.slot_ptr.slot.eql(next_bar_cursor.slot_ptr.slot));
             }
         }
 
