@@ -113,7 +113,7 @@ const LinkedArrayListSlot = packed struct {
 };
 
 const SlotPointer = struct {
-    position: u64,
+    position: ?u64,
     slot: Slot,
     is_new: bool = false,
 };
@@ -381,7 +381,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
         pub fn rootCursor(self: *Database(db_kind)) Cursor(db_kind) {
             return .{
-                .slot_ptr = .{ .position = 0, .slot = Slot.init(INDEX_START, .array_list) },
+                .slot_ptr = .{ .position = null, .slot = Slot.init(INDEX_START, .array_list) },
                 .db = self,
             };
         }
@@ -431,6 +431,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 .array_list_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
+                    const position = slot_ptr.position orelse return error.CursorNotWriteable;
+
                     if (slot_ptr.slot.tag == 0) {
                         // if slot was empty, insert the new list
                         const writer = self.core.writer();
@@ -444,8 +446,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         const array_list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                         try writer.writeAll(&array_list_index_block);
                         // make slot point to list
-                        const next_slot_ptr = SlotPointer{ .position = slot_ptr.position, .slot = Slot.init(array_list_start, .array_list) };
-                        try self.core.seekTo(next_slot_ptr.position);
+                        const next_slot_ptr = SlotPointer{ .position = position, .slot = Slot.init(array_list_start, .array_list) };
+                        try self.core.seekTo(position);
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                         return self.readSlot(user_write_mode, Ctx, path[1..], next_slot_ptr);
                     } else {
@@ -477,8 +479,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         }
 
                         // make slot point to list
-                        const next_slot_ptr = SlotPointer{ .position = slot_ptr.position, .slot = Slot.init(array_list_start, .array_list) };
-                        try self.core.seekTo(next_slot_ptr.position);
+                        const next_slot_ptr = SlotPointer{ .position = position, .slot = Slot.init(array_list_start, .array_list) };
+                        try self.core.seekTo(position);
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                         return self.readSlot(user_write_mode, Ctx, path[1..], next_slot_ptr);
                     }
@@ -544,7 +546,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             var append_result = try self.readArrayListSlotAppend(next_array_list_start, write_mode);
                             // set its value to the last slot
                             if (last_slot.tag != 0) {
-                                try self.core.seekTo(append_result.slot_ptr.position);
+                                const position = append_result.slot_ptr.position orelse return error.CursorNotWriteable;
+                                try self.core.seekTo(position);
                                 try writer.writeInt(SlotInt, @bitCast(last_slot), .big);
                                 append_result.slot_ptr.slot = last_slot;
                             }
@@ -560,6 +563,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 .linked_array_list_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
+                    const position = slot_ptr.position orelse return error.CursorNotWriteable;
+
                     if (slot_ptr.slot.tag == 0) {
                         // if slot was empty, insert the new list
                         const writer = self.core.writer();
@@ -574,8 +579,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         const array_list_index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                         try writer.writeAll(&array_list_index_block);
                         // make slot point to new list
-                        const next_slot_ptr = SlotPointer{ .position = slot_ptr.position, .slot = Slot.init(array_list_start, .linked_array_list) };
-                        try self.core.seekTo(next_slot_ptr.position);
+                        const next_slot_ptr = SlotPointer{ .position = position, .slot = Slot.init(array_list_start, .linked_array_list) };
+                        try self.core.seekTo(position);
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                         return self.readSlot(user_write_mode, Ctx, path[1..], next_slot_ptr);
                     } else {
@@ -607,8 +612,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         }
 
                         // make slot point to list
-                        const next_slot_ptr = SlotPointer{ .position = slot_ptr.position, .slot = Slot.init(array_list_start, .linked_array_list) };
-                        try self.core.seekTo(next_slot_ptr.position);
+                        const next_slot_ptr = SlotPointer{ .position = position, .slot = Slot.init(array_list_start, .linked_array_list) };
+                        try self.core.seekTo(position);
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                         return self.readSlot(user_write_mode, Ctx, path[1..], next_slot_ptr);
                     }
@@ -657,6 +662,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 .hash_map_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
+                    const position = slot_ptr.position orelse return error.CursorNotWriteable;
+
                     if (slot_ptr.slot.tag == 0) {
                         // if slot was empty, insert the new map
                         const writer = self.core.writer();
@@ -665,8 +672,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         const map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                         try writer.writeAll(&map_index_block);
                         // make slot point to map
-                        const next_slot_ptr = SlotPointer{ .position = slot_ptr.position, .slot = Slot.init(map_start, .hash_map) };
-                        try self.core.seekTo(next_slot_ptr.position);
+                        const next_slot_ptr = SlotPointer{ .position = position, .slot = Slot.init(map_start, .hash_map) };
+                        try self.core.seekTo(position);
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                         return self.readSlot(user_write_mode, Ctx, path[1..], next_slot_ptr);
                     } else {
@@ -693,8 +700,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         }
 
                         // make slot point to map
-                        const next_slot_ptr = SlotPointer{ .position = slot_ptr.position, .slot = Slot.init(map_start, .hash_map) };
-                        try self.core.seekTo(next_slot_ptr.position);
+                        const next_slot_ptr = SlotPointer{ .position = position, .slot = Slot.init(map_start, .hash_map) };
+                        try self.core.seekTo(position);
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                         return self.readSlot(user_write_mode, Ctx, path[1..], next_slot_ptr);
                     }
@@ -733,13 +740,16 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_remove, 0, .read_only, .kv_pair);
 
                     const writer = self.core.writer();
-                    try self.core.seekTo(next_slot_ptr.position);
+                    const position = next_slot_ptr.position orelse return error.CursorNotWriteable;
+                    try self.core.seekTo(position);
                     try writer.writeInt(SlotInt, 0, .big);
 
                     return next_slot_ptr;
                 },
                 .array_hash_map_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
+
+                    const position = slot_ptr.position orelse return error.CursorNotWriteable;
 
                     if (slot_ptr.slot.tag == 0) {
                         const writer = self.core.writer();
@@ -758,8 +768,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         const array_list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                         try writer.writeAll(&array_list_index_block);
                         // make slot point to array map
-                        const next_slot_ptr = SlotPointer{ .position = slot_ptr.position, .slot = Slot.init(array_map_start, .array_hash_map) };
-                        try self.core.seekTo(next_slot_ptr.position);
+                        const next_slot_ptr = SlotPointer{ .position = position, .slot = Slot.init(array_map_start, .array_hash_map) };
+                        try self.core.seekTo(position);
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                         return self.readSlot(user_write_mode, Ctx, path[1..], next_slot_ptr);
                     } else {
@@ -791,8 +801,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         }
 
                         // make slot point to array map
-                        const next_slot_ptr = SlotPointer{ .position = slot_ptr.position, .slot = Slot.init(array_map_start, .array_hash_map) };
-                        try self.core.seekTo(next_slot_ptr.position);
+                        const next_slot_ptr = SlotPointer{ .position = position, .slot = Slot.init(array_map_start, .array_hash_map) };
+                        try self.core.seekTo(position);
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                         return self.readSlot(user_write_mode, Ctx, path[1..], next_slot_ptr);
                     }
@@ -804,7 +814,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     // get slot from map
                     const map_start = slot_ptr.slot.value + byteSizeOf(ArrayListHeader);
                     const map_slot_ptr = SlotPointer{
-                        .position = std.math.maxInt(u64), // this shouldn't ever be read
+                        .position = null,
                         .slot = Slot.init(map_start, .hash_map),
                     };
                     const hash = switch (part.array_hash_map_get) {
@@ -910,6 +920,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     if (path.len > 1) return error.ValueMustBeAtEnd;
 
+                    const position = slot_ptr.position orelse return error.CursorNotWriteable;
+
                     const core_writer = self.core.writer();
 
                     const slot: Slot = switch (part.write) {
@@ -930,7 +942,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         },
                     };
 
-                    try self.core.seekTo(slot_ptr.position);
+                    try self.core.seekTo(position);
                     try core_writer.writeInt(SlotInt, @bitCast(slot), .big);
 
                     return .{ .position = slot_ptr.position, .slot = slot };
@@ -1226,7 +1238,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             // or else the indexing will be screwed up
             const new_slot = Slot.init(0, .empty);
             slot_ptr.slot_ptr.slot = new_slot;
-            try self.core.seekTo(slot_ptr.slot_ptr.position);
+            const position = slot_ptr.slot_ptr.position orelse return error.CursorNotWriteable;
+            try self.core.seekTo(position);
             try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{ .slot = new_slot, .size = 0 }), .big);
             if (header.size < SLOT_COUNT and shift > 0) {
                 return error.MustSetNewSlotsToEmpty;
@@ -1531,7 +1544,8 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
                 try self.parent.db.core.seekTo(self.slot.value);
                 try core_writer.writeInt(u64, self.size, .big);
 
-                try self.parent.db.core.seekTo(self.parent.slot_ptr.position);
+                const position = self.parent.slot_ptr.position orelse return error.CursorNotWriteable;
+                try self.parent.db.core.seekTo(position);
                 try core_writer.writeInt(SlotInt, @bitCast(self.slot), .big);
 
                 self.parent.slot_ptr.slot = self.slot;
@@ -1902,7 +1916,7 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
 
             return .{
                 .slot_ptr = .{
-                    .position = std.math.maxInt(u64),
+                    .position = null,
                     .slot = Slot.init(new_array_list_start, .linked_array_list),
                 },
                 .db = self.db,
@@ -2080,7 +2094,7 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
 
             return .{
                 .slot_ptr = .{
-                    .position = std.math.maxInt(u64),
+                    .position = null,
                     .slot = Slot.init(list_start, .linked_array_list),
                 },
                 .db = self.db,
