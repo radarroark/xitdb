@@ -1708,6 +1708,10 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
         }
 
         pub fn writer(self: *Cursor(db_kind)) !Writer {
+            if (self.slot_ptr.slot.tag != 0 and try Tag.init(self.slot_ptr.slot) != .bytes) {
+                return error.UnexpectedTag;
+            }
+
             const core_writer = self.db.core.writer();
             try self.db.core.seekFromEnd(0);
             const ptr_pos = try self.db.core.getPos();
