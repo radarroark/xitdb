@@ -1652,9 +1652,9 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
         }
 
         pub const KeyValuePairCursor = struct {
-            metadata_cursor: ?Cursor(db_kind),
-            value_cursor: ?Cursor(db_kind),
-            key_cursor: ?Cursor(db_kind),
+            metadata_cursor: Cursor(db_kind),
+            value_cursor: Cursor(db_kind),
+            key_cursor: Cursor(db_kind),
             hash: Hash,
         };
 
@@ -1674,18 +1674,9 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
             const metadata_slot_pos = value_slot_pos + byteSizeOf(Slot);
 
             return .{
-                .metadata_cursor = if (kv_pair.metadata_slot.tag != 0)
-                    .{ .slot_ptr = .{ .position = metadata_slot_pos, .slot = kv_pair.metadata_slot }, .db = self.db }
-                else
-                    null,
-                .value_cursor = if (kv_pair.value_slot.tag != 0)
-                    .{ .slot_ptr = .{ .position = value_slot_pos, .slot = kv_pair.value_slot }, .db = self.db }
-                else
-                    null,
-                .key_cursor = if (kv_pair.key_slot.tag != 0)
-                    .{ .slot_ptr = .{ .position = key_slot_pos, .slot = kv_pair.key_slot }, .db = self.db }
-                else
-                    null,
+                .metadata_cursor = .{ .slot_ptr = .{ .position = metadata_slot_pos, .slot = kv_pair.metadata_slot }, .db = self.db },
+                .value_cursor = .{ .slot_ptr = .{ .position = value_slot_pos, .slot = kv_pair.value_slot }, .db = self.db },
+                .key_cursor = .{ .slot_ptr = .{ .position = key_slot_pos, .slot = kv_pair.key_slot }, .db = self.db },
                 .hash = kv_pair.hash,
             };
         }

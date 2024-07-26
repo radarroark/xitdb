@@ -273,8 +273,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
                 pub fn run(self: @This(), cursor: *xitdb.Cursor(db_kind)) !void {
                     try std.testing.expect(cursor.pointer() != null);
 
-                    const value_cursor = (try cursor.readPath(void, &[_]PathPart(void){})).?;
-                    const value = try value_cursor.readBytesAlloc(self.allocator, MAX_READ_BYTES);
+                    const value = try cursor.readBytesAlloc(self.allocator, MAX_READ_BYTES);
                     defer self.allocator.free(value);
                     try std.testing.expectEqualStrings("bar", value);
 
@@ -340,8 +339,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
                     try writer.writeAll("a");
                     try writer.finish();
 
-                    const value_cursor = (try cursor.readPath(void, &[_]PathPart(void){})).?;
-                    const value = try value_cursor.readBytesAlloc(self.allocator, MAX_READ_BYTES);
+                    const value = try cursor.readBytesAlloc(self.allocator, MAX_READ_BYTES);
                     defer self.allocator.free(value);
                     try std.testing.expectEqualStrings("baz", value);
                 }
@@ -887,14 +885,12 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
         while (try iter.next()) |*next_cursor| {
             const kv_pair = try next_cursor.readKeyValuePair();
             if (kv_pair.hash == foo_key) {
-                const key_cursor = kv_pair.key_cursor.?;
-                const key = try key_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+                const key = try kv_pair.key_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
                 defer allocator.free(key);
                 try std.testing.expectEqualStrings("foo", key);
-                try expectEqual(42, kv_pair.value_cursor.?.slot_ptr.slot.value);
+                try expectEqual(42, kv_pair.value_cursor.slot_ptr.slot.value);
             } else {
-                const value_cursor = kv_pair.value_cursor.?;
-                const value = try value_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+                const value = try kv_pair.value_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
                 defer allocator.free(value);
                 try expectEqual(kv_pair.hash, hash_buffer(value));
             }
@@ -1118,7 +1114,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
                             .{ .array_hash_map_get_by_index = .{ .kv_pair = i } },
                         })).?;
                         const kv_pair = try kv_cursor.readKeyValuePair();
-                        try expectEqual(i, kv_pair.metadata_cursor.?.slot_ptr.slot.value);
+                        try expectEqual(i, kv_pair.metadata_cursor.slot_ptr.slot.value);
                     }
 
                     // iterate over array map
@@ -1130,7 +1126,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
                     var i: u64 = 0;
                     while (try iter.next()) |*next_cursor| {
                         const kv_pair = try next_cursor.readKeyValuePair();
-                        try expectEqual(values.items[i], kv_pair.value_cursor.?.slot_ptr.slot.value);
+                        try expectEqual(values.items[i], kv_pair.value_cursor.slot_ptr.slot.value);
                         i += 1;
                     }
                     try expectEqual(xitdb.SLOT_COUNT + 1, i);
