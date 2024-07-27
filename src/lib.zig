@@ -1711,8 +1711,11 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
         }
 
         pub fn writer(self: *Cursor(db_kind)) !Writer {
-            if (self.slot_ptr.slot.tag != 0 and try Tag.init(self.slot_ptr.slot) != .bytes) {
-                return error.UnexpectedTag;
+            if (self.slot_ptr.slot.tag != 0) {
+                const tag = try Tag.init(self.slot_ptr.slot);
+                if (tag != .bytes and tag != .empty) {
+                    return error.UnexpectedTag;
+                }
             }
 
             const core_writer = self.db.core.writer();
