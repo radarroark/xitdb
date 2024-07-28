@@ -1176,7 +1176,7 @@ test "read and write" {
 
 test "get/set tag" {
     const ptr_value = xitdb.Slot.init(42, .hash_map);
-    try std.testing.expectEqual(.hash_map, try xitdb.Tag.init(ptr_value));
+    try std.testing.expectEqual(.hash_map, ptr_value.tag);
     const ptr_index = xitdb.Slot.init(42, .index);
-    try std.testing.expectEqual(.index, try xitdb.Tag.init(ptr_index));
+    try std.testing.expectEqual(.index, ptr_index.tag);
 }
