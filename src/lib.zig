@@ -68,6 +68,10 @@ pub const Tag = enum(u7) {
     pub fn noValue(self: Tag) bool {
         return self == .none or self == .empty;
     }
+
+    pub fn validate(self: Tag) !void {
+        _ = try std.meta.intToEnum(Tag, @intFromEnum(self));
+    }
 };
 
 const DatabaseHeaderInt = u72;
@@ -823,6 +827,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         try self.core.seekTo(next_slot_ptr.slot.value);
                         var kv_pair: KeyValuePair = @bitCast(try reader.readInt(KeyValuePairInt, .big));
 
+                        try kv_pair.metadata_slot.tag.validate();
                         switch (kv_pair.metadata_slot.tag) {
                             .none => {
                                 // add slot to list
@@ -858,11 +863,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         .key => blk: {
                             try self.core.seekTo(key_slot_pos);
                             const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+                            try slot.tag.validate();
                             break :blk SlotPointer{ .position = key_slot_pos, .slot = slot };
                         },
                         .value => blk: {
                             try self.core.seekTo(value_slot_pos);
                             const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+                            try slot.tag.validate();
                             break :blk SlotPointer{ .position = value_slot_pos, .slot = slot };
                         },
                     };
@@ -893,11 +900,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         .key => blk: {
                             try self.core.seekTo(key_slot_pos);
                             const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+                            try slot.tag.validate();
                             break :blk SlotPointer{ .position = key_slot_pos, .slot = slot };
                         },
                         .value => blk: {
                             try self.core.seekTo(value_slot_pos);
                             const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+                            try slot.tag.validate();
                             break :blk SlotPointer{ .position = value_slot_pos, .slot = slot };
                         },
                     };
@@ -971,6 +980,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             const slot_pos = index_pos + (byteSizeOf(Slot) * i);
             try self.core.seekTo(slot_pos);
             const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+            try slot.tag.validate();
 
             const ptr = slot.value;
 
@@ -1137,6 +1147,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             const slot_pos = index_pos + (byteSizeOf(Slot) * i);
             try self.core.seekTo(slot_pos);
             const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+            try slot.tag.validate();
 
             if (shift == 0) {
                 return SlotPointer{ .position = slot_pos, .slot = slot };
@@ -1304,6 +1315,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 var block_reader = stream.reader();
                 for (&slot_block) |*block_slot| {
                     block_slot.* = @bitCast(try block_reader.readInt(LinkedArrayListSlotInt, .big));
+                    try block_slot.slot.tag.validate();
                 }
             }
 
@@ -1384,6 +1396,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             var block_reader = stream.reader();
             for (&slot_block) |*block_slot| {
                 block_slot.* = @bitCast(try block_reader.readInt(LinkedArrayListSlotInt, .big));
+                try block_slot.slot.tag.validate();
             }
 
             const key_and_index = keyAndIndexForLinkedArrayList(&slot_block, key, shift) orelse return error.NoAvailableSlots;
@@ -1645,6 +1658,10 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
 
             try self.db.core.seekTo(self.slot_ptr.slot.value);
             const kv_pair: KeyValuePair = @bitCast(try core_reader.readInt(KeyValuePairInt, .big));
+
+            try kv_pair.key_slot.tag.validate();
+            try kv_pair.value_slot.tag.validate();
+            try kv_pair.metadata_slot.tag.validate();
 
             const hash_pos = self.slot_ptr.slot.value;
             const key_slot_pos = hash_pos + byteSizeOf(Hash);
@@ -2146,6 +2163,7 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
                                     var block_reader = stream.reader();
                                     for (&map_index_block) |*block_slot| {
                                         block_slot.* = @bitCast(try block_reader.readInt(SlotInt, .big));
+                                        try block_slot.tag.validate();
                                     }
                                 }
                                 // init the stack
@@ -2243,6 +2261,7 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
                                             var block_reader = stream.reader();
                                             for (&map_index_block) |*block_slot| {
                                                 block_slot.* = @bitCast(try block_reader.readInt(SlotInt, .big));
+                                                try block_slot.tag.validate();
                                             }
                                         }
                                         // append to the stack

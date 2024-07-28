@@ -1177,6 +1177,15 @@ test "read and write" {
 test "get/set tag" {
     const ptr_value = xitdb.Slot.init(42, .hash_map);
     try std.testing.expectEqual(.hash_map, ptr_value.tag);
+
     const ptr_index = xitdb.Slot.init(42, .index);
     try std.testing.expectEqual(.index, ptr_index.tag);
+
+    const Slot = packed struct {
+        value: u64,
+        tag: u7,
+        flag: u1,
+    };
+    const invalid: xitdb.Slot = @bitCast(Slot{ .value = 0, .tag = 127, .flag = 0 });
+    try expectEqual(error.InvalidEnumTag, invalid.tag.validate());
 }
