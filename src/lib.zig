@@ -45,7 +45,7 @@ pub const Tag = enum(u7) {
     array_list,
     linked_array_list,
     hash_map,
-    array_hash_map,
+    linked_array_hash_map,
     kv_pair,
     bytes,
     uint,
@@ -75,10 +75,10 @@ const LinkedArrayListHeader = packed struct {
 };
 
 const BlockInt = @Type(std.builtin.Type{ .Int = .{ .signedness = .unsigned, .bits = INDEX_BLOCK_SIZE * 8 } });
-const ArrayHashMapHeaderInt = @typeInfo(ArrayHashMapHeader).Struct.backing_integer.?;
-const ArrayHashMapHeader = packed struct {
+const LinkedArrayHashMapHeaderInt = @typeInfo(LinkedArrayHashMapHeader).Struct.backing_integer.?;
+const LinkedArrayHashMapHeader = packed struct {
     map_block: BlockInt,
-    list_header: ArrayListHeader,
+    list_header: LinkedArrayListHeader,
 };
 comptime {
     std.debug.assert(byteSizeOf(BlockInt) == INDEX_BLOCK_SIZE);
@@ -91,8 +91,8 @@ const KeyValuePair = packed struct {
     hash: Hash,
 };
 
-const ArrayKeyValuePairInt = @typeInfo(ArrayKeyValuePair).Struct.backing_integer.?;
-const ArrayKeyValuePair = packed struct {
+const LinkedArrayKeyValuePairInt = @typeInfo(LinkedArrayKeyValuePair).Struct.backing_integer.?;
+const LinkedArrayKeyValuePair = packed struct {
     index: u64 = std.math.maxInt(u64),
     value_slot: Slot,
     key_slot: Slot,
@@ -147,13 +147,13 @@ pub fn PathPart(comptime Ctx: type) type {
             value: Hash,
         },
         hash_map_remove: Hash,
-        array_hash_map_init,
-        array_hash_map_get: union(HashMapSlotKind) {
+        linked_array_hash_map_init,
+        linked_array_hash_map_get: union(HashMapSlotKind) {
             kv_pair: Hash,
             key: Hash,
             value: Hash,
         },
-        array_hash_map_get_by_index: union(HashMapSlotKind) {
+        linked_array_hash_map_get_by_index: union(HashMapSlotKind) {
             kv_pair: i65,
             key: i65,
             value: i65,
@@ -727,7 +727,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     return next_slot_ptr;
                 },
-                .array_hash_map_init => {
+                .linked_array_hash_map_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     const position = slot_ptr.position orelse return error.CursorNotWriteable;
@@ -738,23 +738,24 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         // if slot was empty
                         // insert linked array list
                         const array_map_start = try self.core.getPos();
-                        const array_list_ptr = array_map_start + byteSizeOf(ArrayHashMapHeader);
-                        try writer.writeInt(ArrayHashMapHeaderInt, @bitCast(ArrayHashMapHeader{
+                        const array_list_ptr = array_map_start + byteSizeOf(LinkedArrayHashMapHeader);
+                        try writer.writeInt(LinkedArrayHashMapHeaderInt, @bitCast(LinkedArrayHashMapHeader{
                             .map_block = 0,
                             .list_header = .{
+                                .shift = 0,
                                 .ptr = array_list_ptr,
                                 .size = 0,
                             },
                         }), .big);
-                        const array_list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                        const array_list_index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                         try writer.writeAll(&array_list_index_block);
                         // make slot point to array map
-                        const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = array_map_start, .tag = .array_hash_map } };
+                        const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = array_map_start, .tag = .linked_array_hash_map } };
                         try self.core.seekTo(position);
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                         return self.readSlot(user_write_mode, Ctx, path[1..], next_slot_ptr);
                     } else {
-                        if (slot_ptr.slot.tag != .array_hash_map) {
+                        if (slot_ptr.slot.tag != .linked_array_hash_map) {
                             return error.UnexpectedTag;
                         }
                         const reader = self.core.reader();
@@ -767,65 +768,65 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         if (array_map_start < tx_start) {
                             // read existing array map
                             try self.core.seekTo(array_map_start);
-                            var header: ArrayHashMapHeader = @bitCast(try reader.readInt(ArrayHashMapHeaderInt, .big));
+                            var header: LinkedArrayHashMapHeader = @bitCast(try reader.readInt(LinkedArrayHashMapHeaderInt, .big));
                             try self.core.seekTo(header.list_header.ptr);
-                            var array_list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                            var array_list_index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                             try reader.readNoEof(&array_list_index_block);
                             // copy to the end
                             try self.core.seekFromEnd(0);
                             array_map_start = try self.core.getPos();
-                            const next_array_list_ptr = array_map_start + byteSizeOf(ArrayHashMapHeader);
+                            const next_array_list_ptr = array_map_start + byteSizeOf(LinkedArrayHashMapHeader);
                             header.list_header.ptr = next_array_list_ptr;
-                            try writer.writeInt(ArrayHashMapHeaderInt, @bitCast(header), .big);
+                            try writer.writeInt(LinkedArrayHashMapHeaderInt, @bitCast(header), .big);
                             try writer.writeAll(&array_list_index_block);
                         }
 
                         // make slot point to array map
-                        const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = array_map_start, .tag = .array_hash_map } };
+                        const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = array_map_start, .tag = .linked_array_hash_map } };
                         try self.core.seekTo(position);
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                         return self.readSlot(user_write_mode, Ctx, path[1..], next_slot_ptr);
                     }
                 },
-                .array_hash_map_get => {
+                .linked_array_hash_map_get => {
                     const reader = self.core.reader();
                     const writer = self.core.writer();
 
                     // get slot from map
-                    const map_start = slot_ptr.slot.value + byteSizeOf(ArrayListHeader);
-                    const hash = switch (part.array_hash_map_get) {
-                        .kv_pair => part.array_hash_map_get.kv_pair,
-                        .key => part.array_hash_map_get.key,
-                        .value => part.array_hash_map_get.value,
+                    const map_start = slot_ptr.slot.value + byteSizeOf(LinkedArrayListHeader);
+                    const hash = switch (part.linked_array_hash_map_get) {
+                        .kv_pair => part.linked_array_hash_map_get.kv_pair,
+                        .key => part.linked_array_hash_map_get.key,
+                        .value => part.linked_array_hash_map_get.value,
                     };
-                    const next_slot_ptr = try self.readMapSlot(ArrayKeyValuePair, map_start, hash, 0, write_mode, .kv_pair);
+                    const next_slot_ptr = try self.readMapSlot(LinkedArrayKeyValuePair, map_start, hash, 0, write_mode, .kv_pair);
 
                     if (write_mode != .read_only) {
                         const list_slot_ptr = SlotPointer{
                             .position = slot_ptr.position,
-                            .slot = .{ .value = slot_ptr.slot.value, .tag = .array_list },
+                            .slot = .{ .value = slot_ptr.slot.value, .tag = .linked_array_list },
                         };
 
                         try self.core.seekTo(next_slot_ptr.slot.value);
-                        var kv_pair: ArrayKeyValuePair = @bitCast(try reader.readInt(ArrayKeyValuePairInt, .big));
+                        var kv_pair: LinkedArrayKeyValuePair = @bitCast(try reader.readInt(LinkedArrayKeyValuePairInt, .big));
 
                         if (kv_pair.index == std.math.maxInt(u64)) {
                             // add slot to list
                             const list_cursor: Cursor(db_kind) = .{ .slot_ptr = list_slot_ptr, .db = self };
                             const list_size = try list_cursor.count();
                             _ = try self.readSlot(user_write_mode, void, &[_]PathPart(void){
-                                .{ .array_list_get = .append },
+                                .{ .linked_array_list_get = .append },
                                 .{ .write = .{ .slot = next_slot_ptr.slot } },
                             }, list_slot_ptr);
                             // update the kv_pair's index
                             kv_pair.index = list_size;
                             try self.core.seekTo(next_slot_ptr.slot.value);
-                            try writer.writeInt(ArrayKeyValuePairInt, @bitCast(kv_pair), .big);
+                            try writer.writeInt(LinkedArrayKeyValuePairInt, @bitCast(kv_pair), .big);
                         } else {
                             // update existing slot in the list with next_slot_ptr.slot
                             // so the array list is in sync with the hash map
                             _ = try self.readSlot(user_write_mode, void, &[_]PathPart(void){
-                                .{ .array_list_get = .{ .index = kv_pair.index } },
+                                .{ .linked_array_list_get = .{ .index = kv_pair.index } },
                                 .{ .write = .{ .slot = next_slot_ptr.slot } },
                             }, list_slot_ptr);
                         }
@@ -835,7 +836,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     const hash_pos = next_slot_ptr.slot.value;
                     const key_slot_pos = hash_pos + byteSizeOf(Hash);
                     const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
-                    const final_slot_ptr = switch (part.array_hash_map_get) {
+                    const final_slot_ptr = switch (part.linked_array_hash_map_get) {
                         .kv_pair => next_slot_ptr,
                         .key => blk: {
                             try self.core.seekTo(key_slot_pos);
@@ -853,18 +854,18 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     return try self.readSlot(user_write_mode, Ctx, path[1..], final_slot_ptr);
                 },
-                .array_hash_map_get_by_index => {
+                .linked_array_hash_map_get_by_index => {
                     const list_slot_ptr = SlotPointer{
                         .position = slot_ptr.position,
-                        .slot = .{ .value = slot_ptr.slot.value, .tag = .array_list },
+                        .slot = .{ .value = slot_ptr.slot.value, .tag = .linked_array_list },
                     };
-                    const index = switch (part.array_hash_map_get_by_index) {
-                        .kv_pair => part.array_hash_map_get_by_index.kv_pair,
-                        .key => part.array_hash_map_get_by_index.key,
-                        .value => part.array_hash_map_get_by_index.value,
+                    const index = switch (part.linked_array_hash_map_get_by_index) {
+                        .kv_pair => part.linked_array_hash_map_get_by_index.kv_pair,
+                        .key => part.linked_array_hash_map_get_by_index.key,
+                        .value => part.linked_array_hash_map_get_by_index.value,
                     };
                     const next_slot_ptr = try self.readSlot(user_write_mode, void, &[_]PathPart(void){
-                        .{ .array_list_get = .{ .index = index } },
+                        .{ .linked_array_list_get = .{ .index = index } },
                     }, list_slot_ptr);
 
                     // get the correct slot pointer
@@ -872,7 +873,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     const hash_pos = next_slot_ptr.slot.value;
                     const key_slot_pos = hash_pos + byteSizeOf(Hash);
                     const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
-                    const final_slot_ptr = switch (part.array_hash_map_get_by_index) {
+                    const final_slot_ptr = switch (part.linked_array_hash_map_get_by_index) {
                         .kv_pair => next_slot_ptr,
                         .key => blk: {
                             try self.core.seekTo(key_slot_pos);
@@ -2083,9 +2084,9 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
                     const header: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
                     return header.size;
                 },
-                .array_hash_map => {
+                .linked_array_hash_map => {
                     try self.db.core.seekTo(self.slot_ptr.slot.value);
-                    const header: ArrayHashMapHeader = @bitCast(try core_reader.readInt(ArrayHashMapHeaderInt, .big));
+                    const header: LinkedArrayHashMapHeader = @bitCast(try core_reader.readInt(LinkedArrayHashMapHeaderInt, .big));
                     return header.list_header.size;
                 },
                 else => return error.UnexpectedTag,
@@ -2106,7 +2107,7 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
                 hash_map: struct {
                     stack: std.ArrayList(MapLevel),
                 },
-                array_hash_map: struct {
+                linked_array_hash_map: struct {
                     index: u64,
                 },
 
@@ -2163,8 +2164,8 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
                             },
                         },
                     },
-                    .array_hash_map => .{
-                        .array_hash_map = .{
+                    .linked_array_hash_map => .{
+                        .linked_array_hash_map = .{
                             .index = 0,
                         },
                     },
@@ -2181,7 +2182,7 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
                     .array_list => {},
                     .linked_array_list => {},
                     .hash_map => self.core.hash_map.stack.deinit(),
-                    .array_hash_map => {},
+                    .linked_array_hash_map => {},
                 }
             }
 
@@ -2270,20 +2271,20 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
                         }
                         return null;
                     },
-                    .array_hash_map => {
-                        const index = self.core.array_hash_map.index;
+                    .linked_array_hash_map => {
+                        const index = self.core.linked_array_hash_map.index;
                         const list_slot_ptr = SlotPointer{
                             .position = self.cursor.slot_ptr.position,
-                            .slot = .{ .value = self.cursor.slot_ptr.slot.value, .tag = .array_list },
+                            .slot = .{ .value = self.cursor.slot_ptr.slot.value, .tag = .linked_array_list },
                         };
-                        const path = &[_]PathPart(void){.{ .array_list_get = .{ .index = index } }};
+                        const path = &[_]PathPart(void){.{ .linked_array_list_get = .{ .index = index } }};
                         const slot_ptr = self.cursor.db.readSlot(.read_only, void, path, list_slot_ptr) catch |err| {
                             switch (err) {
                                 error.KeyNotFound => return null,
                                 else => return err,
                             }
                         };
-                        self.core.array_hash_map.index += 1;
+                        self.core.linked_array_hash_map.index += 1;
                         return .{
                             .slot_ptr = slot_ptr,
                             .db = self.cursor.db,

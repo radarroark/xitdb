@@ -1034,7 +1034,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
         }
     }
 
-    // array_hash_map
+    // linked_array_hash_map
     {
         const init_opts = try initOpts(db_kind, opts);
         var db = try Database(db_kind).init(allocator, init_opts);
@@ -1058,8 +1058,8 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
                         defer self.allocator.free(key);
                         _ = try cursor.writePath(void, &[_]PathPart(void){
                             .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                            .array_hash_map_init,
-                            .{ .array_hash_map_get = .{ .value = hash_buffer(key) } },
+                            .linked_array_hash_map_init,
+                            .{ .linked_array_hash_map_get = .{ .value = hash_buffer(key) } },
                             .{ .write = .{ .uint = n } },
                         });
                     }
@@ -1091,8 +1091,8 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
                         try values.append(n);
                         _ = try cursor.writePath(void, &[_]PathPart(void){
                             .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                            .array_hash_map_init,
-                            .{ .array_hash_map_get = .{ .value = hash_buffer(key) } },
+                            .linked_array_hash_map_init,
+                            .{ .linked_array_hash_map_get = .{ .value = hash_buffer(key) } },
                             .{ .write = .{ .uint = n } },
                         });
                     }
@@ -1107,7 +1107,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
                     for (values.items, 0..) |val, i| {
                         const n = (try cursor.readPath(void, &[_]PathPart(void){
                             .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                            .{ .array_hash_map_get_by_index = .{ .value = i } },
+                            .{ .linked_array_hash_map_get_by_index = .{ .value = i } },
                         })).?.slot_ptr.slot.value;
                         try expectEqual(val, n);
                     }
