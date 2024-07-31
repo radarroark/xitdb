@@ -1110,13 +1110,6 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
                             .{ .array_hash_map_get_by_index = .{ .value = i } },
                         })).?.slot_ptr.slot.value;
                         try expectEqual(val, n);
-
-                        const kv_cursor = (try cursor.readPath(void, &[_]PathPart(void){
-                            .{ .hash_map_get = .{ .value = hash_buffer("even") } },
-                            .{ .array_hash_map_get_by_index = .{ .kv_pair = i } },
-                        })).?;
-                        const kv_pair = try kv_cursor.readKeyValuePair();
-                        try expectEqual(i, kv_pair.metadata_cursor.slot_ptr.slot.value);
                     }
 
                     // iterate over array map
