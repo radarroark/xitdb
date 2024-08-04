@@ -25,7 +25,7 @@ const INDEX_BLOCK_SIZE = byteSizeOf(Slot) * SLOT_COUNT;
 const INDEX_START = byteSizeOf(DatabaseHeader);
 const LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE = byteSizeOf(LinkedArrayListSlot) * SLOT_COUNT;
 
-const SlotInt = @typeInfo(Slot).Struct.backing_integer.?;
+const SlotInt = u72;
 pub const Slot = packed struct {
     value: u64 = 0,
     tag: Tag = .none,
@@ -55,18 +55,18 @@ pub const Tag = enum(u7) {
     }
 };
 
-const DatabaseHeaderInt = @typeInfo(DatabaseHeader).Struct.backing_integer.?;
+const DatabaseHeaderInt = u72;
 const DatabaseHeader = packed struct {
     root_slot: Slot,
 };
 
-const ArrayListHeaderInt = @typeInfo(ArrayListHeader).Struct.backing_integer.?;
+const ArrayListHeaderInt = u128;
 const ArrayListHeader = packed struct {
     ptr: u64,
     size: u64,
 };
 
-const LinkedArrayListHeaderInt = @typeInfo(LinkedArrayListHeader).Struct.backing_integer.?;
+const LinkedArrayListHeaderInt = u136;
 const LinkedArrayListHeader = packed struct {
     shift: u6,
     padding: u2 = 0,
@@ -74,8 +74,8 @@ const LinkedArrayListHeader = packed struct {
     size: u64,
 };
 
-const BlockInt = @Type(std.builtin.Type{ .Int = .{ .signedness = .unsigned, .bits = INDEX_BLOCK_SIZE * 8 } });
-const LinkedArrayHashMapHeaderInt = @typeInfo(LinkedArrayHashMapHeader).Struct.backing_integer.?;
+const BlockInt = u1152;
+const LinkedArrayHashMapHeaderInt = u1288;
 const LinkedArrayHashMapHeader = packed struct {
     map_block: BlockInt,
     list_header: LinkedArrayListHeader,
@@ -84,14 +84,14 @@ comptime {
     std.debug.assert(byteSizeOf(BlockInt) == INDEX_BLOCK_SIZE);
 }
 
-const KeyValuePairInt = @typeInfo(KeyValuePair).Struct.backing_integer.?;
+const KeyValuePairInt = u304;
 const KeyValuePair = packed struct {
     value_slot: Slot,
     key_slot: Slot,
     hash: Hash,
 };
 
-const LinkedArrayKeyValuePairInt = @typeInfo(LinkedArrayKeyValuePair).Struct.backing_integer.?;
+const LinkedArrayKeyValuePairInt = u368;
 const LinkedArrayKeyValuePair = packed struct {
     index: u64 = std.math.maxInt(u64),
     value_slot: Slot,
@@ -99,7 +99,7 @@ const LinkedArrayKeyValuePair = packed struct {
     hash: Hash,
 };
 
-const LinkedArrayListSlotInt = @typeInfo(LinkedArrayListSlot).Struct.backing_integer.?;
+const LinkedArrayListSlotInt = u136;
 const LinkedArrayListSlot = packed struct {
     size: u64,
     slot: Slot,
