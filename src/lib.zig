@@ -55,9 +55,11 @@ pub const Tag = enum(u7) {
     }
 };
 
-const DatabaseHeaderInt = u72;
+const DatabaseHeaderInt = u48;
 const DatabaseHeader = packed struct {
-    root_slot: Slot,
+    version: u17 = 0,
+    tag: Tag = .array_list,
+    magic_number: u24 = std.mem.nativeTo(u24, std.mem.bytesToValue(u24, "xit"), .big),
 };
 
 const ArrayListHeaderInt = u128;
@@ -383,7 +385,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
         fn writeHeader(self: *Database(db_kind)) !void {
             const writer = self.core.writer();
 
-            const header = DatabaseHeader{ .root_slot = .{ .value = INDEX_START, .tag = .array_list } };
+            const header = DatabaseHeader{};
             try writer.writeInt(DatabaseHeaderInt, @bitCast(header), .big);
 
             const index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
