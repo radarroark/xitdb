@@ -1111,13 +1111,15 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
         }
         var root_cursor = db.rootCursor();
 
+        const insertion_count = xitdb.SLOT_COUNT * 2;
+
         // create array map
         {
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
                 pub fn run(self: @This(), cursor: *xitdb.Cursor(db_kind)) !void {
-                    for (0..xitdb.SLOT_COUNT + 1) |i| {
+                    for (0..insertion_count) |i| {
                         const n = i * 2;
                         const key = try std.fmt.allocPrint(self.allocator, "wat{}", .{i});
                         defer self.allocator.free(key);
@@ -1147,7 +1149,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
                     defer values.deinit();
 
                     // update array map
-                    for (0..xitdb.SLOT_COUNT + 1) |i| {
+                    for (0..insertion_count) |i| {
                         var n = i * 2;
                         const key = try std.fmt.allocPrint(self.allocator, "wat{}", .{i});
                         defer self.allocator.free(key);
@@ -1166,7 +1168,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
                     const even_list_cursor = (try cursor.writePath(void, &[_]PathPart(void){
                         .{ .hash_map_get = .{ .value = hash_buffer("even") } },
                     }));
-                    try expectEqual(xitdb.SLOT_COUNT + 1, even_list_cursor.count());
+                    try expectEqual(insertion_count, even_list_cursor.count());
 
                     // check all values in the new array map
                     for (values.items, 0..) |val, i| {
@@ -1189,7 +1191,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
                         try expectEqual(values.items[i], kv_pair.value_cursor.slot_ptr.slot.value);
                         i += 1;
                     }
-                    try expectEqual(xitdb.SLOT_COUNT + 1, i);
+                    try expectEqual(insertion_count, i);
                 }
             };
             _ = try root_cursor.writePath(Ctx, &[_]PathPart(Ctx){
