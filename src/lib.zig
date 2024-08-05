@@ -1024,7 +1024,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
             switch (slot.tag) {
                 .none => {
-                    if (write_mode == .read_write or write_mode == .read_write_immutable) {
+                    if (write_mode != .read_only) {
                         try self.core.seekFromEnd(0);
 
                         // write hash and key/val slots
@@ -1109,7 +1109,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             .value => SlotPointer{ .position = value_slot_pos, .slot = kv_pair.value_slot },
                         };
                     } else {
-                        if (write_mode == .read_write or write_mode == .read_write_immutable) {
+                        if (write_mode != .read_only) {
                             // append new index block
                             if (key_offset + 1 >= (HASH_SIZE * 8) / BIT_COUNT) {
                                 return error.KeyOffsetExceeded;
@@ -1195,7 +1195,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
             switch (slot.tag) {
                 .none => {
-                    if (write_mode == .read_write or write_mode == .read_write_immutable) {
+                    if (write_mode != .read_only) {
                         const writer = self.core.writer();
                         try self.core.seekFromEnd(0);
                         const next_index_pos = try self.core.getPos();
@@ -1378,7 +1378,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
             if (shift == 0) {
                 // update leaf slots so they contain the correct prev index positions
-                if (write_mode == .read_write or write_mode == .read_write_immutable) {
+                if (write_mode != .read_only) {
                     var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                     var stream = std.io.fixedBufferStream(&index_block);
                     var block_writer = stream.writer();
@@ -1402,7 +1402,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
             switch (slot.slot.tag) {
                 .none => {
-                    if (write_mode == .read_write or write_mode == .read_write_immutable) {
+                    if (write_mode != .read_only) {
                         try self.core.seekFromEnd(0);
                         const next_index_pos = try self.core.getPos();
                         var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
