@@ -1438,16 +1438,19 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
         fn readLinkedArrayListBlocks(self: *Database(db_kind), index_pos: u64, key: u64, shift: u6, blocks: *std.ArrayList(LinkedArrayListBlockInfo)) !void {
             const reader = self.core.reader();
-            try self.core.seekTo(index_pos);
-            var bytes_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
-            try reader.readNoEof(&bytes_block);
 
             var slot_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
-            var stream = std.io.fixedBufferStream(&bytes_block);
-            var block_reader = stream.reader();
-            for (&slot_block) |*block_slot| {
-                block_slot.* = @bitCast(try block_reader.readInt(LinkedArrayListSlotInt, .big));
-                try block_slot.slot.tag.validate();
+            {
+                try self.core.seekTo(index_pos);
+                var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
+                try reader.readNoEof(&index_block);
+
+                var stream = std.io.fixedBufferStream(&index_block);
+                var block_reader = stream.reader();
+                for (&slot_block) |*block_slot| {
+                    block_slot.* = @bitCast(try block_reader.readInt(LinkedArrayListSlotInt, .big));
+                    try block_slot.slot.tag.validate();
+                }
             }
 
             const key_and_index = keyAndIndexForLinkedArrayList(&slot_block, key, shift) orelse return error.NoAvailableSlots;
