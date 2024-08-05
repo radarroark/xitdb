@@ -121,7 +121,7 @@ const KeyValuePair = packed struct {
 
 const LinkedArrayKeyValuePairInt = u368;
 const LinkedArrayKeyValuePair = packed struct {
-    index: u64 = std.math.maxInt(u64),
+    leaf_index_position: u64 = 0,
     value_slot: Slot,
     key_slot: Slot,
     hash: Hash,
@@ -133,8 +133,12 @@ const LinkedArrayListSlot = packed struct {
     slot: Slot,
 };
 
+const SlotPointerExtra = union(enum) {
+    none,
+    index_position: u64,
+};
 const SlotPointer = struct {
-    index_position: ?u64 = null,
+    extra: SlotPointerExtra = .none,
     position: ?u64,
     slot: Slot,
 };
@@ -667,8 +671,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                                 @intCast(header.size - @abs(index))
                             else
                                 @intCast(index);
-                            var prev_index_positions = [_]u64{0} ** SLOT_COUNT;
-                            const final_slot_ptr = try self.readLinkedArrayListSlot(header.ptr, &prev_index_positions, key, header.shift, write_mode);
+                            var parent_index_positions = [_]u64{0} ** SLOT_COUNT;
+                            const final_slot_ptr = try self.readLinkedArrayListSlot(header.ptr, &parent_index_positions, key, header.shift, write_mode);
                             return try self.readSlot(user_write_mode, Ctx, path[1..], final_slot_ptr.slot_ptr);
                         },
                         .append => {
@@ -851,43 +855,174 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         try self.core.seekTo(next_slot_ptr.slot.value);
                         var kv_pair: LinkedArrayKeyValuePair = @bitCast(try reader.readInt(LinkedArrayKeyValuePairInt, .big));
 
-                        if (kv_pair.index == std.math.maxInt(u64)) {
-                            // add slot to list
-                            const list_cursor: Cursor(db_kind) = .{ .slot_ptr = list_slot_ptr, .db = self };
-                            const list_size = try list_cursor.count();
+                        const kv_pair_is_new = kv_pair.leaf_index_position == 0;
+
+                        // the position of the leaf node of the linked array list
+                        var leaf_index_position = if (kv_pair_is_new) blk: {
+                            // the kv pair is new, so we have to add the slot to the list
                             const list_item_slot_ptr = try self.readSlot(user_write_mode, void, &[_]PathPart(void){
                                 .{ .linked_array_list_get = .append },
                                 .{ .write = .{ .slot = next_slot_ptr.slot } },
                             }, list_slot_ptr);
-                            // get the index positions
-                            const list_index_pos = list_item_slot_ptr.index_position orelse return error.ExpectedListIndexPosition;
-                            try self.core.seekTo(list_index_pos);
-                            var prev_index_positions = [_]u64{0} ** SLOT_COUNT;
-                            {
-                                try self.core.seekTo(list_index_pos);
-                                var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
-                                try reader.readNoEof(&index_block);
-
-                                var stream = std.io.fixedBufferStream(&index_block);
-                                var block_reader = stream.reader();
-                                for (&prev_index_positions) |*prev_index_pos| {
-                                    const block_slot: LinkedArrayListSlot = @bitCast(try block_reader.readInt(LinkedArrayListSlotInt, .big));
-                                    try block_slot.slot.tag.validate();
-                                    prev_index_pos.* = block_slot.size;
-                                }
-                            }
-                            // update the kv_pair's index
-                            kv_pair.index = list_size;
+                            // the slot ptr should include the index position
+                            const index_position = switch (list_item_slot_ptr.extra) {
+                                .index_position => list_item_slot_ptr.extra.index_position,
+                                else => return error.ExpectedListIndexPosition,
+                            };
+                            // update the kv_pair's index position
+                            kv_pair.leaf_index_position = index_position;
                             try self.core.seekTo(next_slot_ptr.slot.value);
                             try writer.writeInt(LinkedArrayKeyValuePairInt, @bitCast(kv_pair), .big);
-                        } else {
-                            // update existing slot in the list with next_slot_ptr.slot
-                            // so the array list is in sync with the hash map
-                            _ = try self.readSlot(user_write_mode, void, &[_]PathPart(void){
-                                .{ .linked_array_list_get = .{ .index = kv_pair.index } },
-                                .{ .write = .{ .slot = next_slot_ptr.slot } },
-                            }, list_slot_ptr);
+                            // break
+                            break :blk index_position;
+                        } else kv_pair.leaf_index_position;
+
+                        // if we're writing immutably and the list's leaf node was created
+                        // before this transaction, we need to copy the path up to the root
+                        // and update the header to point to it.
+                        if (write_mode == .read_write_immutable) {
+                            const tx_start = self.tx_start orelse return error.ExpectedTxStart;
+                            if (leaf_index_position < tx_start) {
+                                // get the leaf index block
+                                try self.core.seekTo(leaf_index_position);
+                                var leaf_index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
+                                try reader.readNoEof(&leaf_index_block);
+
+                                // get parent index positions.
+                                // these are stored in the `size` fields of leaf nodes,
+                                // because leaf nodes don't actually need to store
+                                // their size (they always have a size of 1, after all).
+                                var parent_index_positions = [_]u64{0} ** SLOT_COUNT;
+                                {
+                                    var stream = std.io.fixedBufferStream(&leaf_index_block);
+                                    var block_reader = stream.reader();
+                                    for (&parent_index_positions) |*prev_index_pos| {
+                                        const block_slot: LinkedArrayListSlot = @bitCast(try block_reader.readInt(LinkedArrayListSlotInt, .big));
+                                        try block_slot.slot.tag.validate();
+                                        prev_index_pos.* = block_slot.size;
+                                    }
+                                }
+
+                                // copy the leaf block
+                                try self.core.seekFromEnd(0);
+                                const next_leaf_index_position = try self.core.getPos();
+                                try writer.writeAll(&leaf_index_block);
+
+                                var index_position = next_leaf_index_position;
+                                var slot_value = leaf_index_position;
+
+                                for (parent_index_positions) |parent_index_position| {
+                                    if (parent_index_position == 0) {
+                                        break;
+                                    }
+
+                                    // get the index block
+                                    try self.core.seekTo(parent_index_position);
+                                    var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
+                                    try reader.readNoEof(&index_block);
+
+                                    // iterate over all the slots in the node
+                                    // until you find the slot value:
+                                    var slot_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
+                                    var found_slot = false;
+                                    {
+                                        var stream = std.io.fixedBufferStream(&index_block);
+                                        var block_reader = stream.reader();
+                                        for (&slot_block) |*block_slot| {
+                                            block_slot.* = @bitCast(try block_reader.readInt(LinkedArrayListSlotInt, .big));
+                                            try block_slot.slot.tag.validate();
+
+                                            if (block_slot.slot.value == slot_value) {
+                                                block_slot.slot.value = index_position;
+                                                found_slot = true;
+                                            }
+                                        }
+                                    }
+                                    if (!found_slot) {
+                                        return error.InvalidLinkedArrayKVPair;
+                                    }
+
+                                    // update index block
+                                    {
+                                        var stream = std.io.fixedBufferStream(&index_block);
+                                        var block_writer = stream.writer();
+                                        for (slot_block) |block_slot| {
+                                            try block_writer.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
+                                        }
+                                    }
+
+                                    // copy index block
+                                    try self.core.seekFromEnd(0);
+                                    const next_index_position = try self.core.getPos();
+                                    try writer.writeAll(&index_block);
+
+                                    index_position = next_index_position;
+                                    slot_value = parent_index_position;
+                                }
+
+                                // update header to point to new root index block
+                                try self.core.seekTo(slot_ptr.slot.value);
+                                var header: LinkedArrayHashMapHeader = @bitCast(try reader.readInt(LinkedArrayHashMapHeaderInt, .big));
+                                if (header.list_header.ptr != index_position) {
+                                    header.list_header.ptr = index_position;
+                                    try self.core.seekTo(slot_ptr.slot.value);
+                                    try writer.writeInt(LinkedArrayHashMapHeaderInt, @bitCast(header), .big);
+                                }
+
+                                leaf_index_position = next_leaf_index_position;
+                            }
                         }
+
+                        // read the leaf index block
+                        try self.core.seekTo(leaf_index_position);
+                        var leaf_index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
+                        try reader.readNoEof(&leaf_index_block);
+
+                        // read the leaf slots
+                        var slot_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
+                        {
+                            var stream = std.io.fixedBufferStream(&leaf_index_block);
+                            var block_reader = stream.reader();
+                            for (&slot_block) |*block_slot| {
+                                block_slot.* = @bitCast(try block_reader.readInt(LinkedArrayListSlotInt, .big));
+                                try block_slot.slot.tag.validate();
+                            }
+                        }
+
+                        // for each slot whose kv pair isn't pointing to the leaf index position,
+                        // update it in the hash map to point to it. this is how the linked array
+                        // list and hash map are kept in sync with each other.
+                        for (&slot_block) |*block_slot| {
+                            switch (block_slot.slot.tag) {
+                                .none => break,
+                                .kv_pair => {
+                                    try self.core.seekTo(block_slot.slot.value);
+                                    var leaf_kv_pair: LinkedArrayKeyValuePair = @bitCast(try reader.readInt(LinkedArrayKeyValuePairInt, .big));
+                                    if (leaf_kv_pair.leaf_index_position != leaf_index_position) {
+                                        // get slot ptr to the kv pair
+                                        const kv_pair_slot_ptr = try self.readMapSlot(LinkedArrayKeyValuePair, map_start, leaf_kv_pair.hash, 0, write_mode, .kv_pair);
+                                        // update the kv_pair's index position
+                                        leaf_kv_pair.leaf_index_position = leaf_index_position;
+                                        try self.core.seekTo(kv_pair_slot_ptr.slot.value);
+                                        try writer.writeInt(LinkedArrayKeyValuePairInt, @bitCast(leaf_kv_pair), .big);
+                                        // update linked array list slot
+                                        block_slot.slot.value = kv_pair_slot_ptr.slot.value;
+                                    }
+                                },
+                                else => return error.UnexpectedTag,
+                            }
+                        }
+
+                        // update leaf index block
+                        {
+                            var stream = std.io.fixedBufferStream(&leaf_index_block);
+                            var block_writer = stream.writer();
+                            for (slot_block) |block_slot| {
+                                try block_writer.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
+                            }
+                        }
+                        try self.core.seekTo(leaf_index_position);
+                        try writer.writeAll(&leaf_index_block);
                     }
 
                     // get the correct slot pointer
@@ -981,7 +1116,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     try self.core.seekTo(position);
                     try core_writer.writeInt(SlotInt, @bitCast(slot), .big);
 
-                    return .{ .index_position = slot_ptr.index_position, .position = slot_ptr.position, .slot = slot };
+                    return .{ .extra = slot_ptr.extra, .position = slot_ptr.position, .slot = slot };
                 },
                 .ctx => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
@@ -1250,8 +1385,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             const key = header.size;
             var shift = header.shift;
 
-            var prev_index_positions = [_]u64{0} ** SLOT_COUNT;
-            var slot_ptr = self.readLinkedArrayListSlot(ptr, &prev_index_positions, key, shift, write_mode) catch |err| switch (err) {
+            var parent_index_positions = [_]u64{0} ** SLOT_COUNT;
+            var slot_ptr = self.readLinkedArrayListSlot(ptr, &parent_index_positions, key, shift, write_mode) catch |err| switch (err) {
                 error.NoAvailableSlots => blk: {
                     // root overflow
                     try self.core.seekFromEnd(0);
@@ -1265,7 +1400,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }), .big);
                     ptr = next_ptr;
                     shift += 1;
-                    break :blk try self.readLinkedArrayListSlot(ptr, &prev_index_positions, key, shift, write_mode);
+                    break :blk try self.readLinkedArrayListSlot(ptr, &parent_index_positions, key, shift, write_mode);
                 },
                 else => return err,
             };
@@ -1352,7 +1487,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             return .{ .key = next_key, .index = i };
         }
 
-        fn readLinkedArrayListSlot(self: *Database(db_kind), index_pos: u64, prev_index_positions: *[SLOT_COUNT]u64, key: u64, shift: u6, write_mode: WriteMode) !LinkedArrayListSlotPointer {
+        fn readLinkedArrayListSlot(self: *Database(db_kind), index_pos: u64, parent_index_positions: *[SLOT_COUNT]u64, key: u64, shift: u6, write_mode: WriteMode) !LinkedArrayListSlotPointer {
             const reader = self.core.reader();
             const writer = self.core.writer();
 
@@ -1377,13 +1512,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             const slot_pos = index_pos + (byteSizeOf(LinkedArrayListSlot) * i);
 
             if (shift == 0) {
-                // update leaf slots so they contain the correct prev index positions
+                // update leaf slots so they contain the correct parent index positions
                 if (write_mode != .read_only) {
                     var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                     var stream = std.io.fixedBufferStream(&index_block);
                     var block_writer = stream.writer();
 
-                    for (&slot_block, prev_index_positions) |*block_slot, prev_index_pos| {
+                    for (&slot_block, parent_index_positions) |*block_slot, prev_index_pos| {
                         block_slot.size = prev_index_pos;
                         try block_writer.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot.*), .big);
                     }
@@ -1393,10 +1528,13 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 }
 
                 const leaf_count = blockLeafCount(&slot_block, shift, i);
-                return .{ .slot_ptr = .{ .index_position = index_pos, .position = slot_pos, .slot = slot.slot }, .leaf_count = leaf_count };
+                return .{ .slot_ptr = .{ .extra = .{ .index_position = index_pos }, .position = slot_pos, .slot = slot.slot }, .leaf_count = leaf_count };
             }
 
-            prev_index_positions[shift - 1] = index_pos;
+            if (shift - 1 >= parent_index_positions.len) {
+                return error.LinkedArrayListOutOfBounds;
+            }
+            parent_index_positions[shift - 1] = index_pos;
 
             const ptr = slot.slot.value;
 
@@ -1408,7 +1546,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                         try writer.writeAll(&index_block);
 
-                        const next_slot_ptr = try self.readLinkedArrayListSlot(next_index_pos, prev_index_positions, next_key, shift - 1, write_mode);
+                        const next_slot_ptr = try self.readLinkedArrayListSlot(next_index_pos, parent_index_positions, next_key, shift - 1, write_mode);
 
                         slot_block[i].size = next_slot_ptr.leaf_count;
                         const leaf_count = blockLeafCount(&slot_block, shift, i);
@@ -1436,7 +1574,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         }
                     }
 
-                    const next_slot_ptr = try self.readLinkedArrayListSlot(next_ptr, prev_index_positions, next_key, shift - 1, write_mode);
+                    const next_slot_ptr = try self.readLinkedArrayListSlot(next_ptr, parent_index_positions, next_key, shift - 1, write_mode);
 
                     slot_block[i].size = next_slot_ptr.leaf_count;
                     const leaf_count = blockLeafCount(&slot_block, shift, i);
