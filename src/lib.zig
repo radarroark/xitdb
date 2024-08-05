@@ -134,6 +134,7 @@ const LinkedArrayListSlot = packed struct {
 };
 
 const SlotPointer = struct {
+    index_position: ?u64 = null,
     position: ?u64,
     slot: Slot,
 };
@@ -962,7 +963,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     try self.core.seekTo(position);
                     try core_writer.writeInt(SlotInt, @bitCast(slot), .big);
 
-                    return .{ .position = slot_ptr.position, .slot = slot };
+                    return .{ .index_position = slot_ptr.index_position, .position = slot_ptr.position, .slot = slot };
                 },
                 .ctx => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
@@ -1358,7 +1359,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
             if (shift == 0) {
                 const leaf_count = blockLeafCount(&slot_block, shift, i);
-                return .{ .slot_ptr = .{ .position = slot_pos, .slot = slot.slot }, .leaf_count = leaf_count };
+                return .{ .slot_ptr = .{ .index_position = index_pos, .position = slot_pos, .slot = slot.slot }, .leaf_count = leaf_count };
             }
 
             const ptr = slot.slot.value;
