@@ -223,6 +223,71 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts
 }
 
 fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: anytype) !void {
+    // delete db if it exists
+    if (db_kind == .file) {
+        if (opts.dir.openFile(opts.path, .{})) |file| {
+            file.close();
+            try opts.dir.deleteFile(opts.path);
+        } else |_| {}
+    }
+
+    // open and re-open empty database
+    if (db_kind == .file) {
+        defer opts.dir.deleteFile(opts.path) catch {};
+        // make empty database
+        {
+            const init_opts = try initOpts(db_kind, opts);
+            var db = try Database(db_kind).init(allocator, init_opts);
+            defer db.deinit();
+        }
+        // re-open without errors
+        {
+            const init_opts = try initOpts(db_kind, opts);
+            var db = try Database(db_kind).init(allocator, init_opts);
+            defer db.deinit();
+        }
+        // modify the magic number
+        {
+            const init_opts = try initOpts(db_kind, opts);
+            defer init_opts.file.close();
+            const writer = init_opts.file.writer();
+            try init_opts.file.seekTo(0);
+            try writer.writeInt(u8, 'g', .big);
+        }
+        // re-open with error
+        {
+            const init_opts = try initOpts(db_kind, opts);
+            var db_or_error = Database(db_kind).init(allocator, init_opts);
+            if (db_or_error) |*db| {
+                db.deinit();
+                return error.ExpectedInvalidDatabaseError;
+            } else |err| {
+                try expectEqual(error.InvalidDatabase, err);
+            }
+        }
+        // modify the version number
+        {
+            const init_opts = try initOpts(db_kind, opts);
+            defer init_opts.file.close();
+            const writer = init_opts.file.writer();
+            try init_opts.file.seekTo(0);
+            try writer.writeInt(u8, 'x', .big);
+            try init_opts.file.seekTo(4);
+            try writer.writeInt(u16, xitdb.VERSION + 1, .big);
+        }
+        // re-open with error
+        {
+            const init_opts = try initOpts(db_kind, opts);
+            var db_or_error = Database(db_kind).init(allocator, init_opts);
+            if (db_or_error) |*db| {
+                db.deinit();
+                return error.ExpectedInvalidVersionError;
+            } else |err| {
+                try expectEqual(error.InvalidVersion, err);
+            }
+        }
+    }
+
     // array_list of hash_maps
     {
         const init_opts = try initOpts(db_kind, opts);

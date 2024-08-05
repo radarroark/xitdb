@@ -55,11 +55,37 @@ pub const Tag = enum(u7) {
     }
 };
 
+const MAGIC_NUMBER: u24 = std.mem.nativeTo(u24, std.mem.bytesToValue(u24, "xit"), .big);
+pub const VERSION: u16 = 0;
 const DatabaseHeaderInt = u48;
 const DatabaseHeader = packed struct {
-    version: u17 = 0,
+    // increment this number when the file format changes,
+    // such as when a new Tag member is added.
+    version: u16 = VERSION,
+    // currently the flag is just an extra bit for the version number.
+    // it might be repurposed in the future.
+    flag: u1 = 0,
+    // the root tag, representing the type of the top-level data.
     tag: Tag = .array_list,
-    magic_number: u24 = std.mem.nativeTo(u24, std.mem.bytesToValue(u24, "xit"), .big),
+    // a value that allows for a quick sanity check when determining
+    // if the file is a valid database. it also provides a quick
+    // visual indicator that this is a xitdb file to anyone looking
+    // directly at the bytes.
+    magic_number: u24 = MAGIC_NUMBER,
+
+    pub fn validate(self: DatabaseHeader) !void {
+        if (self.magic_number != MAGIC_NUMBER) {
+            return error.InvalidDatabase;
+        }
+        try self.tag.validate();
+        switch (self.tag) {
+            .array_list => {},
+            else => return error.InvalidRootTag,
+        }
+        if (self.flag != 0 or self.version > VERSION) {
+            return error.InvalidVersion;
+        }
+    }
 };
 
 const ArrayListHeaderInt = u128;
@@ -189,6 +215,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
     return struct {
         allocator: std.mem.Allocator,
         core: Core,
+        header: DatabaseHeader,
         tx_start: ?u64,
 
         pub const Core = switch (db_kind) {
@@ -343,10 +370,12 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             .size = 0,
                             .position = 0,
                         },
+                        .header = undefined,
                         .tx_start = null,
                     };
+                    errdefer self.deinit();
 
-                    try self.writeHeader();
+                    self.header = try self.writeHeader();
 
                     return self;
                 },
@@ -354,14 +383,20 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     var self = Database(db_kind){
                         .allocator = allocator,
                         .core = .{ .file = opts.file },
+                        .header = undefined,
                         .tx_start = null,
                     };
+                    errdefer self.deinit();
 
                     const meta = try self.core.file.metadata();
                     const size = meta.size();
 
                     if (size == 0) {
-                        try self.writeHeader();
+                        self.header = try self.writeHeader();
+                    } else {
+                        const reader = self.core.reader();
+                        self.header = @bitCast(try reader.readInt(DatabaseHeaderInt, .big));
+                        try self.header.validate();
                     }
 
                     return self;
@@ -382,7 +417,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
         // private
 
-        fn writeHeader(self: *Database(db_kind)) !void {
+        fn writeHeader(self: *Database(db_kind)) !DatabaseHeader {
             const writer = self.core.writer();
 
             const header = DatabaseHeader{};
@@ -395,6 +430,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 .size = 0,
             }), .big);
             try writer.writeAll(&index_block);
+
+            return header;
         }
 
         fn readSlot(self: *Database(db_kind), user_write_mode: UserWriteMode, comptime Ctx: type, path: []const PathPart(Ctx), slot_ptr: SlotPointer) anyerror!SlotPointer {
