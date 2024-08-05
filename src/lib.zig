@@ -855,10 +855,27 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             // add slot to list
                             const list_cursor: Cursor(db_kind) = .{ .slot_ptr = list_slot_ptr, .db = self };
                             const list_size = try list_cursor.count();
-                            _ = try self.readSlot(user_write_mode, void, &[_]PathPart(void){
+                            const list_item_slot_ptr = try self.readSlot(user_write_mode, void, &[_]PathPart(void){
                                 .{ .linked_array_list_get = .append },
                                 .{ .write = .{ .slot = next_slot_ptr.slot } },
                             }, list_slot_ptr);
+                            // get the index positions
+                            const list_index_pos = list_item_slot_ptr.index_position orelse return error.ExpectedListIndexPosition;
+                            try self.core.seekTo(list_index_pos);
+                            var prev_index_positions = [_]u64{0} ** SLOT_COUNT;
+                            {
+                                try self.core.seekTo(list_index_pos);
+                                var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
+                                try reader.readNoEof(&index_block);
+
+                                var stream = std.io.fixedBufferStream(&index_block);
+                                var block_reader = stream.reader();
+                                for (&prev_index_positions) |*prev_index_pos| {
+                                    const block_slot: LinkedArrayListSlot = @bitCast(try block_reader.readInt(LinkedArrayListSlotInt, .big));
+                                    try block_slot.slot.tag.validate();
+                                    prev_index_pos.* = block_slot.size;
+                                }
+                            }
                             // update the kv_pair's index
                             kv_pair.index = list_size;
                             try self.core.seekTo(next_slot_ptr.slot.value);
