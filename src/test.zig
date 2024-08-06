@@ -18,30 +18,20 @@ fn hash_buffer(buffer: []const u8) xitdb.Hash {
     return std.mem.bytesToValue(xitdb.Hash, &hash);
 }
 
-fn initOpts(comptime db_kind: DatabaseKind, opts: anytype) !Database(db_kind).InitOpts {
+fn clearStorage(comptime db_kind: DatabaseKind, init_opts: Database(db_kind).InitOpts) !void {
     switch (db_kind) {
         .file => {
-            const file_or_err = opts.dir.openFile(opts.path, .{ .mode = .read_write, .lock = .exclusive });
-            const file = try if (file_or_err == error.FileNotFound)
-                opts.dir.createFile(opts.path, .{ .read = true, .lock = .exclusive })
-            else
-                file_or_err;
-            errdefer file.close();
-            return .{ .file = file };
+            try init_opts.file.setEndPos(0);
         },
-        .memory => return opts,
+        .memory => {
+            init_opts.buffer.clearAndFree();
+        },
     }
 }
 
-fn testSlice(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: anytype, comptime original_size: usize, comptime slice_offset: u64, comptime slice_size: u64) !void {
-    const init_opts = try initOpts(db_kind, opts);
+fn testSlice(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_opts: Database(db_kind).InitOpts, comptime original_size: usize, comptime slice_offset: u64, comptime slice_size: u64) !void {
+    try clearStorage(db_kind, init_opts);
     var db = try Database(db_kind).init(allocator, init_opts);
-    defer {
-        db.deinit();
-        if (db_kind == .file) {
-            opts.dir.deleteFile(opts.path) catch {};
-        }
-    }
     var root_cursor = db.rootCursor();
 
     const Ctx = struct {
@@ -132,15 +122,9 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts:
     });
 }
 
-fn testConcat(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: anytype, comptime list_a_size: usize, comptime list_b_size: usize) !void {
-    const init_opts = try initOpts(db_kind, opts);
+fn testConcat(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_opts: Database(db_kind).InitOpts, comptime list_a_size: usize, comptime list_b_size: usize) !void {
+    try clearStorage(db_kind, init_opts);
     var db = try Database(db_kind).init(allocator, init_opts);
-    defer {
-        db.deinit();
-        if (db_kind == .file) {
-            opts.dir.deleteFile(opts.path) catch {};
-        }
-    }
     var root_cursor = db.rootCursor();
 
     const Ctx = struct {
@@ -222,65 +206,41 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts
     });
 }
 
-fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: anytype) !void {
-    // delete db if it exists
-    if (db_kind == .file) {
-        if (opts.dir.openFile(opts.path, .{})) |file| {
-            file.close();
-            try opts.dir.deleteFile(opts.path);
-        } else |_| {}
-    }
-
+fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_opts: Database(db_kind).InitOpts) !void {
     // open and re-open empty database
-    if (db_kind == .file) {
-        defer opts.dir.deleteFile(opts.path) catch {};
+    {
         // make empty database
-        {
-            const init_opts = try initOpts(db_kind, opts);
-            var db = try Database(db_kind).init(allocator, init_opts);
-            defer db.deinit();
-        }
-        // re-open without errors
-        {
-            const init_opts = try initOpts(db_kind, opts);
-            var db = try Database(db_kind).init(allocator, init_opts);
-            defer db.deinit();
-        }
+        try clearStorage(db_kind, init_opts);
+        _ = try Database(db_kind).init(allocator, init_opts);
+
+        // re-open without error
+        var db = try Database(db_kind).init(allocator, init_opts);
+        const writer = db.core.writer();
+
         // modify the magic number
-        {
-            const init_opts = try initOpts(db_kind, opts);
-            defer init_opts.file.close();
-            const writer = init_opts.file.writer();
-            try init_opts.file.seekTo(0);
-            try writer.writeInt(u8, 'g', .big);
-        }
+        try db.core.seekTo(0);
+        try writer.writeInt(u8, 'g', .big);
+
         // re-open with error
         {
-            const init_opts = try initOpts(db_kind, opts);
-            var db_or_error = Database(db_kind).init(allocator, init_opts);
-            if (db_or_error) |*db| {
-                db.deinit();
+            const db_or_error = Database(db_kind).init(allocator, init_opts);
+            if (db_or_error) |_| {
                 return error.ExpectedInvalidDatabaseError;
             } else |err| {
                 try expectEqual(error.InvalidDatabase, err);
             }
         }
-        // modify the version number
-        {
-            const init_opts = try initOpts(db_kind, opts);
-            defer init_opts.file.close();
-            const writer = init_opts.file.writer();
-            try init_opts.file.seekTo(0);
-            try writer.writeInt(u8, 'x', .big);
-            try init_opts.file.seekTo(4);
-            try writer.writeInt(u16, xitdb.VERSION + 1, .big);
-        }
+
+        // modify the version
+        try db.core.seekTo(0);
+        try writer.writeInt(u8, 'x', .big);
+        try db.core.seekTo(4);
+        try writer.writeInt(u16, xitdb.VERSION + 1, .big);
+
         // re-open with error
         {
-            const init_opts = try initOpts(db_kind, opts);
-            var db_or_error = Database(db_kind).init(allocator, init_opts);
-            if (db_or_error) |*db| {
-                db.deinit();
+            const db_or_error = Database(db_kind).init(allocator, init_opts);
+            if (db_or_error) |_| {
                 return error.ExpectedInvalidVersionError;
             } else |err| {
                 try expectEqual(error.InvalidVersion, err);
@@ -290,14 +250,8 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
 
     // array_list of hash_maps
     {
-        const init_opts = try initOpts(db_kind, opts);
+        try clearStorage(db_kind, init_opts);
         var db = try Database(db_kind).init(allocator, init_opts);
-        defer {
-            db.deinit();
-            if (db_kind == .file) {
-                opts.dir.deleteFile(opts.path) catch {};
-            }
-        }
         var root_cursor = db.rootCursor();
 
         // write foo -> bar with a writer
@@ -711,14 +665,8 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
 
     // append to top-level array_list many times, filling up the array_list until a root overflow occurs
     {
-        const init_opts = try initOpts(db_kind, opts);
+        try clearStorage(db_kind, init_opts);
         var db = try Database(db_kind).init(allocator, init_opts);
-        defer {
-            db.deinit();
-            if (db_kind == .file) {
-                opts.dir.deleteFile(opts.path) catch {};
-            }
-        }
         var root_cursor = db.rootCursor();
 
         const wat_key = hash_buffer("wat");
@@ -748,14 +696,8 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
 
     // append to inner array_list many times, filling up the array_list until a root overflow occurs
     {
-        const init_opts = try initOpts(db_kind, opts);
+        try clearStorage(db_kind, init_opts);
         var db = try Database(db_kind).init(allocator, init_opts);
-        defer {
-            db.deinit();
-            if (db_kind == .file) {
-                opts.dir.deleteFile(opts.path) catch {};
-            }
-        }
         var root_cursor = db.rootCursor();
 
         for (0..xitdb.SLOT_COUNT + 1) |i| {
@@ -833,14 +775,8 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
 
     // iterate over inner array_list
     {
-        const init_opts = try initOpts(db_kind, opts);
+        try clearStorage(db_kind, init_opts);
         var db = try Database(db_kind).init(allocator, init_opts);
-        defer {
-            db.deinit();
-            if (db_kind == .file) {
-                opts.dir.deleteFile(opts.path) catch {};
-            }
-        }
         var root_cursor = db.rootCursor();
 
         // add wats
@@ -889,14 +825,8 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
 
     // iterate over inner hash_map
     {
-        const init_opts = try initOpts(db_kind, opts);
+        try clearStorage(db_kind, init_opts);
         var db = try Database(db_kind).init(allocator, init_opts);
-        defer {
-            db.deinit();
-            if (db_kind == .file) {
-                opts.dir.deleteFile(opts.path) catch {};
-            }
-        }
         var root_cursor = db.rootCursor();
 
         // add wats
@@ -968,32 +898,26 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
 
     {
         // slice linked_array_list
-        try testSlice(allocator, db_kind, opts, xitdb.SLOT_COUNT * 5 + 1, 10, 5);
-        try testSlice(allocator, db_kind, opts, xitdb.SLOT_COUNT * 5 + 1, 0, xitdb.SLOT_COUNT * 2);
-        try testSlice(allocator, db_kind, opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 3, xitdb.SLOT_COUNT);
-        try testSlice(allocator, db_kind, opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 3, xitdb.SLOT_COUNT * 2);
-        try testSlice(allocator, db_kind, opts, xitdb.SLOT_COUNT * 2, 10, xitdb.SLOT_COUNT);
-        try testSlice(allocator, db_kind, opts, 2, 0, 2);
-        try testSlice(allocator, db_kind, opts, 2, 1, 1);
-        try testSlice(allocator, db_kind, opts, 1, 0, 0);
+        try testSlice(allocator, db_kind, init_opts, xitdb.SLOT_COUNT * 5 + 1, 10, 5);
+        try testSlice(allocator, db_kind, init_opts, xitdb.SLOT_COUNT * 5 + 1, 0, xitdb.SLOT_COUNT * 2);
+        try testSlice(allocator, db_kind, init_opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 3, xitdb.SLOT_COUNT);
+        try testSlice(allocator, db_kind, init_opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 3, xitdb.SLOT_COUNT * 2);
+        try testSlice(allocator, db_kind, init_opts, xitdb.SLOT_COUNT * 2, 10, xitdb.SLOT_COUNT);
+        try testSlice(allocator, db_kind, init_opts, 2, 0, 2);
+        try testSlice(allocator, db_kind, init_opts, 2, 1, 1);
+        try testSlice(allocator, db_kind, init_opts, 1, 0, 0);
 
         // concat linked_array_list
-        try testConcat(allocator, db_kind, opts, xitdb.SLOT_COUNT * 5 + 1, xitdb.SLOT_COUNT + 1);
-        try testConcat(allocator, db_kind, opts, xitdb.SLOT_COUNT, xitdb.SLOT_COUNT);
-        try testConcat(allocator, db_kind, opts, 1, 1);
-        try testConcat(allocator, db_kind, opts, 0, 0);
+        try testConcat(allocator, db_kind, init_opts, xitdb.SLOT_COUNT * 5 + 1, xitdb.SLOT_COUNT + 1);
+        try testConcat(allocator, db_kind, init_opts, xitdb.SLOT_COUNT, xitdb.SLOT_COUNT);
+        try testConcat(allocator, db_kind, init_opts, 1, 1);
+        try testConcat(allocator, db_kind, init_opts, 0, 0);
     }
 
     // concat linked_array_list multiple times
     {
-        const init_opts = try initOpts(db_kind, opts);
+        try clearStorage(db_kind, init_opts);
         var db = try Database(db_kind).init(allocator, init_opts);
-        defer {
-            db.deinit();
-            if (db_kind == .file) {
-                opts.dir.deleteFile(opts.path) catch {};
-            }
-        }
         var root_cursor = db.rootCursor();
 
         const Ctx = struct {
@@ -1080,14 +1004,8 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
 
     // append items to linked_array_list without setting their value
     {
-        const init_opts = try initOpts(db_kind, opts);
+        try clearStorage(db_kind, init_opts);
         var db = try Database(db_kind).init(allocator, init_opts);
-        defer {
-            db.deinit();
-            if (db_kind == .file) {
-                opts.dir.deleteFile(opts.path) catch {};
-            }
-        }
         var root_cursor = db.rootCursor();
 
         for (0..8) |_| {
@@ -1107,7 +1025,17 @@ test "read and write" {
     defer buffer.deinit();
     try testMain(allocator, .memory, .{ .buffer = &buffer, .max_size = 50000 });
 
-    try testMain(allocator, .file, .{ .dir = std.fs.cwd(), .path = "main.db" });
+    if (std.fs.cwd().openFile("main.db", .{})) |file| {
+        file.close();
+        try std.fs.cwd().deleteFile("main.db");
+    } else |_| {}
+
+    const file = try std.fs.cwd().createFile("main.db", .{ .exclusive = true, .lock = .exclusive, .read = true });
+    defer {
+        file.close();
+        std.fs.cwd().deleteFile("main.db") catch {};
+    }
+    try testMain(allocator, .file, .{ .file = file });
 }
 
 test "low level memory operations" {

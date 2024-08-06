@@ -262,10 +262,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                 };
 
-                pub fn deinit(self: *Core) void {
-                    self.buffer.clearAndFree();
-                }
-
                 pub fn reader(self: *Core) Core.Reader {
                     return Core.Reader{ .parent = self };
                 }
@@ -298,10 +294,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             },
             .file => struct {
                 file: std.fs.File,
-
-                pub fn deinit(self: *Core) void {
-                    self.file.close();
-                }
 
                 pub fn reader(self: Core) std.fs.File.Reader {
                     return self.file.reader();
@@ -354,9 +346,15 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         .header = undefined,
                         .tx_start = null,
                     };
-                    errdefer self.deinit();
 
-                    self.header = try self.writeHeader();
+                    try self.core.seekTo(0);
+                    if (self.core.buffer.items.len == 0) {
+                        self.header = try self.writeHeader();
+                    } else {
+                        const reader = self.core.reader();
+                        self.header = @bitCast(try reader.readInt(DatabaseHeaderInt, .big));
+                        try self.header.validate();
+                    }
 
                     return self;
                 },
@@ -367,11 +365,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         .header = undefined,
                         .tx_start = null,
                     };
-                    errdefer self.deinit();
 
                     const meta = try self.core.file.metadata();
                     const size = meta.size();
 
+                    try self.core.seekTo(0);
                     if (size == 0) {
                         self.header = try self.writeHeader();
                     } else {
@@ -383,10 +381,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     return self;
                 },
             }
-        }
-
-        pub fn deinit(self: *Database(db_kind)) void {
-            self.core.deinit();
         }
 
         pub fn rootCursor(self: *Database(db_kind)) Cursor(db_kind) {
