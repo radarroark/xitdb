@@ -1008,11 +1008,22 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_o
         var db = try Database(db_kind).init(allocator, init_opts);
         var root_cursor = db.rootCursor();
 
+        // appending without setting any value should work
         for (0..8) |_| {
             _ = try root_cursor.writePath(void, &[_]PathPart(void){
                 .{ .array_list_get = .append_copy },
                 .linked_array_list_init,
                 .{ .linked_array_list_get = .append },
+            });
+        }
+
+        // explicitly writing .none should also work
+        for (0..8) |_| {
+            _ = try root_cursor.writePath(void, &[_]PathPart(void){
+                .{ .array_list_get = .append_copy },
+                .linked_array_list_init,
+                .{ .linked_array_list_get = .append },
+                .{ .write = .none },
             });
         }
     }

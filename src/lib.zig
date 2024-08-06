@@ -157,8 +157,8 @@ pub fn PathPart(comptime Ctx: type) type {
         },
         hash_map_remove: Hash,
         write: union(enum) {
-            none,
             slot: Slot,
+            none,
             uint: u64,
             bytes: []const u8,
         },
@@ -746,9 +746,9 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     const core_writer = self.core.writer();
 
-                    const slot: Slot = switch (part.write) {
-                        .none => Slot{ .tag = .none },
+                    var slot: Slot = switch (part.write) {
                         .slot => part.write.slot,
+                        .none => Slot{ .tag = .none },
                         .uint => .{ .value = part.write.uint, .tag = .uint },
                         .bytes => blk: {
                             var next_cursor = Cursor(db_kind){
@@ -761,6 +761,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                             break :blk writer.slot;
                         },
                     };
+                    slot.flag = 1; // important for linked array lists
 
                     try self.core.seekTo(position);
                     try core_writer.writeInt(SlotInt, @bitCast(slot), .big);
