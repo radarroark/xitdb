@@ -719,8 +719,6 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 .hash_map_remove => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
-                    if (path.len > 1) return error.ValueMustBeAtEnd;
-
                     if (slot_ptr.slot.tag == .none) {
                         return error.KeyNotFound;
                     } else if (slot_ptr.slot.tag != .hash_map) {
@@ -735,12 +733,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     try self.core.seekTo(position);
                     try writer.writeInt(SlotInt, 0, .big);
 
-                    return next_slot_ptr;
+                    return self.readSlot(user_write_mode, Ctx, path[1..], next_slot_ptr);
                 },
                 .write => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
-
-                    if (path.len > 1) return error.ValueMustBeAtEnd;
 
                     const position = slot_ptr.position orelse return error.CursorNotWriteable;
 
@@ -765,7 +761,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     try self.core.seekTo(position);
                     try core_writer.writeInt(SlotInt, @bitCast(slot), .big);
 
-                    return .{ .position = slot_ptr.position, .slot = slot };
+                    const next_slot_ptr = SlotPointer{ .position = slot_ptr.position, .slot = slot };
+                    return self.readSlot(user_write_mode, Ctx, path[1..], next_slot_ptr);
                 },
                 .ctx => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
