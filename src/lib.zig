@@ -157,6 +157,7 @@ pub fn PathPart(comptime Ctx: type) type {
         },
         hash_map_remove: Hash,
         write: union(enum) {
+            none,
             slot: Slot,
             uint: u64,
             bytes: []const u8,
@@ -746,12 +747,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     const core_writer = self.core.writer();
 
                     const slot: Slot = switch (part.write) {
-                        .slot => blk: {
-                            if (part.write.slot.tag == .none) {
-                                return error.SlotHasNoValue;
-                            }
-                            break :blk part.write.slot;
-                        },
+                        .none => Slot{ .tag = .none },
+                        .slot => part.write.slot,
                         .uint => .{ .value = part.write.uint, .tag = .uint },
                         .bytes => blk: {
                             var next_cursor = Cursor(db_kind){
