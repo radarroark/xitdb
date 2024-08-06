@@ -1103,7 +1103,9 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, opts: 
 test "read and write" {
     const allocator = std.testing.allocator;
 
-    try testMain(allocator, .memory, .{ .capacity = 50000 });
+    var buffer = std.ArrayList(u8).init(allocator);
+    defer buffer.deinit();
+    try testMain(allocator, .memory, .{ .buffer = &buffer, .max_size = 50000 });
 
     try testMain(allocator, .file, .{ .dir = std.fs.cwd(), .path = "main.db" });
 }
@@ -1111,8 +1113,9 @@ test "read and write" {
 test "low level memory operations" {
     const allocator = std.testing.allocator;
 
-    var db = try Database(.memory).init(allocator, .{ .capacity = 10000 });
-    defer db.deinit();
+    var buffer = std.ArrayList(u8).init(allocator);
+    defer buffer.deinit();
+    var db = try Database(.memory).init(allocator, .{ .buffer = &buffer, .max_size = 10000 });
 
     var writer = db.core.writer();
     try db.core.seekTo(0);

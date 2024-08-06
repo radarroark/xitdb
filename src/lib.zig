@@ -191,16 +191,16 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
         pub const Core = switch (db_kind) {
             .memory => struct {
-                buffer: std.ArrayList(u8),
-                size: u64,
+                buffer: *std.ArrayList(u8),
+                max_size: ?u64,
                 position: u64,
 
                 const Reader = struct {
                     parent: *Core,
 
                     pub fn read(self: Core.Reader, buf: []u8) !u64 {
-                        const new_position = self.parent.position + @min(@as(u64, @intCast(buf.len)), self.parent.size - self.parent.position);
-                        if (new_position > self.parent.size) return error.EndOfStream;
+                        const new_position = self.parent.position + @min(@as(u64, @intCast(buf.len)), self.parent.buffer.items.len - self.parent.position);
+                        if (new_position > self.parent.buffer.items.len) return error.EndOfStream;
                         @memcpy(buf, self.parent.buffer.items[self.parent.position..new_position]);
                         const size = new_position - self.parent.position;
                         self.parent.position = new_position;
@@ -209,7 +209,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                     pub fn readNoEof(self: Core.Reader, buf: []u8) !void {
                         const new_position = self.parent.position + @as(u64, @intCast(buf.len));
-                        if (new_position > self.parent.size) return error.EndOfStream;
+                        if (new_position > self.parent.buffer.items.len) return error.EndOfStream;
                         @memcpy(buf, self.parent.buffer.items[self.parent.position..new_position]);
                         self.parent.position = new_position;
                     }
@@ -220,7 +220,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         }
                         const size = @bitSizeOf(T) / 8;
                         const new_position = self.parent.position + size;
-                        if (new_position > self.parent.size) return error.EndOfStream;
+                        if (new_position > self.parent.buffer.items.len) return error.EndOfStream;
                         const bytes = self.parent.buffer.items[self.parent.position..new_position];
                         self.parent.position = new_position;
                         return std.mem.toNative(T, std.mem.bytesToValue(T, bytes), endian);
@@ -230,10 +230,22 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 const Writer = struct {
                     parent: *Core,
 
+                    fn resizeBuffer(self: Core.Writer, new_size: u64) !void {
+                        if (new_size > self.parent.buffer.items.len) {
+                            if (self.parent.max_size) |max_size| {
+                                if (new_size > max_size) {
+                                    return error.MaxSizeExceeded;
+                                }
+                            }
+                            try self.parent.buffer.ensureTotalCapacityPrecise(new_size);
+                            self.parent.buffer.expandToCapacity();
+                        }
+                    }
+
                     pub fn writeAll(self: Core.Writer, bytes: []const u8) !void {
                         const new_position = self.parent.position + @as(u64, @intCast(bytes.len));
+                        try self.resizeBuffer(new_position);
                         @memcpy(self.parent.buffer.items[self.parent.position..new_position], bytes);
-                        self.parent.size = @max(self.parent.size, new_position);
                         self.parent.position = new_position;
                     }
 
@@ -243,15 +255,15 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                         }
                         const size = @bitSizeOf(T) / 8;
                         const new_position = self.parent.position + size;
+                        try self.resizeBuffer(new_position);
                         const bytes = std.mem.asBytes(&std.mem.nativeTo(T, value, endian));
                         @memcpy(self.parent.buffer.items[self.parent.position..new_position], bytes[0..size]);
-                        self.parent.size = @max(self.parent.size, new_position);
                         self.parent.position = new_position;
                     }
                 };
 
                 pub fn deinit(self: *Core) void {
-                    self.buffer.deinit();
+                    self.buffer.clearAndFree();
                 }
 
                 pub fn reader(self: *Core) Core.Reader {
@@ -276,7 +288,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
                 pub fn seekFromEnd(self: *Core, offset: i64) !void {
                     if (offset <= 0) {
-                        self.position = self.size -| @as(u64, @intCast(@abs(offset)));
+                        self.position = self.buffer.items.len -| @as(u64, @intCast(@abs(offset)));
                     }
                 }
 
@@ -321,7 +333,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
         pub const InitOpts = switch (db_kind) {
             .memory => struct {
-                capacity: usize,
+                buffer: *std.ArrayList(u8),
+                max_size: ?u64 = null,
             },
             .file => struct {
                 file: std.fs.File,
@@ -331,14 +344,11 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
         pub fn init(allocator: std.mem.Allocator, opts: InitOpts) !Database(db_kind) {
             switch (db_kind) {
                 .memory => {
-                    var buffer = try std.ArrayList(u8).initCapacity(allocator, opts.capacity);
-                    buffer.expandToCapacity();
-
                     var self = Database(db_kind){
                         .allocator = allocator,
                         .core = .{
-                            .buffer = buffer,
-                            .size = 0,
+                            .buffer = opts.buffer,
+                            .max_size = opts.max_size,
                             .position = 0,
                         },
                         .header = undefined,
