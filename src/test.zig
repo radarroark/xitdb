@@ -6,10 +6,6 @@ const PathPart = xitdb.PathPart;
 
 const MAX_READ_BYTES = 1024;
 
-fn expectEqual(expected: anytype, actual: anytype) !void {
-    try std.testing.expectEqual(@as(@TypeOf(actual), expected), actual);
-}
-
 fn hashBuffer(buffer: []const u8) xitdb.Hash {
     var hash = [_]u8{0} ** (@bitSizeOf(xitdb.Hash) / 8);
     var h = std.crypto.hash.Sha1.init(.{});
@@ -71,11 +67,11 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_
                     .{ .hash_map_get = .{ .value = hashBuffer("even-slice") } },
                     .{ .linked_array_list_get = .{ .index = i } },
                 })).?.slot_ptr.slot.value;
-                try expectEqual(val, n);
+                try std.testing.expectEqual(val, n);
             }
 
             // there are no extra items
-            try expectEqual(null, try cursor.readPath(void, &[_]PathPart(void){
+            try std.testing.expectEqual(null, try cursor.readPath(void, &[_]PathPart(void){
                 .{ .hash_map_get = .{ .value = hashBuffer("even-slice") } },
                 .{ .linked_array_list_get = .{ .index = slice_size } },
             }));
@@ -97,7 +93,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_
                     .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
                     .{ .linked_array_list_get = .{ .index = i } },
                 })).?.slot_ptr.slot.value;
-                try expectEqual(val, n);
+                try std.testing.expectEqual(val, n);
             }
 
             // append to the slice
@@ -109,7 +105,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_
             });
 
             // read the new value from the slice
-            try expectEqual(3, (try cursor.readPath(void, &[_]PathPart(void){
+            try std.testing.expectEqual(3, (try cursor.readPath(void, &[_]PathPart(void){
                 .{ .hash_map_get = .{ .value = hashBuffer("even-slice") } },
                 .{ .linked_array_list_get = .{ .index = -1 } },
             })).?.slot_ptr.slot.value);
@@ -189,11 +185,11 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init
                     .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
                     .{ .linked_array_list_get = .{ .index = i } },
                 })).?.slot_ptr.slot.value;
-                try expectEqual(val, n);
+                try std.testing.expectEqual(val, n);
             }
 
             // there are no extra items
-            try expectEqual(null, try cursor.readPath(void, &[_]PathPart(void){
+            try std.testing.expectEqual(null, try cursor.readPath(void, &[_]PathPart(void){
                 .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
                 .{ .linked_array_list_get = .{ .index = values.items.len } },
             }));
@@ -227,7 +223,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_o
             if (db_or_error) |_| {
                 return error.ExpectedInvalidDatabaseError;
             } else |err| {
-                try expectEqual(error.InvalidDatabase, err);
+                try std.testing.expectEqual(error.InvalidDatabase, err);
             }
         }
 
@@ -243,7 +239,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_o
             if (db_or_error) |_| {
                 return error.ExpectedInvalidVersionError;
             } else |err| {
-                try expectEqual(error.InvalidVersion, err);
+                try std.testing.expectEqual(error.InvalidVersion, err);
             }
         }
     }
@@ -303,7 +299,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_o
                     try bar_reader.readNoEof(bar_bytes[0..3]);
                     try std.testing.expectEqualStrings("bar", bar_bytes[0..3]);
                     try bar_reader.seekTo(0);
-                    try expectEqual(3, try bar_reader.read(&bar_bytes));
+                    try std.testing.expectEqual(3, try bar_reader.read(&bar_bytes));
                     try std.testing.expectEqualStrings("bar", bar_bytes[0..3]);
 
                     // read one char at a time
@@ -320,14 +316,14 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_o
                         try bar_reader.readNoEof(&char);
                         try std.testing.expectEqualStrings("r", &char);
 
-                        try expectEqual(error.EndOfStream, bar_reader.readNoEof(&char));
+                        try std.testing.expectEqual(error.EndOfStream, bar_reader.readNoEof(&char));
 
                         try bar_reader.seekTo(2);
                         try bar_reader.seekBy(-1);
-                        try expectEqual('a', try bar_reader.readInt(u8, .little));
+                        try std.testing.expectEqual('a', try bar_reader.readInt(u8, .little));
 
                         try bar_reader.seekFromEnd(-3);
-                        try expectEqual('b', try bar_reader.readInt(u8, .little));
+                        try std.testing.expectEqual('b', try bar_reader.readInt(u8, .little));
                     }
                 }
             };
@@ -388,7 +384,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_o
                     .{ .hash_map_get = .{ .value = bar_key } },
                 });
                 try next_bar_cursor.writeBytes("foo", .once);
-                try expectEqual(bar_cursor.slot_ptr.slot, next_bar_cursor.slot_ptr.slot);
+                try std.testing.expectEqual(bar_cursor.slot_ptr.slot, next_bar_cursor.slot_ptr.slot);
             }
             // writing again with .replace returns a new slot
             {
@@ -487,7 +483,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_o
 
         // key not found
         const not_found_key = hashBuffer("this doesn't exist");
-        try expectEqual(null, try root_cursor.readPath(void, &[_]PathPart(void){
+        try std.testing.expectEqual(null, try root_cursor.readPath(void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = -1 } },
             .{ .hash_map_get = .{ .value = not_found_key } },
         }));
@@ -557,7 +553,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_o
             .{ .array_list_get = .{ .index = -1 } },
             .{ .hash_map_get = .{ .value = foo_key } },
         })).?.slot_ptr.slot.value;
-        try expectEqual(42, int_value);
+        try std.testing.expectEqual(42, int_value);
 
         // remove foo
         const foo_cursor = try root_cursor.writePath(void, &[_]PathPart(void){
@@ -576,7 +572,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_o
         try std.testing.expect(empty_cursor.slot_ptr.position == null);
 
         // read foo
-        try expectEqual(null, try root_cursor.readPath(void, &[_]PathPart(void){
+        try std.testing.expectEqual(null, try root_cursor.readPath(void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = -1 } },
             .{ .hash_map_get = .{ .value = foo_key } },
         }));
@@ -624,7 +620,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_o
             try std.testing.expectEqualStrings("banana", banana_value);
 
             // can't read banana in older array_list
-            try expectEqual(null, try root_cursor.readPath(void, &[_]PathPart(void){
+            try std.testing.expectEqual(null, try root_cursor.readPath(void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = -2 } },
                 .{ .hash_map_get = .{ .value = hashBuffer("fruits") } },
                 .{ .array_list_get = .{ .index = 1 } },
@@ -823,13 +819,13 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_o
             try std.testing.expectEqualStrings(value, value2);
             i += 1;
         }
-        try expectEqual(10, i);
+        try std.testing.expectEqual(10, i);
 
         // get list slot
         const list_cursor = (try root_cursor.readPath(void, &[_]PathPart(void){
             .{ .array_list_get = .{ .index = -1 } },
         })).?;
-        try expectEqual(10, list_cursor.count());
+        try std.testing.expectEqual(10, list_cursor.count());
     }
 
     // iterate over inner hash_map
@@ -894,15 +890,15 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_o
                 const key = try kv_pair.key_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
                 defer allocator.free(key);
                 try std.testing.expectEqualStrings("foo", key);
-                try expectEqual(42, kv_pair.value_cursor.slot_ptr.slot.value);
+                try std.testing.expectEqual(42, kv_pair.value_cursor.slot_ptr.slot.value);
             } else {
                 const value = try kv_pair.value_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
                 defer allocator.free(value);
-                try expectEqual(kv_pair.hash, hashBuffer(value));
+                try std.testing.expectEqual(kv_pair.hash, hashBuffer(value));
             }
             i += 1;
         }
-        try expectEqual(10, i);
+        try std.testing.expectEqual(10, i);
     }
 
     {
@@ -952,7 +948,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_o
                 const even_list_cursor = (try cursor.readPath(void, &[_]PathPart(void){
                     .{ .hash_map_get = .{ .value = hashBuffer("even") } },
                 })).?;
-                try expectEqual(xitdb.SLOT_COUNT + 1, even_list_cursor.count());
+                try std.testing.expectEqual(xitdb.SLOT_COUNT + 1, even_list_cursor.count());
 
                 // iterate over list
                 var inner_cursor = (try cursor.readPath(void, &[_]PathPart(void){
@@ -964,7 +960,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_o
                 while (try iter.next()) |_| {
                     i += 1;
                 }
-                try expectEqual(xitdb.SLOT_COUNT + 1, i);
+                try std.testing.expectEqual(xitdb.SLOT_COUNT + 1, i);
 
                 // concat the list with itself multiple times.
                 // since each list has 17 items, each concat
@@ -989,7 +985,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_o
                 });
 
                 // read the new value from the list
-                try expectEqual(3, (try cursor.readPath(void, &[_]PathPart(void){
+                try std.testing.expectEqual(3, (try cursor.readPath(void, &[_]PathPart(void){
                     .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
                     .{ .linked_array_list_get = .{ .index = -1 } },
                 })).?.slot_ptr.slot.value);
@@ -1079,7 +1075,7 @@ test "low level memory operations" {
     var block = [_]u8{0} ** 5;
     try reader.readNoEof(&block);
     try std.testing.expectEqualStrings("Hello", &block);
-    try expectEqual(42, reader.readInt(u64, .little));
+    try std.testing.expectEqual(42, reader.readInt(u64, .little));
 }
 
 test "validate tag" {
@@ -1089,5 +1085,5 @@ test "validate tag" {
         flag: u1,
     };
     const invalid: xitdb.Slot = @bitCast(Slot{ .value = 0, .tag = 127, .flag = 0 });
-    try expectEqual(error.InvalidEnumTag, invalid.tag.validate());
+    try std.testing.expectEqual(error.InvalidEnumTag, invalid.tag.validate());
 }
