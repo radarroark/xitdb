@@ -22,7 +22,6 @@ const BIT_COUNT = 4;
 pub const SLOT_COUNT = 1 << BIT_COUNT;
 pub const MASK: u64 = SLOT_COUNT - 1;
 const INDEX_BLOCK_SIZE = byteSizeOf(Slot) * SLOT_COUNT;
-const INDEX_START = byteSizeOf(DatabaseHeader);
 const LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE = byteSizeOf(LinkedArrayListSlot) * SLOT_COUNT;
 
 const SlotInt = u72;
@@ -54,6 +53,7 @@ pub const Tag = enum(u7) {
     }
 };
 
+const DATABASE_START = byteSizeOf(DatabaseHeader);
 const MAGIC_NUMBER: u24 = std.mem.nativeTo(u24, std.mem.bytesToValue(u24, "xit"), .big);
 pub const VERSION: u16 = 0;
 const DatabaseHeaderInt = u48;
@@ -385,7 +385,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
         pub fn rootCursor(self: *Database(db_kind)) Cursor(db_kind) {
             return .{
-                .slot_ptr = .{ .position = null, .slot = .{ .value = INDEX_START, .tag = .array_list } },
+                .slot_ptr = .{ .position = null, .slot = .{ .value = DATABASE_START, .tag = self.header.tag } },
                 .db = self,
             };
         }
@@ -411,7 +411,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
 
         fn readSlot(self: *Database(db_kind), user_write_mode: UserWriteMode, comptime Ctx: type, path: []const PathPart(Ctx), slot_ptr: SlotPointer) anyerror!SlotPointer {
             const write_mode: WriteMode = switch (user_write_mode) {
-                .read_write => if (slot_ptr.slot.value == INDEX_START) .read_write else .read_write_immutable,
+                .read_write => if (slot_ptr.slot.value == DATABASE_START) .read_write else .read_write_immutable,
                 .read_only => .read_only,
             };
 
