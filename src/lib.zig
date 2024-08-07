@@ -723,6 +723,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 .hash_map_remove => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
+                    if (path.len > 1) return error.PathPartMustBeAtEnd;
+
                     if (slot_ptr.slot.tag == .none) {
                         return error.KeyNotFound;
                     } else if (slot_ptr.slot.tag != .hash_map) {
@@ -730,14 +732,20 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     }
                     const next_map_start = slot_ptr.slot.value;
 
-                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_remove, 0, .read_only, .kv_pair);
+                    const next_slot_ptr = self.readMapSlot(next_map_start, part.hash_map_remove, 0, .read_only, .kv_pair) catch |err| switch (err) {
+                        error.KeyNotFound => {
+                            // if there was nothing to remove, return an empty
+                            // slot pointer so caller can see nothing was removed
+                            return .{ .position = null, .slot = .{} };
+                        },
+                        else => return err,
+                    };
 
                     const writer = self.core.writer();
                     const position = next_slot_ptr.position orelse return error.CursorNotWriteable;
                     try self.core.seekTo(position);
                     try writer.writeInt(SlotInt, 0, .big);
-
-                    return self.readSlot(user_write_mode, Ctx, path[1..], next_slot_ptr);
+                    return next_slot_ptr;
                 },
                 .write => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
@@ -772,7 +780,7 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 .ctx => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
-                    if (path.len > 1) return error.ValueMustBeAtEnd;
+                    if (path.len > 1) return error.PathPartMustBeAtEnd;
 
                     if (@TypeOf(part.ctx) == void) {
                         return error.NotImplmented;

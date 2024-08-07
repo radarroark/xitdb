@@ -560,11 +560,20 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_o
         try expectEqual(42, int_value);
 
         // remove foo
-        _ = try root_cursor.writePath(void, &[_]PathPart(void){
+        const foo_cursor = try root_cursor.writePath(void, &[_]PathPart(void){
             .{ .array_list_get = .append_copy },
             .hash_map_init,
             .{ .hash_map_remove = foo_key },
         });
+        try std.testing.expect(foo_cursor.slot_ptr.position != null);
+
+        // remove key that does not exist
+        const empty_cursor = try root_cursor.writePath(void, &[_]PathPart(void){
+            .{ .array_list_get = .append_copy },
+            .hash_map_init,
+            .{ .hash_map_remove = hash_buffer("doesn't exist") },
+        });
+        try std.testing.expect(empty_cursor.slot_ptr.position == null);
 
         // read foo
         try expectEqual(null, try root_cursor.readPath(void, &[_]PathPart(void){
