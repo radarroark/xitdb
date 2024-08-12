@@ -195,8 +195,10 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                 max_size: ?u64,
                 position: u64,
 
-                const Reader = struct {
+                pub const Reader = struct {
                     parent: *Core,
+
+                    pub const Error = error{ EndOfStream, InvalidTypeSize };
 
                     pub fn read(self: Core.Reader, buf: []u8) !u64 {
                         const new_position = self.parent.position + @min(@as(u64, @intCast(buf.len)), self.parent.buffer.items.len - self.parent.position);
@@ -294,6 +296,8 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
             },
             .file => struct {
                 file: std.fs.File,
+
+                pub const Reader = std.fs.File.Reader;
 
                 pub fn reader(self: Core) std.fs.File.Reader {
                     return self.file.reader();
@@ -1277,6 +1281,8 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
             size: u64,
             start_position: u64,
             relative_position: u64,
+
+            pub const Error = Database(db_kind).Core.Reader.Error || error{ EndOfStream, Unseekable };
 
             pub fn read(self: *Reader, buf: []u8) !u64 {
                 if (self.size < self.relative_position) return error.EndOfStream;

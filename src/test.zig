@@ -271,13 +271,17 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: DatabaseKind, init_o
 
         // read foo
         {
-            const bar_cursor = (try root_cursor.readPath(void, &[_]PathPart(void){
+            var bar_cursor = (try root_cursor.readPath(void, &[_]PathPart(void){
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = foo_key } },
             })).?;
             const bar_value = try bar_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
             defer allocator.free(bar_value);
             try std.testing.expectEqualStrings("bar", bar_value);
+
+            // make sure we can make a buffered reader
+            var buf_reader = std.io.bufferedReader(try bar_cursor.reader());
+            _ = try buf_reader.read(&[_]u8{});
         }
 
         // read foo from ctx
