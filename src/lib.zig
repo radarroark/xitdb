@@ -201,16 +201,18 @@ pub fn Database(comptime db_kind: DatabaseKind) type {
                     pub const Error = error{ EndOfStream, InvalidTypeSize };
 
                     pub fn read(self: Core.Reader, buf: []u8) !u64 {
-                        const new_position = self.parent.position + @min(@as(u64, @intCast(buf.len)), self.parent.buffer.items.len - self.parent.position);
-                        if (new_position > self.parent.buffer.items.len) return error.EndOfStream;
+                        const size = @min(buf.len, self.parent.buffer.items.len - self.parent.position);
+                        if (size == 0) {
+                            return 0;
+                        }
+                        const new_position = self.parent.position + size;
                         @memcpy(buf, self.parent.buffer.items[self.parent.position..new_position]);
-                        const size = new_position - self.parent.position;
                         self.parent.position = new_position;
                         return size;
                     }
 
                     pub fn readNoEof(self: Core.Reader, buf: []u8) !void {
-                        const new_position = self.parent.position + @as(u64, @intCast(buf.len));
+                        const new_position = self.parent.position + buf.len;
                         if (new_position > self.parent.buffer.items.len) return error.EndOfStream;
                         @memcpy(buf, self.parent.buffer.items[self.parent.position..new_position]);
                         self.parent.position = new_position;
@@ -1289,8 +1291,8 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
                 try self.parent.db.core.seekTo(self.start_position + self.relative_position);
                 const core_reader = self.parent.db.core.reader();
                 const size = try core_reader.read(buf[0..@min(buf.len, self.size - self.relative_position)]);
-                self.relative_position += @intCast(size);
-                return @intCast(size);
+                self.relative_position += size;
+                return size;
             }
 
             pub fn readNoEof(self: *Reader, buf: []u8) !void {
@@ -1298,7 +1300,7 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
                 try self.parent.db.core.seekTo(self.start_position + self.relative_position);
                 const core_reader = self.parent.db.core.reader();
                 try core_reader.readNoEof(buf);
-                self.relative_position += @intCast(buf.len);
+                self.relative_position += buf.len;
             }
 
             pub fn readInt(self: *Reader, comptime T: type, endian: std.builtin.Endian) !T {
@@ -1318,7 +1320,7 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
                     error.StreamTooLong => return error.EndOfStream,
                     else => return err,
                 };
-                self.relative_position += @intCast(buf_slice.len);
+                self.relative_position += buf_slice.len;
                 self.relative_position += 1; // for the delimiter
                 return buf_slice;
             }
@@ -1331,7 +1333,7 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
                     error.StreamTooLong => return error.EndOfStream,
                     else => return err,
                 };
-                self.relative_position += @intCast(buf_slice.len);
+                self.relative_position += buf_slice.len;
                 self.relative_position += 1; // for the delimiter
                 return buf_slice;
             }
@@ -1347,7 +1349,7 @@ pub fn Cursor(comptime db_kind: DatabaseKind) type {
                 if (size != buffer.len) {
                     return error.UnexpectedReadSize;
                 }
-                self.relative_position += @intCast(size);
+                self.relative_position += size;
                 return buffer;
             }
 
