@@ -6,7 +6,7 @@
 
 const std = @import("std");
 
-fn byteSizeOf(T: type) u64 {
+fn byteSizeOf(T: type) u16 {
     return @bitSizeOf(T) / 8;
 }
 
@@ -51,8 +51,10 @@ pub const Tag = enum(u7) {
 const DATABASE_START = byteSizeOf(DatabaseHeader);
 const MAGIC_NUMBER: u24 = std.mem.nativeTo(u24, std.mem.bytesToValue(u24, "xit"), .big);
 pub const VERSION: u16 = 0;
-const DatabaseHeaderInt = u48;
+const DatabaseHeaderInt = u64;
 const DatabaseHeader = packed struct {
+    // the size in bytes of all hashes used by the database.
+    hash_size: u16,
     // increment this number when the file format changes,
     // such as when a new Tag member is added.
     version: u16 = VERSION,
@@ -356,6 +358,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         const reader = self.core.reader();
                         self.header = @bitCast(try reader.readInt(DatabaseHeaderInt, .big));
                         try self.header.validate();
+                        if (self.header.hash_size != byteSizeOf(Hash)) {
+                            return error.InvalidHashSize;
+                        }
                     }
 
                     return self;
@@ -378,6 +383,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         const reader = self.core.reader();
                         self.header = @bitCast(try reader.readInt(DatabaseHeaderInt, .big));
                         try self.header.validate();
+                        if (self.header.hash_size != byteSizeOf(Hash)) {
+                            return error.InvalidHashSize;
+                        }
                     }
 
                     return self;
@@ -397,7 +405,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
         fn writeHeader(self: *Database(db_kind, Hash)) !DatabaseHeader {
             const writer = self.core.writer();
 
-            const header = DatabaseHeader{};
+            const header = DatabaseHeader{
+                .hash_size = byteSizeOf(Hash),
+            };
             try writer.writeInt(DatabaseHeaderInt, @bitCast(header), .big);
 
             const index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
