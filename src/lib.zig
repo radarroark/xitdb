@@ -596,9 +596,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 .linked_array_list_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
-                    if (slot_ptr.slot.value == DATABASE_START) {
-                        return error.CannotInitLinkedArrayListAtRoot;
-                    }
+                    if (slot_ptr.slot.value == DATABASE_START) return error.RootTypeMustBeArrayList;
 
                     const position = slot_ptr.position orelse return error.CursorNotWriteable;
 
@@ -696,9 +694,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 .hash_map_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
-                    if (slot_ptr.slot.value == DATABASE_START) {
-                        return error.CannotInitHashMapAtRoot;
-                    }
+                    if (slot_ptr.slot.value == DATABASE_START) return error.RootTypeMustBeArrayList;
 
                     const position = slot_ptr.position orelse return error.CursorNotWriteable;
 
