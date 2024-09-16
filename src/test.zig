@@ -12,6 +12,46 @@ fn hashBuffer(buffer: []const u8) Hash {
     return std.mem.bytesToValue(Hash, &hash);
 }
 
+test "high level api" {
+    const allocator = std.testing.allocator;
+
+    const file = try std.fs.cwd().createFile("main.db", .{ .exclusive = true, .lock = .exclusive, .read = true });
+    defer {
+        file.close();
+        std.fs.cwd().deleteFile("main.db") catch {};
+    }
+
+    const DB = xitdb.Database(.file, Hash);
+    var db = try DB.init(allocator, .{ .file = file });
+
+    const Schema = DB.ArrayList(DB.HashMap);
+    const list = try Schema.init(db.rootCursor());
+
+    const Ctx = struct {
+        pub fn run(_: @This(), map: *DB.HashMap) !void {
+            try map.put(hashBuffer("foo"), .{ .bytes = "foo" });
+            try map.put(hashBuffer("bar"), .{ .bytes = "bar" });
+        }
+    };
+    try list.appendCopy(Ctx, Ctx{});
+
+    const map = (try list.get(-1)).?;
+
+    {
+        const cursor = (try map.get(hashBuffer("foo"))).?;
+        const value = try cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+        defer allocator.free(value);
+        try std.testing.expectEqualStrings("foo", value);
+    }
+
+    {
+        const cursor = (try map.get(hashBuffer("bar"))).?;
+        const value = try cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+        defer allocator.free(value);
+        try std.testing.expectEqualStrings("bar", value);
+    }
+}
+
 fn clearStorage(comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, Hash).InitOpts) !void {
     switch (db_kind) {
         .file => {
@@ -1068,7 +1108,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
     }
 }
 
-test "read and write" {
+test "low level api" {
     const allocator = std.testing.allocator;
 
     var buffer = std.ArrayList(u8).init(allocator);

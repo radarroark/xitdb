@@ -295,6 +295,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             value,
         };
 
+        pub const WriteableValue = union(enum) {
+            slot: Slot,
+            none,
+            uint: u64,
+            bytes: []const u8,
+        };
+
         pub fn PathPart(comptime Ctx: type) type {
             return union(enum) {
                 array_list_init,
@@ -315,12 +322,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     value: Hash,
                 },
                 hash_map_remove: Hash,
-                write: union(enum) {
-                    slot: Slot,
-                    none,
-                    uint: u64,
-                    bytes: []const u8,
-                },
+                write: WriteableValue,
                 ctx: Ctx,
             };
         }
@@ -2153,5 +2155,68 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 return try Iter.init(self);
             }
         };
+
+        // high level API
+
+        pub const HashMap = struct {
+            cursor: Database(db_kind, Hash).Cursor,
+
+            pub fn init(cursor: Database(db_kind, Hash).Cursor) !HashMap {
+                var cur = cursor;
+                return .{
+                    .cursor = try cur.writePath(void, &.{.hash_map_init}),
+                };
+            }
+
+            pub fn get(self: HashMap, hash: Hash) !?Cursor {
+                return try self.cursor.readPath(void, &.{
+                    .{ .hash_map_get = .{ .value = hash } },
+                });
+            }
+
+            pub fn put(self: HashMap, hash: Hash, value: WriteableValue) !void {
+                _ = try self.cursor.writePath(void, &.{
+                    .{ .hash_map_get = .{ .value = hash } },
+                    .{ .write = value },
+                });
+            }
+        };
+
+        pub fn ArrayList(comptime T: type) type {
+            return struct {
+                cursor: Database(db_kind, Hash).Cursor,
+
+                pub fn init(cursor: Database(db_kind, Hash).Cursor) !ArrayList(T) {
+                    var cur = cursor;
+                    return .{
+                        .cursor = try cur.writePath(void, &.{.array_list_init}),
+                    };
+                }
+
+                pub fn get(self: ArrayList(T), index: i65) !?T {
+                    if (try self.cursor.readPath(void, &.{
+                        .{ .array_list_get = .{ .index = index } },
+                    })) |cursor| {
+                        return T{ .cursor = cursor };
+                    }
+                    return null;
+                }
+
+                pub fn appendCopy(self: ArrayList(T), comptime Ctx: type, ctx: Ctx) !void {
+                    const InternalCtx = struct {
+                        ctx: Ctx,
+
+                        pub fn run(ctx_self: @This(), cursor: *Database(db_kind, Hash).Cursor) !void {
+                            var val = try T.init(cursor.*);
+                            try ctx_self.ctx.run(&val);
+                        }
+                    };
+                    _ = try self.cursor.writePath(InternalCtx, &.{
+                        .{ .array_list_get = .append_copy },
+                        .{ .ctx = .{ .ctx = ctx } },
+                    });
+                }
+            };
+        }
     };
 }
