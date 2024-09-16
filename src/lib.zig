@@ -404,20 +404,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
         fn writeHeader(self: *Database(db_kind, Hash)) !DatabaseHeader {
             const writer = self.core.writer();
-
             const header = DatabaseHeader{
                 .hash_size = byteSizeOf(Hash),
             };
             try writer.writeInt(DatabaseHeaderInt, @bitCast(header), .big);
-
-            const index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-            const array_list_ptr = try self.core.getPos() + byteSizeOf(ArrayListHeader);
-            try writer.writeInt(ArrayListHeaderInt, @bitCast(ArrayListHeader{
-                .ptr = array_list_ptr,
-                .size = 0,
-            }), .big);
-            try writer.writeAll(&index_block);
-
             return header;
         }
 
@@ -450,12 +440,27 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     if (slot_ptr.slot.value == DATABASE_START) {
+                        const writer = self.core.writer();
+
+                        // update header if necessary
                         if (self.header.tag == .none) {
-                            const writer = self.core.writer();
                             try self.core.seekTo(0);
                             self.header.tag = .array_list;
                             try writer.writeInt(DatabaseHeaderInt, @bitCast(self.header), .big);
                         }
+
+                        // if db has nothing after header, initialize the array list
+                        try self.core.seekFromEnd(0);
+                        if (try self.core.getPos() == DATABASE_START) {
+                            const index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                            const array_list_ptr = try self.core.getPos() + byteSizeOf(ArrayListHeader);
+                            try writer.writeInt(ArrayListHeaderInt, @bitCast(ArrayListHeader{
+                                .ptr = array_list_ptr,
+                                .size = 0,
+                            }), .big);
+                            try writer.writeAll(&index_block);
+                        }
+
                         var next_slot_ptr = slot_ptr;
                         next_slot_ptr.slot.tag = .array_list;
                         return self.readSlot(user_write_mode, Ctx, path[1..], next_slot_ptr);
