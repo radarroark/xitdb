@@ -62,7 +62,7 @@ const DatabaseHeader = packed struct {
     // it might be repurposed in the future.
     flag: u1 = 0,
     // the root tag, representing the type of the top-level data.
-    tag: Tag = .array_list,
+    tag: Tag = .none,
     // a value that allows for a quick sanity check when determining
     // if the file is a valid database. it also provides a quick
     // visual indicator that this is a xitdb file to anyone looking
@@ -78,10 +78,6 @@ const DatabaseHeader = packed struct {
             return error.InvalidDatabase;
         }
         try self.tag.validate();
-        switch (self.tag) {
-            .array_list => {},
-            else => return error.InvalidRootTag,
-        }
         if (self.flag != 0 or self.version > VERSION) {
             return error.InvalidVersion;
         }
@@ -453,6 +449,18 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 .array_list_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
+                    if (slot_ptr.slot.value == DATABASE_START) {
+                        if (self.header.tag == .none) {
+                            const writer = self.core.writer();
+                            try self.core.seekTo(0);
+                            self.header.tag = .array_list;
+                            try writer.writeInt(DatabaseHeaderInt, @bitCast(self.header), .big);
+                        }
+                        var next_slot_ptr = slot_ptr;
+                        next_slot_ptr.slot.tag = .array_list;
+                        return self.readSlot(user_write_mode, Ctx, path[1..], next_slot_ptr);
+                    }
+
                     const position = slot_ptr.position orelse return error.CursorNotWriteable;
 
                     if (slot_ptr.slot.tag == .none) {
@@ -507,9 +515,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     }
                 },
                 .array_list_get => {
-                    if (slot_ptr.slot.tag == .none) {
+                    const tag = if (slot_ptr.slot.value == DATABASE_START) self.header.tag else slot_ptr.slot.tag;
+                    if (tag == .none) {
                         return error.KeyNotFound;
-                    } else if (slot_ptr.slot.tag != .array_list) {
+                    } else if (tag != .array_list) {
                         return error.UnexpectedTag;
                     }
                     const next_array_list_start = slot_ptr.slot.value;
@@ -581,6 +590,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 },
                 .linked_array_list_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
+
+                    if (slot_ptr.slot.value == DATABASE_START) {
+                        return error.CannotInitLinkedArrayListAtRoot;
+                    }
 
                     const position = slot_ptr.position orelse return error.CursorNotWriteable;
 
@@ -677,6 +690,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 },
                 .hash_map_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
+
+                    if (slot_ptr.slot.value == DATABASE_START) {
+                        return error.CannotInitHashMapAtRoot;
+                    }
 
                     const position = slot_ptr.position orelse return error.CursorNotWriteable;
 
