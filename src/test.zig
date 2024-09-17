@@ -595,7 +595,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         defer allocator.free(hello_value2);
         try std.testing.expectEqualStrings("hello", hello_value2);
 
-        // overwrite foo with an int
+        // overwrite foo with a uint
         _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
             .array_list_init,
             .{ .array_list_get = .append_copy },
@@ -605,11 +605,27 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         });
 
         // read foo
-        const int_value = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        const uint_value = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
             .{ .array_list_get = .{ .index = -1 } },
             .{ .hash_map_get = .{ .value = foo_key } },
         })).?.slot_ptr.slot.value;
-        try std.testing.expectEqual(42, int_value);
+        try std.testing.expectEqual(42, uint_value);
+
+        // overwrite foo with an int
+        _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            .array_list_init,
+            .{ .array_list_get = .append_copy },
+            .hash_map_init,
+            .{ .hash_map_get = .{ .value = foo_key } },
+            .{ .write = .{ .int = -42 } },
+        });
+
+        // read foo
+        const int_value: i64 = @bitCast((try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            .{ .array_list_get = .{ .index = -1 } },
+            .{ .hash_map_get = .{ .value = foo_key } },
+        })).?.slot_ptr.slot.value);
+        try std.testing.expectEqual(-42, int_value);
 
         // remove foo
         const foo_cursor = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){

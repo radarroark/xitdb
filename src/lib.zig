@@ -42,6 +42,7 @@ pub const Tag = enum(u7) {
     kv_pair,
     bytes,
     uint,
+    int,
 
     pub fn validate(self: Tag) !void {
         _ = try std.meta.intToEnum(Tag, @intFromEnum(self));
@@ -299,6 +300,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             slot: Slot,
             none,
             uint: u64,
+            int: i64,
             bytes: []const u8,
         };
 
@@ -792,8 +794,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                     var slot: Slot = switch (part.write) {
                         .slot => part.write.slot,
-                        .none => Slot{ .tag = .none },
+                        .none => .{ .tag = .none },
                         .uint => .{ .value = part.write.uint, .tag = .uint },
+                        .int => .{ .value = @bitCast(part.write.int), .tag = .int },
                         .bytes => blk: {
                             var next_cursor = Cursor{
                                 .slot_ptr = slot_ptr,
