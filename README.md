@@ -29,9 +29,9 @@ const list = try DB.ArrayList.init(db.rootCursor());
 // {"foo": "foo",
 //  "bar": "bar",
 //  "fruits": ["apple", "pear", "grape"],
-//  "people:" [
+//  "people": [
 //    {"name": "Alice", "age": 25},
-//    {"name": "Bob", "age": 42},
+//    {"name": "Bob", "age": 42}
 //  ]}
 const Ctx = struct {
     pub fn run(_: @This(), cursor: *DB.Cursor) !void {
@@ -75,7 +75,7 @@ defer allocator.free(foo_value);
 try std.testing.expectEqualStrings("foo", foo_value);
 
 // to get the "fruits" list, we get the cursor to it and
-// then call pass it to the ArrayList.init method
+// then pass it to the ArrayList.init method
 const fruits_cursor = (try map.get(hashBuffer("fruits"))).?;
 const fruits = try DB.ArrayList.init(fruits_cursor);
 

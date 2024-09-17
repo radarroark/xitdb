@@ -79,7 +79,7 @@ test "high level api" {
     try std.testing.expect(null == try map.get(hashBuffer("bar")));
 
     // to get the "fruits" list, we get the cursor to it and
-    // then call pass it to the ArrayList.init method
+    // then pass it to the ArrayList.init method
     const fruits_cursor = (try map.get(hashBuffer("fruits"))).?;
     try std.testing.expectEqual(3, try fruits_cursor.count());
     const fruits = try DB.ArrayList.init(fruits_cursor);
