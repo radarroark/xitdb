@@ -27,8 +27,8 @@ test "high level api" {
     const list = try DB.ArrayList.init(db.rootCursor());
 
     const Ctx = struct {
-        pub fn run(_: @This(), cursor: DB.Cursor) !void {
-            const map = try DB.HashMap.init(cursor);
+        pub fn run(_: @This(), cursor: *DB.Cursor) !void {
+            const map = try DB.HashMap.init(cursor.*);
 
             try map.put(hashBuffer("foo"), .{ .bytes = "foo" });
             try map.put(hashBuffer("bar"), .{ .bytes = "bar" });
@@ -37,6 +37,20 @@ test "high level api" {
             const fruits = try DB.ArrayList.init(fruits_cursor);
             try fruits.append(.{ .bytes = "apple" });
             try fruits.append(.{ .bytes = "pear" });
+            try fruits.append(.{ .bytes = "grape" });
+
+            const people_cursor = try map.putCursor(hashBuffer("people"));
+            const people = try DB.ArrayList.init(people_cursor);
+
+            const alice_cursor = try people.appendCursor();
+            const alice = try DB.HashMap.init(alice_cursor);
+            try alice.put(hashBuffer("name"), .{ .bytes = "Alice" });
+            try alice.put(hashBuffer("age"), .{ .uint = 25 });
+
+            const bob_cursor = try people.appendCursor();
+            const bob = try DB.HashMap.init(bob_cursor);
+            try bob.put(hashBuffer("name"), .{ .bytes = "Bob" });
+            try bob.put(hashBuffer("age"), .{ .uint = 42 });
         }
     };
     try list.appendCopy(Ctx, Ctx{});
@@ -56,6 +70,16 @@ test "high level api" {
         const value = try cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(value);
         try std.testing.expectEqualStrings("bar", value);
+    }
+
+    {
+        const cursor = (try map.get(hashBuffer("fruits"))).?;
+        try std.testing.expectEqual(3, try cursor.count());
+    }
+
+    {
+        const cursor = (try map.get(hashBuffer("people"))).?;
+        try std.testing.expectEqual(2, try cursor.count());
     }
 }
 

@@ -2246,12 +2246,18 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 });
             }
 
+            pub fn appendCursor(self: ArrayList) !Cursor {
+                return try self.cursor.writePath(void, &.{
+                    .{ .array_list_get = .append },
+                });
+            }
+
             pub fn appendCopy(self: ArrayList, comptime Ctx: type, ctx: Ctx) !void {
                 const InternalCtx = struct {
                     ctx: Ctx,
 
                     pub fn run(ctx_self: @This(), cursor: *Database(db_kind, Hash).Cursor) !void {
-                        try ctx_self.ctx.run(cursor.*);
+                        try ctx_self.ctx.run(cursor);
                     }
                 };
                 _ = try self.cursor.writePath(InternalCtx, &.{
