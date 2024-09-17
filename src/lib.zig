@@ -69,7 +69,7 @@ const DatabaseHeader = packed struct {
     // directly at the bytes.
     magic_number: u24 = MAGIC_NUMBER,
 
-    pub fn init(reader: anytype) !DatabaseHeader {
+    pub fn read(reader: anytype) !DatabaseHeader {
         return @bitCast(try reader.readInt(DatabaseHeaderInt, .big));
     }
 
@@ -358,7 +358,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         self.header = try self.writeHeader();
                     } else {
                         const reader = self.core.reader();
-                        self.header = try DatabaseHeader.init(reader);
+                        self.header = try DatabaseHeader.read(reader);
                         try self.header.validate();
                         if (self.header.hash_size != byteSizeOf(Hash)) {
                             return error.InvalidHashSize;
@@ -383,7 +383,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         self.header = try self.writeHeader();
                     } else {
                         const reader = self.core.reader();
-                        self.header = try DatabaseHeader.init(reader);
+                        self.header = try DatabaseHeader.read(reader);
                         try self.header.validate();
                         if (self.header.hash_size != byteSizeOf(Hash)) {
                             return error.InvalidHashSize;
