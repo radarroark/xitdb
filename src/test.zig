@@ -609,7 +609,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             const uint_value = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = foo_key } },
-            })).?.slot_ptr.slot.value;
+            })).?.readUint();
             try std.testing.expectEqual(42, uint_value);
         }
 
@@ -624,10 +624,10 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             });
 
             // read foo
-            const int_value: i64 = @bitCast((try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const int_value = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = foo_key } },
-            })).?.slot_ptr.slot.value);
+            })).?.readInt();
             try std.testing.expectEqual(-42, int_value);
         }
 
@@ -642,10 +642,10 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             });
 
             // read foo
-            const float_value: f64 = @bitCast((try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const float_value = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = foo_key } },
-            })).?.slot_ptr.slot.value);
+            })).?.readFloat();
             try std.testing.expectEqual(42.5, float_value);
         }
 

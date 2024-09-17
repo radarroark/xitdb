@@ -1494,6 +1494,27 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 };
             }
 
+            pub fn readUint(self: Cursor) !u64 {
+                if (self.slot_ptr.slot.tag != .uint) {
+                    return error.UnexpectedTag;
+                }
+                return self.slot_ptr.slot.value;
+            }
+
+            pub fn readInt(self: Cursor) !i64 {
+                if (self.slot_ptr.slot.tag != .int) {
+                    return error.UnexpectedTag;
+                }
+                return @bitCast(self.slot_ptr.slot.value);
+            }
+
+            pub fn readFloat(self: Cursor) !f64 {
+                if (self.slot_ptr.slot.tag != .float) {
+                    return error.UnexpectedTag;
+                }
+                return @bitCast(self.slot_ptr.slot.value);
+            }
+
             pub fn readBytesAlloc(self: Cursor, allocator: std.mem.Allocator, max_size: usize) ![]u8 {
                 const core_reader = self.db.core.reader();
 
