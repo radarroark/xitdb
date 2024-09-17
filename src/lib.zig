@@ -2190,9 +2190,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
             pub fn init(cursor: Database(db_kind, Hash).Cursor) !HashMap {
                 if (cursor.db.tx_start != null) {
-                    var cur = cursor;
                     return .{
-                        .cursor = try cur.writePath(void, &.{.hash_map_init}),
+                        .cursor = try cursor.writePath(void, &.{.hash_map_init}),
                     };
                 } else {
                     return .{ .cursor = cursor };
@@ -2230,9 +2229,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
             pub fn init(cursor: Database(db_kind, Hash).Cursor) !ArrayList {
                 if (cursor.db.tx_start != null or cursor.slot_ptr.slot.value == DATABASE_START) {
-                    var cur = cursor;
                     return .{
-                        .cursor = try cur.writePath(void, &.{.array_list_init}),
+                        .cursor = try cursor.writePath(void, &.{.array_list_init}),
                     };
                 } else {
                     return .{ .cursor = cursor };
