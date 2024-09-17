@@ -32,6 +32,7 @@ test "high level api" {
 
             try map.put(hashBuffer("foo"), .{ .bytes = "foo" });
             try map.put(hashBuffer("bar"), .{ .bytes = "bar" });
+            try map.remove(hashBuffer("bar"));
 
             const fruits_cursor = try map.putCursor(hashBuffer("fruits"));
             const fruits = try DB.ArrayList.init(fruits_cursor);
@@ -65,12 +66,7 @@ test "high level api" {
         try std.testing.expectEqualStrings("foo", value);
     }
 
-    {
-        const cursor = (try map.get(hashBuffer("bar"))).?;
-        const value = try cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
-        defer allocator.free(value);
-        try std.testing.expectEqualStrings("bar", value);
-    }
+    try std.testing.expect(null == try map.get(hashBuffer("bar")));
 
     {
         const cursor = (try map.get(hashBuffer("fruits"))).?;

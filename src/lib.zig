@@ -2217,6 +2217,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     .{ .hash_map_get = .{ .value = hash } },
                 });
             }
+
+            pub fn remove(self: HashMap, hash: Hash) !void {
+                _ = try self.cursor.writePath(void, &.{
+                    .{ .hash_map_remove = hash },
+                });
+            }
         };
 
         pub const ArrayList = struct {
