@@ -15,17 +15,25 @@ fn hashBuffer(buffer: []const u8) Hash {
 test "high level api" {
     const allocator = std.testing.allocator;
 
+    // create db file
     const file = try std.fs.cwd().createFile("main.db", .{ .exclusive = true, .lock = .exclusive, .read = true });
     defer {
         file.close();
         std.fs.cwd().deleteFile("main.db") catch {};
     }
 
+    // init the db
     const DB = xitdb.Database(.file, Hash);
     var db = try DB.init(allocator, .{ .file = file });
 
+    // the top-level data structure *must* be an ArrayList,
+    // because each transaction is stored as an item in this list
     const list = try DB.ArrayList.init(db.rootCursor());
 
+    // this is how a transaction is executed. we call list.appendCopy,
+    // which grabs the most recent copy of the db and appends it to the list.
+    // then, in the context below, we interpret it as a HashMap
+    // and add a bunch of data to it.
     const Ctx = struct {
         pub fn run(_: @This(), cursor: *DB.Cursor) !void {
             const map = try DB.HashMap.init(cursor.*);
@@ -56,27 +64,34 @@ test "high level api" {
     };
     try list.appendCopy(Ctx, Ctx{});
 
+    // get the most recent copy of the database.
+    // the -1 index will return the last index in the list.
     const map_cursor = (try list.get(-1)).?;
     const map = try DB.HashMap.init(map_cursor);
 
-    {
-        const cursor = (try map.get(hashBuffer("foo"))).?;
-        const value = try cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
-        defer allocator.free(value);
-        try std.testing.expectEqualStrings("foo", value);
-    }
+    // we can read the value of "foo" from the map by getting
+    // the cursor to "foo" and then calling readBytesAlloc on it
+    const foo_cursor = (try map.get(hashBuffer("foo"))).?;
+    const foo_value = try foo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+    defer allocator.free(foo_value);
+    try std.testing.expectEqualStrings("foo", foo_value);
 
     try std.testing.expect(null == try map.get(hashBuffer("bar")));
 
-    {
-        const cursor = (try map.get(hashBuffer("fruits"))).?;
-        try std.testing.expectEqual(3, try cursor.count());
-    }
+    // to get the "fruits" list, we get the cursor to it and
+    // then call pass it to the ArrayList.init method
+    const fruits_cursor = (try map.get(hashBuffer("fruits"))).?;
+    try std.testing.expectEqual(3, try fruits_cursor.count());
+    const fruits = try DB.ArrayList.init(fruits_cursor);
 
-    {
-        const cursor = (try map.get(hashBuffer("people"))).?;
-        try std.testing.expectEqual(2, try cursor.count());
-    }
+    // now we can get the first item from the fruits list and read it
+    const apple_cursor = (try fruits.get(0)).?;
+    const apple_value = try apple_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+    defer allocator.free(apple_value);
+    try std.testing.expectEqualStrings("apple", apple_value);
+
+    const people_cursor = (try map.get(hashBuffer("people"))).?;
+    try std.testing.expectEqual(2, try people_cursor.count());
 }
 
 fn clearStorage(comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, Hash).InitOpts) !void {
