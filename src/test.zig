@@ -24,18 +24,25 @@ test "high level api" {
     const DB = xitdb.Database(.file, Hash);
     var db = try DB.init(allocator, .{ .file = file });
 
-    const Schema = DB.ArrayList(DB.HashMap);
-    const list = try Schema.init(db.rootCursor());
+    const list = try DB.ArrayList.init(db.rootCursor());
 
     const Ctx = struct {
-        pub fn run(_: @This(), map: *DB.HashMap) !void {
+        pub fn run(_: @This(), cursor: DB.Cursor) !void {
+            const map = try DB.HashMap.init(cursor);
+
             try map.put(hashBuffer("foo"), .{ .bytes = "foo" });
             try map.put(hashBuffer("bar"), .{ .bytes = "bar" });
+
+            const fruits_cursor = try map.putCursor(hashBuffer("fruits"));
+            const fruits = try DB.ArrayList.init(fruits_cursor);
+            try fruits.append(.{ .bytes = "apple" });
+            try fruits.append(.{ .bytes = "pear" });
         }
     };
     try list.appendCopy(Ctx, Ctx{});
 
-    const map = (try list.get(-1)).?;
+    const map_cursor = (try list.get(-1)).?;
+    const map = try DB.HashMap.init(map_cursor);
 
     {
         const cursor = (try map.get(hashBuffer("foo"))).?;

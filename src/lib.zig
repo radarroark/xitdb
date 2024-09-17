@@ -2189,10 +2189,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             cursor: Database(db_kind, Hash).Cursor,
 
             pub fn init(cursor: Database(db_kind, Hash).Cursor) !HashMap {
-                var cur = cursor;
-                return .{
-                    .cursor = try cur.writePath(void, &.{.hash_map_init}),
-                };
+                if (cursor.db.tx_start != null) {
+                    var cur = cursor;
+                    return .{
+                        .cursor = try cur.writePath(void, &.{.hash_map_init}),
+                    };
+                } else {
+                    return .{ .cursor = cursor };
+                }
             }
 
             pub fn get(self: HashMap, hash: Hash) !?Cursor {
@@ -2207,43 +2211,54 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     .{ .write = value },
                 });
             }
+
+            pub fn putCursor(self: HashMap, hash: Hash) !Cursor {
+                return try self.cursor.writePath(void, &.{
+                    .{ .hash_map_get = .{ .value = hash } },
+                });
+            }
         };
 
-        pub fn ArrayList(comptime T: type) type {
-            return struct {
-                cursor: Database(db_kind, Hash).Cursor,
+        pub const ArrayList = struct {
+            cursor: Database(db_kind, Hash).Cursor,
 
-                pub fn init(cursor: Database(db_kind, Hash).Cursor) !ArrayList(T) {
+            pub fn init(cursor: Database(db_kind, Hash).Cursor) !ArrayList {
+                if (cursor.db.tx_start != null or cursor.slot_ptr.slot.value == DATABASE_START) {
                     var cur = cursor;
                     return .{
                         .cursor = try cur.writePath(void, &.{.array_list_init}),
                     };
+                } else {
+                    return .{ .cursor = cursor };
                 }
+            }
 
-                pub fn get(self: ArrayList(T), index: i65) !?T {
-                    if (try self.cursor.readPath(void, &.{
-                        .{ .array_list_get = .{ .index = index } },
-                    })) |cursor| {
-                        return T{ .cursor = cursor };
+            pub fn get(self: ArrayList, index: i65) !?Cursor {
+                return try self.cursor.readPath(void, &.{
+                    .{ .array_list_get = .{ .index = index } },
+                });
+            }
+
+            pub fn append(self: ArrayList, value: WriteableValue) !void {
+                _ = try self.cursor.writePath(void, &.{
+                    .{ .array_list_get = .append },
+                    .{ .write = value },
+                });
+            }
+
+            pub fn appendCopy(self: ArrayList, comptime Ctx: type, ctx: Ctx) !void {
+                const InternalCtx = struct {
+                    ctx: Ctx,
+
+                    pub fn run(ctx_self: @This(), cursor: *Database(db_kind, Hash).Cursor) !void {
+                        try ctx_self.ctx.run(cursor.*);
                     }
-                    return null;
-                }
-
-                pub fn appendCopy(self: ArrayList(T), comptime Ctx: type, ctx: Ctx) !void {
-                    const InternalCtx = struct {
-                        ctx: Ctx,
-
-                        pub fn run(ctx_self: @This(), cursor: *Database(db_kind, Hash).Cursor) !void {
-                            var val = try T.init(cursor.*);
-                            try ctx_self.ctx.run(&val);
-                        }
-                    };
-                    _ = try self.cursor.writePath(InternalCtx, &.{
-                        .{ .array_list_get = .append_copy },
-                        .{ .ctx = .{ .ctx = ctx } },
-                    });
-                }
-            };
-        }
+                };
+                _ = try self.cursor.writePath(InternalCtx, &.{
+                    .{ .array_list_get = .append_copy },
+                    .{ .ctx = .{ .ctx = ctx } },
+                });
+            }
+        };
     };
 }
