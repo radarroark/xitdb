@@ -43,6 +43,7 @@ pub const Tag = enum(u7) {
     bytes,
     uint,
     int,
+    float,
 
     pub fn validate(self: Tag) !void {
         _ = try std.meta.intToEnum(Tag, @intFromEnum(self));
@@ -301,6 +302,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             none,
             uint: u64,
             int: i64,
+            float: f64,
             bytes: []const u8,
         };
 
@@ -797,6 +799,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         .none => .{ .tag = .none },
                         .uint => .{ .value = part.write.uint, .tag = .uint },
                         .int => .{ .value = @bitCast(part.write.int), .tag = .int },
+                        .float => .{ .value = @bitCast(part.write.float), .tag = .float },
                         .bytes => blk: {
                             var next_cursor = Cursor{
                                 .slot_ptr = slot_ptr,
