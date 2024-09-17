@@ -121,7 +121,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
             for (0..original_size) |i| {
                 const n = i * 2;
                 try values.append(n);
-                _ = try cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+                _ = try cursor.writePath(void, &.{
                     .{ .hash_map_get = .{ .value = hashBuffer("even") } },
                     .linked_array_list_init,
                     .{ .linked_array_list_get = .append },
@@ -130,20 +130,20 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
             }
 
             // slice list
-            const even_list_cursor = (try cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const even_list_cursor = (try cursor.readPath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("even") } },
             })).?;
             const even_list_slice_cursor = try even_list_cursor.slice(slice_offset, slice_size);
 
             // save the newly-made slice
-            _ = try cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try cursor.writePath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("even-slice") } },
                 .{ .write = .{ .slot = even_list_slice_cursor.slot_ptr.slot } },
             });
 
             // check all values in the new slice
             for (values.items[slice_offset .. slice_offset + slice_size], 0..) |val, i| {
-                const n = (try cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+                const n = (try cursor.readPath(void, &.{
                     .{ .hash_map_get = .{ .value = hashBuffer("even-slice") } },
                     .{ .linked_array_list_get = .{ .index = i } },
                 })).?.slot_ptr.slot.value;
@@ -151,14 +151,14 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
             }
 
             // there are no extra items
-            try std.testing.expectEqual(null, try cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            try std.testing.expectEqual(null, try cursor.readPath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("even-slice") } },
                 .{ .linked_array_list_get = .{ .index = slice_size } },
             }));
 
             // concat the slice with itself
             const combo_list_cursor = try even_list_slice_cursor.concat(even_list_slice_cursor);
-            _ = try cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try cursor.writePath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
                 .{ .write = .{ .slot = combo_list_cursor.slot_ptr.slot } },
             });
@@ -169,7 +169,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
             try combo_values.appendSlice(values.items[slice_offset .. slice_offset + slice_size]);
             try combo_values.appendSlice(values.items[slice_offset .. slice_offset + slice_size]);
             for (combo_values.items, 0..) |val, i| {
-                const n = (try cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+                const n = (try cursor.readPath(void, &.{
                     .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
                     .{ .linked_array_list_get = .{ .index = i } },
                 })).?.slot_ptr.slot.value;
@@ -177,7 +177,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
             }
 
             // append to the slice
-            _ = try cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try cursor.writePath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("even-slice") } },
                 .linked_array_list_init,
                 .{ .linked_array_list_get = .append },
@@ -185,7 +185,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
             });
 
             // read the new value from the slice
-            try std.testing.expectEqual(3, (try cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            try std.testing.expectEqual(3, (try cursor.readPath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("even-slice") } },
                 .{ .linked_array_list_get = .{ .index = -1 } },
             })).?.slot_ptr.slot.value);
@@ -212,14 +212,14 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
             defer values.deinit();
 
             // create even list
-            _ = try cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try cursor.writePath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("even") } },
                 .linked_array_list_init,
             });
             for (0..list_a_size) |i| {
                 const n = i * 2;
                 try values.append(n);
-                _ = try cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+                _ = try cursor.writePath(void, &.{
                     .{ .hash_map_get = .{ .value = hashBuffer("even") } },
                     .linked_array_list_init,
                     .{ .linked_array_list_get = .append },
@@ -228,19 +228,19 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
             }
 
             // get even list
-            const even_list_cursor = (try cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const even_list_cursor = (try cursor.readPath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("even") } },
             })).?;
 
             // create odd list
-            _ = try cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try cursor.writePath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("odd") } },
                 .linked_array_list_init,
             });
             for (0..list_b_size) |i| {
                 const n = (i * 2) + 1;
                 try values.append(n);
-                _ = try cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+                _ = try cursor.writePath(void, &.{
                     .{ .hash_map_get = .{ .value = hashBuffer("odd") } },
                     .linked_array_list_init,
                     .{ .linked_array_list_get = .append },
@@ -249,20 +249,20 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
             }
 
             // get odd list
-            const odd_list_cursor = (try cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const odd_list_cursor = (try cursor.readPath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("odd") } },
             })).?;
 
             // concat the lists
             const combo_list_cursor = try even_list_cursor.concat(odd_list_cursor);
-            _ = try cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try cursor.writePath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
                 .{ .write = .{ .slot = combo_list_cursor.slot_ptr.slot } },
             });
 
             // check all values in the new list
             for (values.items, 0..) |val, i| {
-                const n = (try cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+                const n = (try cursor.readPath(void, &.{
                     .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
                     .{ .linked_array_list_get = .{ .index = i } },
                 })).?.slot_ptr.slot.value;
@@ -270,7 +270,7 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
             }
 
             // there are no extra items
-            try std.testing.expectEqual(null, try cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            try std.testing.expectEqual(null, try cursor.readPath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
                 .{ .linked_array_list_get = .{ .index = values.items.len } },
             }));
@@ -354,7 +354,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
 
         // read foo
         {
-            var bar_cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            var bar_cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = foo_key } },
             })).?;
@@ -459,7 +459,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         // write bar -> foo with writeBytes
         const bar_key = hashBuffer("bar");
         {
-            var bar_cursor = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            var bar_cursor = try root_cursor.writePath(void, &.{
                 .array_list_init,
                 .{ .array_list_get = .append_copy },
                 .hash_map_init,
@@ -468,7 +468,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             try bar_cursor.writeBytes("foo", .once);
             // writing again with .once returns the same slot
             {
-                var next_bar_cursor = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+                var next_bar_cursor = try root_cursor.writePath(void, &.{
                     .array_list_init,
                     .{ .array_list_get = .append_copy },
                     .hash_map_init,
@@ -479,7 +479,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             }
             // writing again with .replace returns a new slot
             {
-                var next_bar_cursor = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+                var next_bar_cursor = try root_cursor.writePath(void, &.{
                     .array_list_init,
                     .{ .array_list_get = .append_copy },
                     .hash_map_init,
@@ -492,7 +492,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
 
         // read bar
         {
-            const foo_cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const foo_cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = bar_key } },
             })).?;
@@ -522,7 +522,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             }) catch {};
 
             // read foo
-            const value_cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const value_cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = foo_key } },
             })).?;
@@ -533,7 +533,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
 
         // read foo into stack-allocated buffer
         {
-            const bar_cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const bar_cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = foo_key } },
             })).?;
@@ -543,7 +543,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         }
 
         // write bar and get pointer to it
-        const bar_slot = (try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        const bar_slot = (try root_cursor.writePath(void, &.{
             .array_list_init,
             .{ .array_list_get = .append_copy },
             .hash_map_init,
@@ -552,14 +552,14 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         })).slot_ptr.slot;
 
         // overwrite foo -> bar using the bar pointer
-        _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        _ = try root_cursor.writePath(void, &.{
             .array_list_init,
             .{ .array_list_get = .append_copy },
             .hash_map_init,
             .{ .hash_map_get = .{ .value = foo_key } },
             .{ .write = .{ .slot = bar_slot } },
         });
-        const baz_cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        const baz_cursor = (try root_cursor.readPath(void, &.{
             .{ .array_list_get = .{ .index = -1 } },
             .{ .hash_map_get = .{ .value = foo_key } },
         })).?;
@@ -568,7 +568,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         try std.testing.expectEqualStrings("bar", baz_value);
 
         // can still read the old value
-        const baz_cursor2 = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        const baz_cursor2 = (try root_cursor.readPath(void, &.{
             .{ .array_list_get = .{ .index = -2 } },
             .{ .hash_map_get = .{ .value = foo_key } },
         })).?;
@@ -578,7 +578,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
 
         // key not found
         const not_found_key = hashBuffer("this doesn't exist");
-        try std.testing.expectEqual(null, try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        try std.testing.expectEqual(null, try root_cursor.readPath(void, &.{
             .{ .array_list_get = .{ .index = -1 } },
             .{ .hash_map_get = .{ .value = not_found_key } },
         }));
@@ -586,7 +586,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         // write key that conflicts with foo
         var conflict_key = hashBuffer("conflict");
         conflict_key = (conflict_key & ~xitdb.MASK) | (foo_key & xitdb.MASK);
-        _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        _ = try root_cursor.writePath(void, &.{
             .array_list_init,
             .{ .array_list_get = .append_copy },
             .hash_map_init,
@@ -595,7 +595,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         });
 
         // read conflicting key
-        const hello_cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        const hello_cursor = (try root_cursor.readPath(void, &.{
             .{ .array_list_get = .{ .index = -1 } },
             .{ .hash_map_get = .{ .value = conflict_key } },
         })).?;
@@ -604,7 +604,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         try std.testing.expectEqualStrings("hello", hello_value);
 
         // we can still read foo
-        const bar_cursor2 = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        const bar_cursor2 = (try root_cursor.readPath(void, &.{
             .{ .array_list_get = .{ .index = -1 } },
             .{ .hash_map_get = .{ .value = foo_key } },
         })).?;
@@ -613,14 +613,14 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         try std.testing.expectEqualStrings("bar", bar_value2);
 
         // overwrite conflicting key
-        _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        _ = try root_cursor.writePath(void, &.{
             .array_list_init,
             .{ .array_list_get = .append_copy },
             .hash_map_init,
             .{ .hash_map_get = .{ .value = conflict_key } },
             .{ .write = .{ .bytes = "goodbye" } },
         });
-        const goodbye_cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        const goodbye_cursor = (try root_cursor.readPath(void, &.{
             .{ .array_list_get = .{ .index = -1 } },
             .{ .hash_map_get = .{ .value = conflict_key } },
         })).?;
@@ -629,7 +629,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         try std.testing.expectEqualStrings("goodbye", goodbye_value);
 
         // we can still read the old conflicting key
-        const hello_cursor2 = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        const hello_cursor2 = (try root_cursor.readPath(void, &.{
             .{ .array_list_get = .{ .index = -2 } },
             .{ .hash_map_get = .{ .value = conflict_key } },
         })).?;
@@ -639,7 +639,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
 
         {
             // overwrite foo with a uint
-            _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try root_cursor.writePath(void, &.{
                 .array_list_init,
                 .{ .array_list_get = .append_copy },
                 .hash_map_init,
@@ -648,7 +648,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             });
 
             // read foo
-            const uint_value = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const uint_value = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = foo_key } },
             })).?.readUint();
@@ -657,7 +657,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
 
         {
             // overwrite foo with an int
-            _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try root_cursor.writePath(void, &.{
                 .array_list_init,
                 .{ .array_list_get = .append_copy },
                 .hash_map_init,
@@ -666,7 +666,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             });
 
             // read foo
-            const int_value = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const int_value = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = foo_key } },
             })).?.readInt();
@@ -675,7 +675,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
 
         {
             // overwrite foo with a float
-            _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try root_cursor.writePath(void, &.{
                 .array_list_init,
                 .{ .array_list_get = .append_copy },
                 .hash_map_init,
@@ -684,7 +684,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             });
 
             // read foo
-            const float_value = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const float_value = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = foo_key } },
             })).?.readFloat();
@@ -692,7 +692,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         }
 
         // remove foo
-        const foo_cursor = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        const foo_cursor = try root_cursor.writePath(void, &.{
             .array_list_init,
             .{ .array_list_get = .append_copy },
             .hash_map_init,
@@ -701,7 +701,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         try std.testing.expect(foo_cursor.slot_ptr.position != null);
 
         // remove key that does not exist
-        const empty_cursor = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        const empty_cursor = try root_cursor.writePath(void, &.{
             .array_list_init,
             .{ .array_list_get = .append_copy },
             .hash_map_init,
@@ -710,7 +710,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         try std.testing.expect(empty_cursor.slot_ptr.position == null);
 
         // read foo
-        try std.testing.expectEqual(null, try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        try std.testing.expectEqual(null, try root_cursor.readPath(void, &.{
             .{ .array_list_get = .{ .index = -1 } },
             .{ .hash_map_get = .{ .value = foo_key } },
         }));
@@ -718,7 +718,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         // non-top-level list
         {
             // write apple
-            _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try root_cursor.writePath(void, &.{
                 .array_list_init,
                 .{ .array_list_get = .append_copy },
                 .hash_map_init,
@@ -729,7 +729,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             });
 
             // read apple
-            const apple_cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const apple_cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = hashBuffer("fruits") } },
                 .{ .array_list_get = .{ .index = -1 } },
@@ -739,7 +739,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             try std.testing.expectEqualStrings("apple", apple_value);
 
             // write banana
-            _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try root_cursor.writePath(void, &.{
                 .array_list_init,
                 .{ .array_list_get = .append_copy },
                 .hash_map_init,
@@ -750,7 +750,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             });
 
             // read banana
-            const banana_cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const banana_cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = hashBuffer("fruits") } },
                 .{ .array_list_get = .{ .index = -1 } },
@@ -760,14 +760,14 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             try std.testing.expectEqualStrings("banana", banana_value);
 
             // can't read banana in older array_list
-            try std.testing.expectEqual(null, try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            try std.testing.expectEqual(null, try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -2 } },
                 .{ .hash_map_get = .{ .value = hashBuffer("fruits") } },
                 .{ .array_list_get = .{ .index = 1 } },
             }));
 
             // write pear
-            _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try root_cursor.writePath(void, &.{
                 .array_list_init,
                 .{ .array_list_get = .append_copy },
                 .hash_map_init,
@@ -778,7 +778,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             });
 
             // write grape
-            _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try root_cursor.writePath(void, &.{
                 .array_list_init,
                 .{ .array_list_get = .append_copy },
                 .hash_map_init,
@@ -789,7 +789,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             });
 
             // read pear
-            const pear_cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const pear_cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = hashBuffer("fruits") } },
                 .{ .array_list_get = .{ .index = -2 } },
@@ -799,7 +799,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             try std.testing.expectEqualStrings("pear", pear_value);
 
             // read grape
-            const grape_cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const grape_cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = hashBuffer("fruits") } },
                 .{ .array_list_get = .{ .index = -1 } },
@@ -820,7 +820,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         for (0..xitdb.SLOT_COUNT + 1) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
-            _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try root_cursor.writePath(void, &.{
                 .array_list_init,
                 .{ .array_list_get = .append_copy },
                 .hash_map_init,
@@ -832,7 +832,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         for (0..xitdb.SLOT_COUNT + 1) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
-            const cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = i } },
                 .{ .hash_map_get = .{ .value = wat_key } },
             })).?;
@@ -851,7 +851,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         for (0..xitdb.SLOT_COUNT + 1) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
-            _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try root_cursor.writePath(void, &.{
                 .array_list_init,
                 .{ .array_list_get = .append_copy },
                 .array_list_init,
@@ -863,7 +863,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         for (0..xitdb.SLOT_COUNT + 1) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
-            const cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .array_list_get = .{ .index = i } },
             })).?;
@@ -873,7 +873,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         }
 
         // overwrite last value with hello
-        _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        _ = try root_cursor.writePath(void, &.{
             .array_list_init,
             .{ .array_list_get = .append_copy },
             .array_list_init,
@@ -883,7 +883,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
 
         // read last value
         {
-            const cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .array_list_get = .{ .index = -1 } },
             })).?;
@@ -893,7 +893,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         }
 
         // overwrite last value with goodbye
-        _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        _ = try root_cursor.writePath(void, &.{
             .array_list_init,
             .{ .array_list_get = .append_copy },
             .array_list_init,
@@ -903,7 +903,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
 
         // read last value
         {
-            const cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .array_list_get = .{ .index = -1 } },
             })).?;
@@ -914,7 +914,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
 
         // previous last value is still hello
         {
-            const cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -2 } },
                 .{ .array_list_get = .{ .index = -1 } },
             })).?;
@@ -934,7 +934,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         for (0..10) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
-            _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try root_cursor.writePath(void, &.{
                 .array_list_init,
                 .{ .array_list_get = .append_copy },
                 .array_list_init,
@@ -942,7 +942,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                 .{ .write = .{ .bytes = value } },
             });
 
-            const cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .array_list_get = .{ .index = -1 } },
             })).?;
@@ -952,7 +952,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         }
 
         // iterate over array_list
-        var inner_cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        var inner_cursor = (try root_cursor.readPath(void, &.{
             .{ .array_list_get = .{ .index = -1 } },
         })).?;
         var iter = try inner_cursor.iter();
@@ -969,7 +969,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         try std.testing.expectEqual(10, i);
 
         // get list slot
-        const list_cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        const list_cursor = (try root_cursor.readPath(void, &.{
             .{ .array_list_get = .{ .index = -1 } },
         })).?;
         try std.testing.expectEqual(10, list_cursor.count());
@@ -986,7 +986,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
             const wat_key = hashBuffer(value);
-            _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try root_cursor.writePath(void, &.{
                 .array_list_init,
                 .{ .array_list_get = .append_copy },
                 .hash_map_init,
@@ -994,7 +994,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                 .{ .write = .{ .bytes = value } },
             });
 
-            const cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            const cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = wat_key } },
             })).?;
@@ -1005,14 +1005,14 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
 
         // add foo
         const foo_key = hashBuffer("foo");
-        _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        _ = try root_cursor.writePath(void, &.{
             .array_list_init,
             .{ .array_list_get = .append_copy },
             .hash_map_init,
             .{ .hash_map_get = .{ .key = foo_key } },
             .{ .write = .{ .bytes = "foo" } },
         });
-        _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        _ = try root_cursor.writePath(void, &.{
             .array_list_init,
             .{ .array_list_get = .append_copy },
             .hash_map_init,
@@ -1021,7 +1021,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         });
 
         // remove a wat
-        _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        _ = try root_cursor.writePath(void, &.{
             .array_list_init,
             .{ .array_list_get = .append_copy },
             .hash_map_init,
@@ -1029,7 +1029,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         });
 
         // iterate over hash_map
-        var inner_cursor = (try root_cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+        var inner_cursor = (try root_cursor.readPath(void, &.{
             .{ .array_list_get = .{ .index = -1 } },
         })).?;
         var iter = try inner_cursor.iter();
@@ -1087,7 +1087,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                 for (0..xitdb.SLOT_COUNT + 1) |i| {
                     const n = i * 2;
                     try values.append(n);
-                    _ = try cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+                    _ = try cursor.writePath(void, &.{
                         .{ .hash_map_get = .{ .value = hashBuffer("even") } },
                         .linked_array_list_init,
                         .{ .linked_array_list_get = .append },
@@ -1096,13 +1096,13 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                 }
 
                 // get list slot
-                const even_list_cursor = (try cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+                const even_list_cursor = (try cursor.readPath(void, &.{
                     .{ .hash_map_get = .{ .value = hashBuffer("even") } },
                 })).?;
                 try std.testing.expectEqual(xitdb.SLOT_COUNT + 1, even_list_cursor.count());
 
                 // iterate over list
-                var inner_cursor = (try cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+                var inner_cursor = (try cursor.readPath(void, &.{
                     .{ .hash_map_get = .{ .value = hashBuffer("even") } },
                 })).?;
                 var iter = try inner_cursor.iter();
@@ -1123,27 +1123,27 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                 }
 
                 // save the new list
-                _ = try cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+                _ = try cursor.writePath(void, &.{
                     .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
                     .{ .write = .{ .slot = combo_list_cursor.slot_ptr.slot } },
                 });
 
                 // append to the new list
-                _ = try cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+                _ = try cursor.writePath(void, &.{
                     .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
                     .{ .linked_array_list_get = .append },
                     .{ .write = .{ .uint = 3 } },
                 });
 
                 // read the new value from the list
-                try std.testing.expectEqual(3, (try cursor.readPath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+                try std.testing.expectEqual(3, (try cursor.readPath(void, &.{
                     .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
                     .{ .linked_array_list_get = .{ .index = -1 } },
                 })).?.slot_ptr.slot.value);
 
                 // append more to the new list
                 for (0..500) |_| {
-                    _ = try cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+                    _ = try cursor.writePath(void, &.{
                         .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
                         .{ .linked_array_list_get = .append },
                         .{ .write = .{ .uint = 1 } },
@@ -1167,7 +1167,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
 
         // appending without setting any value should work
         for (0..8) |_| {
-            _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try root_cursor.writePath(void, &.{
                 .array_list_init,
                 .{ .array_list_get = .append_copy },
                 .linked_array_list_init,
@@ -1177,7 +1177,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
 
         // explicitly writing .none should also work
         for (0..8) |_| {
-            _ = try root_cursor.writePath(void, &[_]xitdb.Database(db_kind, Hash).PathPart(void){
+            _ = try root_cursor.writePath(void, &.{
                 .array_list_init,
                 .{ .array_list_get = .append_copy },
                 .linked_array_list_init,
