@@ -1,5 +1,12 @@
 xitdb is an embedded, immutable database written in Zig.
 
+* Each transaction efficiently creates a new "copy" of the database, and past copies can still be read from.
+* It supports writing to a file as well as purely in-memory use.
+* No query engine of any kind. You just write data structures (primarily an `ArrayList` and `HashMap`) that can be nested arbitrarily.
+* No dependencies besides the Zig standard library.
+
+What is this for? I don't know, really. Help me figure that out. In theory it can work in the same use cases as SQLite, I suppose. Obviously, xitdb isn't very stable right now, and the API below will probably change a lot. There is a lower-level API that I'm not even going to mention here; see the tests if you're curious.
+
 ```zig
 // create db file
 const file = try std.fs.cwd().createFile("main.db", .{ .exclusive = true, .lock = .exclusive, .read = true });
@@ -17,7 +24,7 @@ const list = try DB.ArrayList.init(db.rootCursor());
 // which grabs the most recent copy of the db and appends it to the list.
 // then, in the context below, we interpret it as a HashMap
 // and add a bunch of data to it. after this transaction, the db will
-// look like this:
+// look like this if represented as JSON (in reality the format is binary):
 //
 // {"foo": "foo",
 //  "bar": "bar",
