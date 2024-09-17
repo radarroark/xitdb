@@ -39,7 +39,6 @@ const Ctx = struct {
 
         try map.putValue(hashBuffer("foo"), .{ .bytes = "foo" });
         try map.putValue(hashBuffer("bar"), .{ .bytes = "bar" });
-        try map.remove(hashBuffer("bar"));
 
         const fruits_cursor = try map.put(hashBuffer("fruits"));
         const fruits = try DB.ArrayList.init(fruits_cursor);
