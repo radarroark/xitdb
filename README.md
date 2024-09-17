@@ -5,7 +5,7 @@ xitdb is an embedded, immutable database written in Zig.
 * No query engine of any kind. You just write data structures (primarily an `ArrayList` and `HashMap`) that can be nested arbitrarily.
 * No dependencies besides the Zig standard library.
 
-What is this for? I don't know, really. Help me figure that out. In theory it can work in the same use cases as SQLite, I suppose. Obviously, xitdb isn't very stable right now, and the API below will probably change a lot. There is a lower-level API that I'm not even going to mention here; see the tests if you're curious.
+What is this for? I don't know, really. Help me figure that out. In theory it can work in the same use cases as SQLite, I suppose. The high-level API below will probably change a lot. There is a lower-level API that I'm not even going to mention here; see the tests if you're curious.
 
 ```zig
 // create db file
@@ -71,9 +71,9 @@ const map = try DB.HashMap.init(map_cursor);
 // we can read the value of "foo" from the map by getting
 // the cursor to "foo" and then calling readBytesAlloc on it
 const foo_cursor = (try map.get(hashBuffer("foo"))).?;
-const value = try foo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
-defer allocator.free(value);
-try std.testing.expectEqualStrings("foo", value);
+const foo_value = try foo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+defer allocator.free(foo_value);
+try std.testing.expectEqualStrings("foo", foo_value);
 
 // to get the "fruits" list, we get the cursor to it and
 // then call pass it to the ArrayList.init method
