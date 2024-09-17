@@ -30,27 +30,28 @@ const Ctx = struct {
     pub fn run(_: @This(), cursor: *DB.Cursor) !void {
         const map = try DB.HashMap.init(cursor.*);
 
-        try map.put(hashBuffer("foo"), .{ .bytes = "foo" });
-        try map.put(hashBuffer("bar"), .{ .bytes = "bar" });
+        try map.putValue(hashBuffer("foo"), .{ .bytes = "foo" });
+        try map.putValue(hashBuffer("bar"), .{ .bytes = "bar" });
+        try map.remove(hashBuffer("bar"));
 
-        const fruits_cursor = try map.putCursor(hashBuffer("fruits"));
+        const fruits_cursor = try map.put(hashBuffer("fruits"));
         const fruits = try DB.ArrayList.init(fruits_cursor);
-        try fruits.append(.{ .bytes = "apple" });
-        try fruits.append(.{ .bytes = "pear" });
-        try fruits.append(.{ .bytes = "grape" });
+        try fruits.appendValue(.{ .bytes = "apple" });
+        try fruits.appendValue(.{ .bytes = "pear" });
+        try fruits.appendValue(.{ .bytes = "grape" });
 
-        const people_cursor = try map.putCursor(hashBuffer("people"));
+        const people_cursor = try map.put(hashBuffer("people"));
         const people = try DB.ArrayList.init(people_cursor);
 
-        const alice_cursor = try people.appendCursor();
+        const alice_cursor = try people.append();
         const alice = try DB.HashMap.init(alice_cursor);
-        try alice.put(hashBuffer("name"), .{ .bytes = "Alice" });
-        try alice.put(hashBuffer("age"), .{ .uint = 25 });
+        try alice.putValue(hashBuffer("name"), .{ .bytes = "Alice" });
+        try alice.putValue(hashBuffer("age"), .{ .uint = 25 });
 
-        const bob_cursor = try people.appendCursor();
+        const bob_cursor = try people.append();
         const bob = try DB.HashMap.init(bob_cursor);
-        try bob.put(hashBuffer("name"), .{ .bytes = "Bob" });
-        try bob.put(hashBuffer("age"), .{ .uint = 42 });
+        try bob.putValue(hashBuffer("name"), .{ .bytes = "Bob" });
+        try bob.putValue(hashBuffer("age"), .{ .uint = 42 });
     }
 };
 try list.appendCopy(Ctx, Ctx{});

@@ -2205,14 +2205,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 });
             }
 
-            pub fn put(self: HashMap, hash: Hash, value: WriteableValue) !void {
+            pub fn putValue(self: HashMap, hash: Hash, value: WriteableValue) !void {
                 _ = try self.cursor.writePath(void, &.{
                     .{ .hash_map_get = .{ .value = hash } },
                     .{ .write = value },
                 });
             }
 
-            pub fn putCursor(self: HashMap, hash: Hash) !Cursor {
+            pub fn put(self: HashMap, hash: Hash) !Cursor {
                 return try self.cursor.writePath(void, &.{
                     .{ .hash_map_get = .{ .value = hash } },
                 });
@@ -2245,14 +2245,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 });
             }
 
-            pub fn append(self: ArrayList, value: WriteableValue) !void {
+            pub fn appendValue(self: ArrayList, value: WriteableValue) !void {
                 _ = try self.cursor.writePath(void, &.{
                     .{ .array_list_get = .append },
                     .{ .write = value },
                 });
             }
 
-            pub fn appendCursor(self: ArrayList) !Cursor {
+            pub fn append(self: ArrayList) !Cursor {
                 return try self.cursor.writePath(void, &.{
                     .{ .array_list_get = .append },
                 });
