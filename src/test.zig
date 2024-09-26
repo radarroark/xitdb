@@ -1,5 +1,5 @@
 const std = @import("std");
-const xitdb = @import("./lib.zig");
+const xitdb = @import("xitdb");
 
 const Hash = u160;
 const MAX_READ_BYTES = 1024;
