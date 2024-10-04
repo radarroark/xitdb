@@ -2205,16 +2205,16 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
+                pub fn put(self: HashMap(.read_write), hash: Hash) !Cursor(.read_write) {
+                    return try self.cursor.writePath(void, &.{
+                        .{ .hash_map_get = .{ .value = hash } },
+                    });
+                }
+
                 pub fn putValue(self: HashMap(.read_write), hash: Hash, value: WriteableValue) !void {
                     _ = try self.cursor.writePath(void, &.{
                         .{ .hash_map_get = .{ .value = hash } },
                         .{ .write = value },
-                    });
-                }
-
-                pub fn put(self: HashMap(.read_write), hash: Hash) !Cursor(.read_write) {
-                    return try self.cursor.writePath(void, &.{
-                        .{ .hash_map_get = .{ .value = hash } },
                     });
                 }
 
@@ -2256,6 +2256,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
+                pub fn append(self: ArrayList(.read_write)) !Cursor(.read_write) {
+                    return try self.cursor.writePath(void, &.{
+                        .{ .array_list_get = .append },
+                    });
+                }
+
                 pub fn appendValue(self: ArrayList(.read_write), value: WriteableValue) !void {
                     _ = try self.cursor.writePath(void, &.{
                         .{ .array_list_get = .append },
@@ -2263,13 +2269,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
-                pub fn append(self: ArrayList(.read_write)) !Cursor(.read_write) {
-                    return try self.cursor.writePath(void, &.{
-                        .{ .array_list_get = .append },
-                    });
-                }
-
-                pub fn appendContext(self: ArrayList(.read_write), value: WriteableValue, comptime Ctx: type, ctx: Ctx) !void {
+                pub fn appendValueContext(self: ArrayList(.read_write), value: WriteableValue, comptime Ctx: type, ctx: Ctx) !void {
                     const InternalCtx = struct {
                         ctx: Ctx,
 
