@@ -193,7 +193,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
             })).?.slot_ptr.slot.value);
         }
     };
-    _ = try root_cursor.writePath(Ctx, &[_]xitdb.Database(db_kind, Hash).PathPart(Ctx){
+    _ = try root_cursor.writePath(Ctx, &.{
         .array_list_init,
         .{ .array_list_get = .append },
         .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = .{ .index = -1 } }}) } },
@@ -279,7 +279,7 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
             }));
         }
     };
-    _ = try root_cursor.writePath(Ctx, &[_]xitdb.Database(db_kind, Hash).PathPart(Ctx){
+    _ = try root_cursor.writePath(Ctx, &.{
         .array_list_init,
         .{ .array_list_get = .append },
         .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = .{ .index = -1 } }}) } },
@@ -347,7 +347,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                     try writer.finish();
                 }
             };
-            _ = try root_cursor.writePath(Ctx, &[_]xitdb.Database(db_kind, Hash).PathPart(Ctx){
+            _ = try root_cursor.writePath(Ctx, &.{
                 .array_list_init,
                 .{ .array_list_get = .append },
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = .{ .index = -1 } }}) } },
@@ -419,7 +419,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                     }
                 }
             };
-            _ = try root_cursor.writePath(Ctx, &[_]xitdb.Database(db_kind, Hash).PathPart(Ctx){
+            _ = try root_cursor.writePath(Ctx, &.{
                 .array_list_init,
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = foo_key } },
@@ -452,7 +452,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                     try std.testing.expectEqualStrings("baz", value);
                 }
             };
-            _ = try root_cursor.writePath(Ctx, &[_]xitdb.Database(db_kind, Hash).PathPart(Ctx){
+            _ = try root_cursor.writePath(Ctx, &.{
                 .array_list_init,
                 .{ .array_list_get = .append },
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = .{ .index = -1 } }}) } },
@@ -522,7 +522,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                     return error.NotImplemented;
                 }
             };
-            _ = root_cursor.writePath(Ctx, &[_]xitdb.Database(db_kind, Hash).PathPart(Ctx){
+            _ = root_cursor.writePath(Ctx, &.{
                 .array_list_init,
                 .{ .array_list_get = .append },
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = .{ .index = -1 } }}) } },
@@ -1183,7 +1183,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                 }
             }
         };
-        _ = try root_cursor.writePath(Ctx, &[_]xitdb.Database(db_kind, Hash).PathPart(Ctx){
+        _ = try root_cursor.writePath(Ctx, &.{
             .array_list_init,
             .{ .array_list_get = .append },
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = .{ .index = -1 } }}) } },
