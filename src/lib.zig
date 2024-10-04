@@ -1474,7 +1474,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     }
                 };
 
-                pub fn readOnly(self: Cursor(write_mode)) Cursor(.read_only) {
+                pub fn readOnly(self: Cursor(.read_write)) Cursor(.read_only) {
                     return .{
                         .slot_ptr = self.slot_ptr,
                         .db = self.db,
@@ -2225,7 +2225,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
-                pub fn put(self: HashMap(.read_write), hash: Hash) !Cursor(write_mode) {
+                pub fn put(self: HashMap(.read_write), hash: Hash) !Cursor(.read_write) {
                     return try self.cursor.writePath(void, &.{
                         .{ .hash_map_get = .{ .value = hash } },
                     });
@@ -2270,7 +2270,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
-                pub fn append(self: ArrayList(.read_write)) !Cursor(write_mode) {
+                pub fn append(self: ArrayList(.read_write)) !Cursor(.read_write) {
                     return try self.cursor.writePath(void, &.{
                         .{ .array_list_get = .append },
                     });
