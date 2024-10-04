@@ -417,7 +417,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             return header;
         }
 
-        fn readSlot(self: *Database(db_kind, Hash), write_mode: WriteMode, comptime Ctx: type, path: []const PathPart(Ctx), slot_ptr: SlotPointer) anyerror!SlotPointer {
+        fn readSlot(self: *Database(db_kind, Hash), comptime write_mode: WriteMode, comptime Ctx: type, path: []const PathPart(Ctx), slot_ptr: SlotPointer) anyerror!SlotPointer {
             const internal_write_mode: InternalWriteMode = switch (write_mode) {
                 .read_write => if (slot_ptr.slot.value == DATABASE_START) .read_write else .read_write_immutable,
                 .read_only => .read_only,
@@ -443,7 +443,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
             switch (part) {
                 .array_list_init => {
-                    if (internal_write_mode == .read_only) return error.WriteNotAllowed;
+                    if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     if (slot_ptr.slot.value == DATABASE_START) {
                         const writer = self.core.writer();
@@ -552,7 +552,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             return try self.readSlot(write_mode, Ctx, path[1..], final_slot_ptr);
                         },
                         .append => {
-                            if (internal_write_mode == .read_only) return error.WriteNotAllowed;
+                            if (write_mode == .read_only) return error.WriteNotAllowed;
 
                             const append_result = try self.readArrayListSlotAppend(next_array_list_start, internal_write_mode);
                             const final_slot_ptr = try self.readSlot(write_mode, Ctx, path[1..], append_result.slot_ptr);
@@ -565,7 +565,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             return final_slot_ptr;
                         },
                         .append_copy => {
-                            if (internal_write_mode == .read_only) return error.WriteNotAllowed;
+                            if (write_mode == .read_only) return error.WriteNotAllowed;
 
                             const reader = self.core.reader();
                             const writer = self.core.writer();
@@ -600,7 +600,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     }
                 },
                 .linked_array_list_init => {
-                    if (internal_write_mode == .read_only) return error.WriteNotAllowed;
+                    if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     if (slot_ptr.slot.value == DATABASE_START) return error.RootTypeMustBeArrayList;
 
@@ -683,7 +683,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             return try self.readSlot(write_mode, Ctx, path[1..], final_slot_ptr.slot_ptr);
                         },
                         .append => {
-                            if (internal_write_mode == .read_only) return error.WriteNotAllowed;
+                            if (write_mode == .read_only) return error.WriteNotAllowed;
 
                             const append_result = try self.readLinkedArrayListSlotAppend(next_array_list_start, internal_write_mode);
                             const final_slot_ptr = try self.readSlot(write_mode, Ctx, path[1..], append_result.slot_ptr.slot_ptr);
@@ -698,7 +698,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     }
                 },
                 .hash_map_init => {
-                    if (internal_write_mode == .read_only) return error.WriteNotAllowed;
+                    if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     if (slot_ptr.slot.value == DATABASE_START) return error.RootTypeMustBeArrayList;
 
@@ -761,7 +761,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     return self.readSlot(write_mode, Ctx, path[1..], next_slot_ptr);
                 },
                 .hash_map_remove => {
-                    if (internal_write_mode == .read_only) return error.WriteNotAllowed;
+                    if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     if (path.len > 1) return error.PathPartMustBeAtEnd;
 
@@ -788,7 +788,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     return next_slot_ptr;
                 },
                 .write => {
-                    if (internal_write_mode == .read_only) return error.WriteNotAllowed;
+                    if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     const position = slot_ptr.position orelse return error.CursorNotWriteable;
 
@@ -820,7 +820,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     return self.readSlot(write_mode, Ctx, path[1..], next_slot_ptr);
                 },
                 .ctx => {
-                    if (internal_write_mode == .read_only) return error.WriteNotAllowed;
+                    if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     if (path.len > 1) return error.PathPartMustBeAtEnd;
 
