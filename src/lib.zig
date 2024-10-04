@@ -312,7 +312,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 array_list_get: union(enum) {
                     index: i65,
                     append,
-                    append_copy,
                 },
                 linked_array_list_init,
                 linked_array_list_get: union(enum) {
@@ -559,39 +558,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                             // update header
                             const writer = self.core.writer();
-                            try self.core.seekTo(next_array_list_start);
-                            try writer.writeInt(ArrayListHeaderInt, @bitCast(append_result.header), .big);
-
-                            return final_slot_ptr;
-                        },
-                        .append_copy => {
-                            if (write_mode == .read_only) return error.WriteNotAllowed;
-
-                            const reader = self.core.reader();
-                            const writer = self.core.writer();
-
-                            try self.core.seekTo(next_array_list_start);
-                            const header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
-                            // read the last slot in the list
-                            var last_slot: Slot = .{};
-                            if (header.size > 0) {
-                                const last_key = header.size - 1;
-                                const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
-                                const last_slot_ptr = try self.readArrayListSlot(header.ptr, last_key, shift, .read_only);
-                                last_slot = last_slot_ptr.slot;
-                            }
-
-                            // make the next slot
-                            var append_result = try self.readArrayListSlotAppend(next_array_list_start, internal_write_mode);
-                            // set its value to the last slot
-                            if (last_slot.tag != .none) {
-                                const position = append_result.slot_ptr.position orelse return error.CursorNotWriteable;
-                                try self.core.seekTo(position);
-                                try writer.writeInt(SlotInt, @bitCast(last_slot), .big);
-                                append_result.slot_ptr.slot = last_slot;
-                            }
-                            const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], append_result.slot_ptr);
-                            // update header
                             try self.core.seekTo(next_array_list_start);
                             try writer.writeInt(ArrayListHeaderInt, @bitCast(append_result.header), .big);
 
@@ -1499,6 +1465,20 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     };
                 }
 
+                pub fn readPathSlot(self: Cursor(write_mode), comptime Ctx: type, path: []const PathPart(Ctx)) !?Slot {
+                    const slot_ptr = self.db.readSlotPointer(.read_only, Ctx, path, self.slot_ptr) catch |err| {
+                        switch (err) {
+                            error.KeyNotFound => return null,
+                            else => return err,
+                        }
+                    };
+                    if (slot_ptr.slot.tag == .none) {
+                        return null;
+                    } else {
+                        return slot_ptr.slot;
+                    }
+                }
+
                 pub fn writePath(self: Cursor(.read_write), comptime Ctx: type, path: []const PathPart(Ctx)) !Cursor(.read_write) {
                     const slot_ptr = try self.db.readSlotPointer(.read_write, Ctx, path, self.slot_ptr);
                     return .{
@@ -2271,13 +2251,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 }
 
                 pub fn getSlot(self: ArrayList(write_mode), index: i65) !?Slot {
-                    if (try self.cursor.readPath(void, &.{
+                    return try self.cursor.readPathSlot(void, &.{
                         .{ .array_list_get = .{ .index = index } },
-                    })) |cursor| {
-                        return cursor.slot();
-                    } else {
-                        return null;
-                    }
+                    });
                 }
 
                 pub fn appendValue(self: ArrayList(.read_write), value: WriteableValue) !void {
