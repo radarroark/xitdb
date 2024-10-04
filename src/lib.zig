@@ -417,7 +417,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             return header;
         }
 
-        fn readSlot(self: *Database(db_kind, Hash), comptime write_mode: WriteMode, comptime Ctx: type, path: []const PathPart(Ctx), slot_ptr: SlotPointer) anyerror!SlotPointer {
+        fn readSlotPointer(self: *Database(db_kind, Hash), comptime write_mode: WriteMode, comptime Ctx: type, path: []const PathPart(Ctx), slot_ptr: SlotPointer) anyerror!SlotPointer {
             const internal_write_mode: InternalWriteMode = switch (write_mode) {
                 .read_write => if (slot_ptr.slot.value == DATABASE_START) .read_write else .read_write_immutable,
                 .read_only => .read_only,
@@ -469,7 +469,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                         var next_slot_ptr = slot_ptr;
                         next_slot_ptr.slot.tag = .array_list;
-                        return self.readSlot(write_mode, Ctx, path[1..], next_slot_ptr);
+                        return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                     }
 
                     const position = slot_ptr.position orelse return error.CursorNotWriteable;
@@ -490,7 +490,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = array_list_start, .tag = .array_list } };
                         try self.core.seekTo(position);
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
-                        return self.readSlot(write_mode, Ctx, path[1..], next_slot_ptr);
+                        return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                     } else {
                         if (slot_ptr.slot.tag != .array_list) {
                             return error.UnexpectedTag;
@@ -522,7 +522,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = array_list_start, .tag = .array_list } };
                         try self.core.seekTo(position);
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
-                        return self.readSlot(write_mode, Ctx, path[1..], next_slot_ptr);
+                        return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                     }
                 },
                 .array_list_get => {
@@ -549,13 +549,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             const last_key = header.size - 1;
                             const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
                             const final_slot_ptr = try self.readArrayListSlot(header.ptr, key, shift, internal_write_mode);
-                            return try self.readSlot(write_mode, Ctx, path[1..], final_slot_ptr);
+                            return try self.readSlotPointer(write_mode, Ctx, path[1..], final_slot_ptr);
                         },
                         .append => {
                             if (write_mode == .read_only) return error.WriteNotAllowed;
 
                             const append_result = try self.readArrayListSlotAppend(next_array_list_start, internal_write_mode);
-                            const final_slot_ptr = try self.readSlot(write_mode, Ctx, path[1..], append_result.slot_ptr);
+                            const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], append_result.slot_ptr);
 
                             // update header
                             const writer = self.core.writer();
@@ -590,7 +590,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                                 try writer.writeInt(SlotInt, @bitCast(last_slot), .big);
                                 append_result.slot_ptr.slot = last_slot;
                             }
-                            const final_slot_ptr = try self.readSlot(write_mode, Ctx, path[1..], append_result.slot_ptr);
+                            const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], append_result.slot_ptr);
                             // update header
                             try self.core.seekTo(next_array_list_start);
                             try writer.writeInt(ArrayListHeaderInt, @bitCast(append_result.header), .big);
@@ -623,7 +623,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = array_list_start, .tag = .linked_array_list } };
                         try self.core.seekTo(position);
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
-                        return self.readSlot(write_mode, Ctx, path[1..], next_slot_ptr);
+                        return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                     } else {
                         if (slot_ptr.slot.tag != .linked_array_list) {
                             return error.UnexpectedTag;
@@ -655,7 +655,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = array_list_start, .tag = .linked_array_list } };
                         try self.core.seekTo(position);
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
-                        return self.readSlot(write_mode, Ctx, path[1..], next_slot_ptr);
+                        return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                     }
                 },
                 .linked_array_list_get => {
@@ -680,13 +680,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             else
                                 @intCast(index);
                             const final_slot_ptr = try self.readLinkedArrayListSlot(header.ptr, key, header.shift, internal_write_mode);
-                            return try self.readSlot(write_mode, Ctx, path[1..], final_slot_ptr.slot_ptr);
+                            return try self.readSlotPointer(write_mode, Ctx, path[1..], final_slot_ptr.slot_ptr);
                         },
                         .append => {
                             if (write_mode == .read_only) return error.WriteNotAllowed;
 
                             const append_result = try self.readLinkedArrayListSlotAppend(next_array_list_start, internal_write_mode);
-                            const final_slot_ptr = try self.readSlot(write_mode, Ctx, path[1..], append_result.slot_ptr.slot_ptr);
+                            const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], append_result.slot_ptr.slot_ptr);
 
                             // update header
                             const writer = self.core.writer();
@@ -715,7 +715,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = map_start, .tag = .hash_map } };
                         try self.core.seekTo(position);
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
-                        return self.readSlot(write_mode, Ctx, path[1..], next_slot_ptr);
+                        return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                     } else {
                         if (slot_ptr.slot.tag != .hash_map) {
                             return error.UnexpectedTag;
@@ -742,7 +742,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = map_start, .tag = .hash_map } };
                         try self.core.seekTo(position);
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
-                        return self.readSlot(write_mode, Ctx, path[1..], next_slot_ptr);
+                        return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                     }
                 },
                 .hash_map_get => {
@@ -758,7 +758,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         .key => try self.readMapSlot(next_map_start, part.hash_map_get.key, 0, internal_write_mode, .key),
                         .value => try self.readMapSlot(next_map_start, part.hash_map_get.value, 0, internal_write_mode, .value),
                     };
-                    return self.readSlot(write_mode, Ctx, path[1..], next_slot_ptr);
+                    return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                 },
                 .hash_map_remove => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
@@ -817,7 +817,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     try core_writer.writeInt(SlotInt, @bitCast(slot), .big);
 
                     const next_slot_ptr = SlotPointer{ .position = slot_ptr.position, .slot = slot };
-                    return self.readSlot(write_mode, Ctx, path[1..], next_slot_ptr);
+                    return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                 },
                 .ctx => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
@@ -1482,7 +1482,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 }
 
                 pub fn readPath(self: Cursor(write_mode), comptime Ctx: type, path: []const PathPart(Ctx)) !?Cursor(write_mode) {
-                    const slot_ptr = self.db.readSlot(.read_only, Ctx, path, self.slot_ptr) catch |err| {
+                    const slot_ptr = self.db.readSlotPointer(.read_only, Ctx, path, self.slot_ptr) catch |err| {
                         switch (err) {
                             error.KeyNotFound => return null,
                             else => return err,
@@ -1495,7 +1495,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 }
 
                 pub fn writePath(self: Cursor(.read_write), comptime Ctx: type, path: []const PathPart(Ctx)) !Cursor(.read_write) {
-                    const slot_ptr = try self.db.readSlot(.read_write, Ctx, path, self.slot_ptr);
+                    const slot_ptr = try self.db.readSlotPointer(.read_write, Ctx, path, self.slot_ptr);
                     return .{
                         .slot_ptr = slot_ptr,
                         .db = self.db,
@@ -1599,13 +1599,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                 pub fn reader(self: *Cursor(write_mode)) !Reader {
                     const core_reader = self.db.core.reader();
-                    const slot = self.slot_ptr.slot;
+                    const cursor_slot = self.slot_ptr.slot;
 
-                    if (slot.tag != .bytes) {
+                    if (cursor_slot.tag != .bytes) {
                         return error.UnexpectedTag;
                     }
 
-                    try self.db.core.seekTo(slot.value);
+                    try self.db.core.seekTo(cursor_slot.value);
                     const size: u64 = @intCast(try core_reader.readInt(u64, .big));
                     const start_position = try self.db.core.getPos();
 
@@ -1637,7 +1637,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     };
                 }
 
-                pub fn pointer(self: Cursor(write_mode)) ?Slot {
+                pub fn slot(self: Cursor(write_mode)) ?Slot {
                     return if (self.slot_ptr.slot.tag == .none) null else self.slot_ptr.slot;
                 }
 
@@ -1689,22 +1689,22 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             var slot_i: usize = 0;
                             var new_root_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
                             // left slot
-                            if (next_slots[0]) |slot| {
-                                new_root_block[slot_i] = slot;
+                            if (next_slots[0]) |left_slot| {
+                                new_root_block[slot_i] = left_slot;
                             } else {
                                 new_root_block[slot_i] = left_block.block[left_block.i];
                             }
                             slot_i += 1;
                             // middle slots
                             if (left_block.i != right_block.i) {
-                                for (left_block.block[left_block.i + 1 .. right_block.i]) |slot| {
-                                    new_root_block[slot_i] = slot;
+                                for (left_block.block[left_block.i + 1 .. right_block.i]) |middle_slot| {
+                                    new_root_block[slot_i] = middle_slot;
                                     slot_i += 1;
                                 }
                             }
                             // right slot
-                            if (next_slots[1]) |slot| {
-                                new_root_block[slot_i] = slot;
+                            if (next_slots[1]) |right_slot| {
+                                new_root_block[slot_i] = right_slot;
                             } else {
                                 new_root_block[slot_i] = left_block.block[right_block.i];
                             }
@@ -1714,15 +1714,15 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             var new_left_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
 
                             // first slot
-                            if (next_slots[0]) |slot| {
-                                new_left_block[slot_i] = slot;
+                            if (next_slots[0]) |first_slot| {
+                                new_left_block[slot_i] = first_slot;
                             } else {
                                 new_left_block[slot_i] = left_block.block[left_block.i];
                             }
                             slot_i += 1;
                             // rest of slots
-                            for (left_block.block[left_block.i + 1 ..]) |slot| {
-                                new_left_block[slot_i] = slot;
+                            for (left_block.block[left_block.i + 1 ..]) |next_slot| {
+                                new_left_block[slot_i] = next_slot;
                                 slot_i += 1;
                             }
                             next_blocks[0] = new_left_block;
@@ -1730,13 +1730,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             slot_i = 0;
                             var new_right_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
                             // first slots
-                            for (right_block.block[0..right_block.i]) |slot| {
-                                new_right_block[slot_i] = slot;
+                            for (right_block.block[0..right_block.i]) |first_slot| {
+                                new_right_block[slot_i] = first_slot;
                                 slot_i += 1;
                             }
                             // last slot
-                            if (next_slots[1]) |slot| {
-                                new_right_block[slot_i] = slot;
+                            if (next_slots[1]) |last_slot| {
+                                new_right_block[slot_i] = last_slot;
                             } else {
                                 new_right_block[slot_i] = right_block.block[right_block.i];
                             }
@@ -1757,8 +1757,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             if (block_maybe) |block| {
                                 // determine if the block changed compared to the original block
                                 var eql = true;
-                                for (block, orig_block_info.block) |slot, orig_slot| {
-                                    if (!slot.slot.eql(orig_slot.slot)) {
+                                for (block, orig_block_info.block) |block_slot, orig_slot| {
+                                    if (!block_slot.slot.eql(orig_slot.slot)) {
                                         eql = false;
                                         break;
                                     }
@@ -1771,23 +1771,25 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                                 else {
                                     const next_ptr = try self.db.core.getPos();
                                     var leaf_count: u64 = 0;
-                                    for (block) |slot| {
-                                        try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(slot), .big);
+                                    for (block) |block_slot| {
+                                        try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
                                         if (is_leaf_node) {
-                                            if (slot.slot.tag != .none) {
+                                            if (block_slot.slot.tag != .none) {
                                                 leaf_count += 1;
                                             }
                                         } else {
-                                            leaf_count += slot.size;
+                                            leaf_count += block_slot.size;
                                         }
                                     }
-                                    const slot: Slot = switch (side) {
-                                        // only the left side needs to have the flag set,
-                                        // because it can have a gap that affects indexing
-                                        .left => .{ .value = next_ptr, .tag = .index, .flag = 1 },
-                                        .right => .{ .value = next_ptr, .tag = .index },
+                                    next_slot.* = LinkedArrayListSlot{
+                                        .slot = switch (side) {
+                                            // only the left side needs to have the flag set,
+                                            // because it can have a gap that affects indexing
+                                            .left => .{ .value = next_ptr, .tag = .index, .flag = 1 },
+                                            .right => .{ .value = next_ptr, .tag = .index },
+                                        },
+                                        .size = leaf_count,
                                     };
-                                    next_slot.* = LinkedArrayListSlot{ .slot = slot, .size = leaf_count };
                                 }
                             }
                         }
@@ -1863,16 +1865,16 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             if (block_info_maybe) |block_info| {
                                 var block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
                                 var target_i: usize = 0;
-                                for (block_info.block, 0..) |slot, source_i| {
+                                for (block_info.block, 0..) |block_slot, source_i| {
                                     // skip i'th block if necessary
                                     if (!is_leaf_node and block_info.i == source_i) {
                                         continue;
                                     }
                                     // break on first empty slot
-                                    else if (slot.slot.tag == .none) {
+                                    else if (block_slot.slot.tag == .none) {
                                         break;
                                     }
-                                    block[target_i] = slot;
+                                    block[target_i] = block_slot;
                                     target_i += 1;
                                 }
 
@@ -1890,30 +1892,30 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                         // add the left block
                         if (next_blocks[0]) |block| {
-                            for (block) |slot| {
-                                if (slot.slot.tag == .none) {
+                            for (block) |block_slot| {
+                                if (block_slot.slot.tag == .none) {
                                     break;
                                 }
-                                slots_to_write[slot_i] = slot;
+                                slots_to_write[slot_i] = block_slot;
                                 slot_i += 1;
                             }
                         }
 
                         // add the center block
                         for (next_slots) |slot_maybe| {
-                            if (slot_maybe) |slot| {
-                                slots_to_write[slot_i] = slot;
+                            if (slot_maybe) |block_slot| {
+                                slots_to_write[slot_i] = block_slot;
                                 slot_i += 1;
                             }
                         }
 
                         // add the right block
                         if (next_blocks[1]) |block| {
-                            for (block) |slot| {
-                                if (slot.slot.tag == .none) {
+                            for (block) |block_slot| {
+                                if (block_slot.slot.tag == .none) {
                                     break;
                                 }
-                                slots_to_write[slot_i] = slot;
+                                slots_to_write[slot_i] = block_slot;
                                 slot_i += 1;
                             }
                         }
@@ -1935,14 +1937,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             // write the block
                             const next_ptr = try self.db.core.getPos();
                             var leaf_count: u64 = 0;
-                            for (block) |slot| {
-                                try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(slot), .big);
+                            for (block) |block_slot| {
+                                try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
                                 if (is_leaf_node) {
-                                    if (slot.slot.tag != .none) {
+                                    if (block_slot.slot.tag != .none) {
                                         leaf_count += 1;
                                     }
                                 } else {
-                                    leaf_count += slot.size;
+                                    leaf_count += block_slot.size;
                                 }
                             }
 
@@ -1960,8 +1962,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                                 // write the root node
                                 const new_ptr = try self.db.core.getPos();
-                                for (block) |slot| {
-                                    try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(slot), .big);
+                                for (block) |block_slot| {
+                                    try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
                                 }
 
                                 next_shift += 1;
@@ -2102,7 +2104,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             .array_list => {
                                 const index = self.core.array_list.index;
                                 const path = &[_]PathPart(void){.{ .array_list_get = .{ .index = index } }};
-                                const slot_ptr = self.cursor.db.readSlot(.read_only, void, path, self.cursor.slot_ptr) catch |err| {
+                                const slot_ptr = self.cursor.db.readSlotPointer(.read_only, void, path, self.cursor.slot_ptr) catch |err| {
                                     switch (err) {
                                         error.KeyNotFound => return null,
                                         else => return err,
@@ -2117,7 +2119,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             .linked_array_list => {
                                 const index = self.core.linked_array_list.index;
                                 const path = &[_]PathPart(void){.{ .linked_array_list_get = .{ .index = index } }};
-                                const slot_ptr = self.cursor.db.readSlot(.read_only, void, path, self.cursor.slot_ptr) catch |err| {
+                                const slot_ptr = self.cursor.db.readSlotPointer(.read_only, void, path, self.cursor.slot_ptr) catch |err| {
                                     switch (err) {
                                         error.KeyNotFound => return null,
                                         else => return err,
@@ -2139,14 +2141,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                                         }
                                         continue;
                                     } else {
-                                        const slot = level.block[level.index];
-                                        if (slot.tag == .none) {
+                                        const map_slot = level.block[level.index];
+                                        if (map_slot.tag == .none) {
                                             self.core.hash_map.stack.items[self.core.hash_map.stack.items.len - 1].index += 1;
                                             continue;
                                         } else {
-                                            if (slot.tag == .index) {
+                                            if (map_slot.tag == .index) {
                                                 // find the block
-                                                const next_pos = slot.value;
+                                                const next_pos = map_slot.value;
                                                 try self.cursor.db.core.seekTo(next_pos);
                                                 // read the block
                                                 const core_reader = self.cursor.db.core.reader();
@@ -2173,7 +2175,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                                                 self.core.hash_map.stack.items[self.core.hash_map.stack.items.len - 1].index += 1;
                                                 const position = level.position + (level.index * byteSizeOf(Slot));
                                                 return .{
-                                                    .slot_ptr = .{ .position = position, .slot = slot },
+                                                    .slot_ptr = .{ .position = position, .slot = map_slot },
                                                     .db = self.cursor.db,
                                                 };
                                             }

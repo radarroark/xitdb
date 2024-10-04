@@ -337,7 +337,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         {
             const Ctx = struct {
                 pub fn run(_: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor(.read_write)) !void {
-                    try std.testing.expect(cursor.pointer() == null);
+                    try std.testing.expect(cursor.slot() == null);
                     var writer = try cursor.writer();
                     try writer.writeAll("bar");
                     try writer.finish();
@@ -373,7 +373,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                 allocator: std.mem.Allocator,
 
                 pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor(.read_write)) !void {
-                    try std.testing.expect(cursor.pointer() != null);
+                    try std.testing.expect(cursor.slot() != null);
 
                     const value = try cursor.readBytesAlloc(self.allocator, MAX_READ_BYTES);
                     defer self.allocator.free(value);
@@ -428,7 +428,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                 allocator: std.mem.Allocator,
 
                 pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor(.read_write)) !void {
-                    try std.testing.expect(cursor.pointer() != null);
+                    try std.testing.expect(cursor.slot() != null);
 
                     var writer = try cursor.writer();
                     try writer.writeAll("x");
