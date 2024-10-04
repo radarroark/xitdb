@@ -403,6 +403,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             return .{
                 .slot_ptr = .{ .position = null, .slot = .{ .value = DATABASE_START, .tag = self.header.tag } },
                 .db = self,
+                .write_mode = .read_write,
             };
         }
 
@@ -804,6 +805,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             var next_cursor = Cursor{
                                 .slot_ptr = slot_ptr,
                                 .db = self,
+                                .write_mode = user_write_mode,
                             };
                             var writer = try next_cursor.writer();
                             try writer.writeAll(part.write.bytes);
@@ -830,6 +832,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         var next_cursor = Cursor{
                             .slot_ptr = slot_ptr,
                             .db = self,
+                            .write_mode = user_write_mode,
                         };
                         try part.ctx.run(&next_cursor);
                         return next_cursor.slot_ptr;
@@ -1312,6 +1315,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
         pub const Cursor = struct {
             slot_ptr: SlotPointer,
             db: *Database(db_kind, Hash),
+            write_mode: UserWriteMode,
 
             pub const Reader = struct {
                 parent: *Cursor,
@@ -1483,14 +1487,17 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 return .{
                     .slot_ptr = slot_ptr,
                     .db = self.db,
+                    .write_mode = self.write_mode,
                 };
             }
 
             pub fn writePath(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !Cursor {
+                if (self.write_mode == .read_only) return error.WriteNotAllowed;
                 const slot_ptr = try self.db.readSlot(.read_write, Ctx, path, self.slot_ptr);
                 return .{
                     .slot_ptr = slot_ptr,
                     .db = self.db,
+                    .write_mode = self.write_mode,
                 };
             }
 
@@ -1575,8 +1582,16 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
 
                 return .{
-                    .value_cursor = .{ .slot_ptr = .{ .position = value_slot_pos, .slot = kv_pair.value_slot }, .db = self.db },
-                    .key_cursor = .{ .slot_ptr = .{ .position = key_slot_pos, .slot = kv_pair.key_slot }, .db = self.db },
+                    .value_cursor = .{
+                        .slot_ptr = .{ .position = value_slot_pos, .slot = kv_pair.value_slot },
+                        .db = self.db,
+                        .write_mode = self.write_mode,
+                    },
+                    .key_cursor = .{
+                        .slot_ptr = .{ .position = key_slot_pos, .slot = kv_pair.key_slot },
+                        .db = self.db,
+                        .write_mode = self.write_mode,
+                    },
                     .hash = kv_pair.hash,
                 };
             }
@@ -1807,6 +1822,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         .slot = .{ .value = new_array_list_start, .tag = .linked_array_list },
                     },
                     .db = self.db,
+                    .write_mode = .read_only,
                 };
             }
 
@@ -1985,6 +2001,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         .slot = .{ .value = list_start, .tag = .linked_array_list },
                     },
                     .db = self.db,
+                    .write_mode = .read_only,
                 };
             }
 
@@ -2104,6 +2121,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             return .{
                                 .slot_ptr = slot_ptr,
                                 .db = self.cursor.db,
+                                .write_mode = self.cursor.write_mode,
                             };
                         },
                         .linked_array_list => {
@@ -2119,6 +2137,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             return .{
                                 .slot_ptr = slot_ptr,
                                 .db = self.cursor.db,
+                                .write_mode = self.cursor.write_mode,
                             };
                         },
                         .hash_map => {
@@ -2167,6 +2186,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                                             return .{
                                                 .slot_ptr = .{ .position = position, .slot = slot },
                                                 .db = self.cursor.db,
+                                                .write_mode = self.cursor.write_mode,
                                             };
                                         }
                                     }
@@ -2185,90 +2205,104 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
         // high level API
 
-        pub const HashMap = struct {
-            cursor: Database(db_kind, Hash).Cursor,
+        pub fn HashMap(comptime write_mode: UserWriteMode) type {
+            return struct {
+                cursor: Database(db_kind, Hash).Cursor,
 
-            pub fn init(cursor: Database(db_kind, Hash).Cursor) !HashMap {
-                if (cursor.db.tx_start != null) {
-                    return .{
-                        .cursor = try cursor.writePath(void, &.{.hash_map_init}),
+                pub fn init(cursor: Database(db_kind, Hash).Cursor) !HashMap(write_mode) {
+                    return switch (write_mode) {
+                        .read_only => .{
+                            .cursor = .{
+                                .slot_ptr = cursor.slot_ptr,
+                                .db = cursor.db,
+                                .write_mode = write_mode,
+                            },
+                        },
+                        .read_write => .{
+                            .cursor = try cursor.writePath(void, &.{.hash_map_init}),
+                        },
                     };
-                } else {
-                    return .{ .cursor = cursor };
                 }
-            }
 
-            pub fn get(self: HashMap, hash: Hash) !?Cursor {
-                return try self.cursor.readPath(void, &.{
-                    .{ .hash_map_get = .{ .value = hash } },
-                });
-            }
+                pub fn get(self: HashMap(write_mode), hash: Hash) !?Cursor {
+                    return try self.cursor.readPath(void, &.{
+                        .{ .hash_map_get = .{ .value = hash } },
+                    });
+                }
 
-            pub fn putValue(self: HashMap, hash: Hash, value: WriteableValue) !void {
-                _ = try self.cursor.writePath(void, &.{
-                    .{ .hash_map_get = .{ .value = hash } },
-                    .{ .write = value },
-                });
-            }
+                pub fn putValue(self: HashMap(.read_write), hash: Hash, value: WriteableValue) !void {
+                    _ = try self.cursor.writePath(void, &.{
+                        .{ .hash_map_get = .{ .value = hash } },
+                        .{ .write = value },
+                    });
+                }
 
-            pub fn put(self: HashMap, hash: Hash) !Cursor {
-                return try self.cursor.writePath(void, &.{
-                    .{ .hash_map_get = .{ .value = hash } },
-                });
-            }
+                pub fn put(self: HashMap(.read_write), hash: Hash) !Cursor {
+                    return try self.cursor.writePath(void, &.{
+                        .{ .hash_map_get = .{ .value = hash } },
+                    });
+                }
 
-            pub fn remove(self: HashMap, hash: Hash) !void {
-                _ = try self.cursor.writePath(void, &.{
-                    .{ .hash_map_remove = hash },
-                });
-            }
-        };
+                pub fn remove(self: HashMap(.read_write), hash: Hash) !void {
+                    _ = try self.cursor.writePath(void, &.{
+                        .{ .hash_map_remove = hash },
+                    });
+                }
+            };
+        }
 
-        pub const ArrayList = struct {
-            cursor: Database(db_kind, Hash).Cursor,
+        pub fn ArrayList(comptime write_mode: UserWriteMode) type {
+            return struct {
+                cursor: Database(db_kind, Hash).Cursor,
 
-            pub fn init(cursor: Database(db_kind, Hash).Cursor) !ArrayList {
-                if (cursor.db.tx_start != null or cursor.slot_ptr.slot.value == DATABASE_START) {
-                    return .{
-                        .cursor = try cursor.writePath(void, &.{.array_list_init}),
+                pub fn init(cursor: Database(db_kind, Hash).Cursor) !ArrayList(write_mode) {
+                    return switch (write_mode) {
+                        .read_only => .{
+                            .cursor = .{
+                                .slot_ptr = cursor.slot_ptr,
+                                .db = cursor.db,
+                                .write_mode = write_mode,
+                            },
+                        },
+                        .read_write => .{
+                            .cursor = try cursor.writePath(void, &.{.array_list_init}),
+                        },
                     };
-                } else {
-                    return .{ .cursor = cursor };
                 }
-            }
 
-            pub fn get(self: ArrayList, index: i65) !?Cursor {
-                return try self.cursor.readPath(void, &.{
-                    .{ .array_list_get = .{ .index = index } },
-                });
-            }
+                pub fn get(self: ArrayList(write_mode), index: i65) !?Cursor {
+                    return try self.cursor.readPath(void, &.{
+                        .{ .array_list_get = .{ .index = index } },
+                    });
+                }
 
-            pub fn appendValue(self: ArrayList, value: WriteableValue) !void {
-                _ = try self.cursor.writePath(void, &.{
-                    .{ .array_list_get = .append },
-                    .{ .write = value },
-                });
-            }
+                pub fn appendValue(self: ArrayList(.read_write), value: WriteableValue) !void {
+                    _ = try self.cursor.writePath(void, &.{
+                        .{ .array_list_get = .append },
+                        .{ .write = value },
+                    });
+                }
 
-            pub fn append(self: ArrayList) !Cursor {
-                return try self.cursor.writePath(void, &.{
-                    .{ .array_list_get = .append },
-                });
-            }
+                pub fn append(self: ArrayList(.read_write)) !Cursor {
+                    return try self.cursor.writePath(void, &.{
+                        .{ .array_list_get = .append },
+                    });
+                }
 
-            pub fn appendCopy(self: ArrayList, comptime Ctx: type, ctx: Ctx) !void {
-                const InternalCtx = struct {
-                    ctx: Ctx,
+                pub fn appendCopy(self: ArrayList(.read_write), comptime Ctx: type, ctx: Ctx) !void {
+                    const InternalCtx = struct {
+                        ctx: Ctx,
 
-                    pub fn run(ctx_self: @This(), cursor: *Database(db_kind, Hash).Cursor) !void {
-                        try ctx_self.ctx.run(cursor);
-                    }
-                };
-                _ = try self.cursor.writePath(InternalCtx, &.{
-                    .{ .array_list_get = .append_copy },
-                    .{ .ctx = .{ .ctx = ctx } },
-                });
-            }
-        };
+                        pub fn run(ctx_self: @This(), cursor: *Database(db_kind, Hash).Cursor) !void {
+                            try ctx_self.ctx.run(cursor);
+                        }
+                    };
+                    _ = try self.cursor.writePath(InternalCtx, &.{
+                        .{ .array_list_get = .append_copy },
+                        .{ .ctx = .{ .ctx = ctx } },
+                    });
+                }
+            };
+        }
     };
 }

@@ -1,5 +1,5 @@
 const std = @import("std");
-const xitdb = @import("xitdb");
+const xitdb = @import("./lib.zig");
 
 const Hash = u160;
 const MAX_READ_BYTES = 1024;
@@ -28,7 +28,7 @@ test "high level api" {
 
     // the top-level data structure *must* be an ArrayList,
     // because each transaction is stored as an item in this list
-    const list = try DB.ArrayList.init(db.rootCursor());
+    const list = try DB.ArrayList(.read_write).init(db.rootCursor());
 
     // this is how a transaction is executed. we call list.appendCopy,
     // which grabs the most recent copy of the db and appends it to the list.
@@ -36,30 +36,36 @@ test "high level api" {
     // and add a bunch of data to it.
     const Ctx = struct {
         pub fn run(_: @This(), cursor: *DB.Cursor) !void {
-            const map = try DB.HashMap.init(cursor.*);
+            const map = try DB.HashMap(.read_write).init(cursor.*);
 
             try map.putValue(hashBuffer("foo"), .{ .bytes = "foo" });
             try map.putValue(hashBuffer("bar"), .{ .bytes = "bar" });
             try map.remove(hashBuffer("bar"));
 
             const fruits_cursor = try map.put(hashBuffer("fruits"));
-            const fruits = try DB.ArrayList.init(fruits_cursor);
+            const fruits = try DB.ArrayList(.read_write).init(fruits_cursor);
             try fruits.appendValue(.{ .bytes = "apple" });
             try fruits.appendValue(.{ .bytes = "pear" });
             try fruits.appendValue(.{ .bytes = "grape" });
 
             const people_cursor = try map.put(hashBuffer("people"));
-            const people = try DB.ArrayList.init(people_cursor);
+            const people = try DB.ArrayList(.read_write).init(people_cursor);
 
             const alice_cursor = try people.append();
-            const alice = try DB.HashMap.init(alice_cursor);
+            const alice = try DB.HashMap(.read_write).init(alice_cursor);
             try alice.putValue(hashBuffer("name"), .{ .bytes = "Alice" });
             try alice.putValue(hashBuffer("age"), .{ .uint = 25 });
 
             const bob_cursor = try people.append();
-            const bob = try DB.HashMap.init(bob_cursor);
+            const bob = try DB.HashMap(.read_write).init(bob_cursor);
             try bob.putValue(hashBuffer("name"), .{ .bytes = "Bob" });
             try bob.putValue(hashBuffer("age"), .{ .uint = 42 });
+
+            // can't init read-write hashmap from read-only arraylist
+            const people_cursor_new = (try map.get(hashBuffer("people"))).?;
+            const people_read_only = try DB.ArrayList(.read_only).init(people_cursor_new);
+            const alice_read_only_cursor = (try people_read_only.get(0)).?;
+            try std.testing.expectError(error.WriteNotAllowed, DB.HashMap(.read_write).init(alice_read_only_cursor));
         }
     };
     try list.appendCopy(Ctx, Ctx{});
@@ -67,7 +73,7 @@ test "high level api" {
     // get the most recent copy of the database.
     // the -1 index will return the last index in the list.
     const map_cursor = (try list.get(-1)).?;
-    const map = try DB.HashMap.init(map_cursor);
+    const map = try DB.HashMap(.read_only).init(map_cursor);
 
     // we can read the value of "foo" from the map by getting
     // the cursor to "foo" and then calling readBytesAlloc on it
@@ -82,7 +88,7 @@ test "high level api" {
     // then pass it to the ArrayList.init method
     const fruits_cursor = (try map.get(hashBuffer("fruits"))).?;
     try std.testing.expectEqual(3, try fruits_cursor.count());
-    const fruits = try DB.ArrayList.init(fruits_cursor);
+    const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
 
     // now we can get the first item from the fruits list and read it
     const apple_cursor = (try fruits.get(0)).?;
