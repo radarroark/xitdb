@@ -35,7 +35,7 @@ test "high level api" {
     // then, in the context below, we interpret it as a HashMap
     // and add a bunch of data to it.
     const Ctx = struct {
-        pub fn run(_: @This(), cursor: *DB.Cursor) !void {
+        pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
             const map = try DB.HashMap(.read_write).init(cursor.*);
 
             try map.putValue(hashBuffer("foo"), .{ .bytes = "foo" });
@@ -60,12 +60,6 @@ test "high level api" {
             const bob = try DB.HashMap(.read_write).init(bob_cursor);
             try bob.putValue(hashBuffer("name"), .{ .bytes = "Bob" });
             try bob.putValue(hashBuffer("age"), .{ .uint = 42 });
-
-            // can't init read-write hashmap from read-only arraylist
-            const people_cursor_new = (try map.get(hashBuffer("people"))).?;
-            const people_read_only = try DB.ArrayList(.read_only).init(people_cursor_new);
-            const alice_read_only_cursor = (try people_read_only.get(0)).?;
-            try std.testing.expectError(error.WriteNotAllowed, DB.HashMap(.read_write).init(alice_read_only_cursor));
         }
     };
     try list.appendCopy(Ctx, Ctx{});
@@ -73,7 +67,7 @@ test "high level api" {
     // get the most recent copy of the database.
     // the -1 index will return the last index in the list.
     const map_cursor = (try list.get(-1)).?;
-    const map = try DB.HashMap(.read_only).init(map_cursor);
+    const map = try DB.HashMap(.read_only).init(map_cursor.readOnly());
 
     // we can read the value of "foo" from the map by getting
     // the cursor to "foo" and then calling readBytesAlloc on it
@@ -119,7 +113,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
     const Ctx = struct {
         allocator: std.mem.Allocator,
 
-        pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor) !void {
+        pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor(.read_write)) !void {
             var values = std.ArrayList(u64).init(self.allocator);
             defer values.deinit();
 
@@ -213,7 +207,7 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
     const Ctx = struct {
         allocator: std.mem.Allocator,
 
-        pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor) !void {
+        pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor(.read_write)) !void {
             var values = std.ArrayList(u64).init(self.allocator);
             defer values.deinit();
 
@@ -342,7 +336,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         const foo_key = hashBuffer("foo");
         {
             const Ctx = struct {
-                pub fn run(_: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor) !void {
+                pub fn run(_: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor(.read_write)) !void {
                     try std.testing.expect(cursor.pointer() == null);
                     var writer = try cursor.writer();
                     try writer.writeAll("bar");
@@ -378,7 +372,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor) !void {
+                pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor(.read_write)) !void {
                     try std.testing.expect(cursor.pointer() != null);
 
                     const value = try cursor.readBytesAlloc(self.allocator, MAX_READ_BYTES);
@@ -433,7 +427,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor) !void {
+                pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor(.read_write)) !void {
                     try std.testing.expect(cursor.pointer() != null);
 
                     var writer = try cursor.writer();
@@ -512,7 +506,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
-                pub fn run(_: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor) !void {
+                pub fn run(_: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor(.read_write)) !void {
                     var writer = try cursor.writer();
                     try writer.writeAll("this value won't be visible");
                     try writer.finish();
@@ -1085,7 +1079,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         const Ctx = struct {
             allocator: std.mem.Allocator,
 
-            pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor) !void {
+            pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor(.read_write)) !void {
                 var values = std.ArrayList(u64).init(self.allocator);
                 defer values.deinit();
 

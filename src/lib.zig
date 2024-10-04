@@ -399,11 +399,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             }
         }
 
-        pub fn rootCursor(self: *Database(db_kind, Hash)) Cursor {
+        pub fn rootCursor(self: *Database(db_kind, Hash)) Cursor(.read_write) {
             return .{
                 .slot_ptr = .{ .position = null, .slot = .{ .value = DATABASE_START, .tag = self.header.tag } },
                 .db = self,
-                .write_mode = .read_write,
             };
         }
 
@@ -802,10 +801,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         .int => .{ .value = @bitCast(part.write.int), .tag = .int },
                         .float => .{ .value = @bitCast(part.write.float), .tag = .float },
                         .bytes => blk: {
-                            var next_cursor = Cursor{
+                            var next_cursor = Cursor(.read_write){
                                 .slot_ptr = slot_ptr,
                                 .db = self,
-                                .write_mode = user_write_mode,
                             };
                             var writer = try next_cursor.writer();
                             try writer.writeAll(part.write.bytes);
@@ -829,10 +827,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     if (@TypeOf(part.ctx) == void) {
                         return error.NotImplmented;
                     } else {
-                        var next_cursor = Cursor{
+                        var next_cursor = Cursor(.read_write){
                             .slot_ptr = slot_ptr,
                             .db = self,
-                            .write_mode = user_write_mode,
                         };
                         try part.ctx.run(&next_cursor);
                         return next_cursor.slot_ptr;
@@ -1312,910 +1309,901 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
         // Cursor
 
-        pub const Cursor = struct {
-            slot_ptr: SlotPointer,
-            db: *Database(db_kind, Hash),
-            write_mode: UserWriteMode,
+        pub fn Cursor(comptime write_mode: UserWriteMode) type {
+            return struct {
+                slot_ptr: SlotPointer,
+                db: *Database(db_kind, Hash),
 
-            pub const Reader = struct {
-                parent: *Cursor,
-                size: u64,
-                start_position: u64,
-                relative_position: u64,
+                pub const Reader = struct {
+                    parent: *Cursor(write_mode),
+                    size: u64,
+                    start_position: u64,
+                    relative_position: u64,
 
-                pub const Error = Database(db_kind, Hash).Core.Reader.Error || error{ EndOfStream, Unseekable };
+                    pub const Error = Database(db_kind, Hash).Core.Reader.Error || error{ EndOfStream, Unseekable };
 
-                pub fn read(self: *Reader, buf: []u8) !u64 {
-                    if (self.size < self.relative_position) return error.EndOfStream;
-                    try self.parent.db.core.seekTo(self.start_position + self.relative_position);
-                    const core_reader = self.parent.db.core.reader();
-                    const size = try core_reader.read(buf[0..@min(buf.len, self.size - self.relative_position)]);
-                    self.relative_position += size;
-                    return size;
-                }
-
-                pub fn readNoEof(self: *Reader, buf: []u8) !void {
-                    if (self.size < self.relative_position or self.size - self.relative_position < buf.len) return error.EndOfStream;
-                    try self.parent.db.core.seekTo(self.start_position + self.relative_position);
-                    const core_reader = self.parent.db.core.reader();
-                    try core_reader.readNoEof(buf);
-                    self.relative_position += buf.len;
-                }
-
-                pub fn readInt(self: *Reader, comptime T: type, endian: std.builtin.Endian) !T {
-                    if (self.size < self.relative_position or self.size - self.relative_position < byteSizeOf(T)) return error.EndOfStream;
-                    try self.parent.db.core.seekTo(self.start_position + self.relative_position);
-                    const core_reader = self.parent.db.core.reader();
-                    const ret = try core_reader.readInt(T, endian);
-                    self.relative_position += byteSizeOf(T);
-                    return ret;
-                }
-
-                pub fn readUntilDelimiter(self: *Reader, buf: []u8, delimiter: u8) ![]u8 {
-                    if (self.size < self.relative_position) return error.EndOfStream;
-                    try self.parent.db.core.seekTo(self.start_position + self.relative_position);
-                    const core_reader = self.parent.db.core.reader();
-                    const buf_slice = core_reader.readUntilDelimiter(buf[0..@min(buf.len, self.size - self.relative_position)], delimiter) catch |err| switch (err) {
-                        error.StreamTooLong => return error.EndOfStream,
-                        else => return err,
-                    };
-                    self.relative_position += buf_slice.len;
-                    self.relative_position += 1; // for the delimiter
-                    return buf_slice;
-                }
-
-                pub fn readUntilDelimiterAlloc(self: *Reader, allocator: std.mem.Allocator, delimiter: u8, max_size: usize) ![]u8 {
-                    if (self.size < self.relative_position) return error.EndOfStream;
-                    try self.parent.db.core.seekTo(self.start_position + self.relative_position);
-                    const core_reader = self.parent.db.core.reader();
-                    const buf_slice = core_reader.readUntilDelimiterAlloc(allocator, delimiter, @min(max_size, self.size - self.relative_position)) catch |err| switch (err) {
-                        error.StreamTooLong => return error.EndOfStream,
-                        else => return err,
-                    };
-                    self.relative_position += buf_slice.len;
-                    self.relative_position += 1; // for the delimiter
-                    return buf_slice;
-                }
-
-                pub fn readAllAlloc(self: *Reader, allocator: std.mem.Allocator, max_size: usize) ![]u8 {
-                    if (self.size < self.relative_position) return error.EndOfStream;
-                    if (self.size - self.relative_position > max_size) return error.StreamTooLong;
-                    const buffer = try allocator.alloc(u8, self.size - self.relative_position);
-                    errdefer allocator.free(buffer);
-                    try self.parent.db.core.seekTo(self.start_position + self.relative_position);
-                    const core_reader = self.parent.db.core.reader();
-                    const size = try core_reader.read(buffer);
-                    if (size != buffer.len) {
-                        return error.UnexpectedReadSize;
+                    pub fn read(self: *Reader, buf: []u8) !u64 {
+                        if (self.size < self.relative_position) return error.EndOfStream;
+                        try self.parent.db.core.seekTo(self.start_position + self.relative_position);
+                        const core_reader = self.parent.db.core.reader();
+                        const size = try core_reader.read(buf[0..@min(buf.len, self.size - self.relative_position)]);
+                        self.relative_position += size;
+                        return size;
                     }
-                    self.relative_position += size;
-                    return buffer;
-                }
 
-                pub fn seekTo(self: *Reader, offset: u64) !void {
-                    if (offset > self.size) {
-                        return error.InvalidOffset;
+                    pub fn readNoEof(self: *Reader, buf: []u8) !void {
+                        if (self.size < self.relative_position or self.size - self.relative_position < buf.len) return error.EndOfStream;
+                        try self.parent.db.core.seekTo(self.start_position + self.relative_position);
+                        const core_reader = self.parent.db.core.reader();
+                        try core_reader.readNoEof(buf);
+                        self.relative_position += buf.len;
                     }
-                    self.relative_position = offset;
-                }
 
-                pub fn seekBy(self: *Reader, offset: i64) !void {
-                    if (offset > 0) {
-                        self.relative_position = @min(self.size, self.relative_position +| @as(u64, @intCast(@abs(offset))));
-                    } else {
-                        self.relative_position -|= @intCast(@abs(offset));
+                    pub fn readInt(self: *Reader, comptime T: type, endian: std.builtin.Endian) !T {
+                        if (self.size < self.relative_position or self.size - self.relative_position < byteSizeOf(T)) return error.EndOfStream;
+                        try self.parent.db.core.seekTo(self.start_position + self.relative_position);
+                        const core_reader = self.parent.db.core.reader();
+                        const ret = try core_reader.readInt(T, endian);
+                        self.relative_position += byteSizeOf(T);
+                        return ret;
                     }
-                }
 
-                pub fn seekFromEnd(self: *Reader, offset: i64) !void {
-                    if (offset <= 0) {
-                        self.relative_position = self.size -| @as(u64, @intCast(@abs(offset)));
+                    pub fn readUntilDelimiter(self: *Reader, buf: []u8, delimiter: u8) ![]u8 {
+                        if (self.size < self.relative_position) return error.EndOfStream;
+                        try self.parent.db.core.seekTo(self.start_position + self.relative_position);
+                        const core_reader = self.parent.db.core.reader();
+                        const buf_slice = core_reader.readUntilDelimiter(buf[0..@min(buf.len, self.size - self.relative_position)], delimiter) catch |err| switch (err) {
+                            error.StreamTooLong => return error.EndOfStream,
+                            else => return err,
+                        };
+                        self.relative_position += buf_slice.len;
+                        self.relative_position += 1; // for the delimiter
+                        return buf_slice;
                     }
-                }
-            };
 
-            pub const Writer = struct {
-                parent: *Cursor,
-                size: u64,
-                slot: Slot,
-                start_position: u64,
-                relative_position: u64,
-
-                pub fn finish(self: Writer) !void {
-                    const core_writer = self.parent.db.core.writer();
-
-                    try self.parent.db.core.seekTo(self.slot.value);
-                    try core_writer.writeInt(u64, self.size, .big);
-
-                    const position = self.parent.slot_ptr.position orelse return error.CursorNotWriteable;
-                    try self.parent.db.core.seekTo(position);
-                    try core_writer.writeInt(SlotInt, @bitCast(self.slot), .big);
-
-                    self.parent.slot_ptr.slot = self.slot;
-                }
-
-                pub fn writeAll(self: *Writer, bytes: []const u8) !void {
-                    if (self.size < self.relative_position) return error.EndOfStream;
-                    try self.parent.db.core.seekTo(self.start_position + self.relative_position);
-                    const core_writer = self.parent.db.core.writer();
-                    try core_writer.writeAll(bytes);
-                    self.relative_position += @intCast(bytes.len);
-                    if (self.relative_position > self.size) {
-                        self.size = self.relative_position;
+                    pub fn readUntilDelimiterAlloc(self: *Reader, allocator: std.mem.Allocator, delimiter: u8, max_size: usize) ![]u8 {
+                        if (self.size < self.relative_position) return error.EndOfStream;
+                        try self.parent.db.core.seekTo(self.start_position + self.relative_position);
+                        const core_reader = self.parent.db.core.reader();
+                        const buf_slice = core_reader.readUntilDelimiterAlloc(allocator, delimiter, @min(max_size, self.size - self.relative_position)) catch |err| switch (err) {
+                            error.StreamTooLong => return error.EndOfStream,
+                            else => return err,
+                        };
+                        self.relative_position += buf_slice.len;
+                        self.relative_position += 1; // for the delimiter
+                        return buf_slice;
                     }
-                }
 
-                pub fn writeInt(self: *Writer, comptime T: type, value: T, endian: std.builtin.Endian) !void {
-                    if (self.size < self.relative_position) return error.EndOfStream;
-                    try self.parent.db.core.seekTo(self.start_position + self.relative_position);
-                    const core_writer = self.parent.db.core.writer();
-                    try core_writer.writeInt(T, value, endian);
-                    self.relative_position += byteSizeOf(T);
-                    if (self.relative_position > self.size) {
-                        self.size = self.relative_position;
+                    pub fn readAllAlloc(self: *Reader, allocator: std.mem.Allocator, max_size: usize) ![]u8 {
+                        if (self.size < self.relative_position) return error.EndOfStream;
+                        if (self.size - self.relative_position > max_size) return error.StreamTooLong;
+                        const buffer = try allocator.alloc(u8, self.size - self.relative_position);
+                        errdefer allocator.free(buffer);
+                        try self.parent.db.core.seekTo(self.start_position + self.relative_position);
+                        const core_reader = self.parent.db.core.reader();
+                        const size = try core_reader.read(buffer);
+                        if (size != buffer.len) {
+                            return error.UnexpectedReadSize;
+                        }
+                        self.relative_position += size;
+                        return buffer;
                     }
-                }
 
-                pub fn seekTo(self: *Writer, offset: u64) !void {
-                    if (offset <= self.size) {
+                    pub fn seekTo(self: *Reader, offset: u64) !void {
+                        if (offset > self.size) {
+                            return error.InvalidOffset;
+                        }
                         self.relative_position = offset;
                     }
-                }
 
-                pub fn seekBy(self: *Writer, offset: i64) !void {
-                    if (offset > 0) {
-                        self.relative_position = @min(self.size, self.relative_position +| @as(u64, @intCast(@abs(offset))));
-                    } else {
-                        self.relative_position -|= @intCast(@abs(offset));
-                    }
-                }
-
-                pub fn seekFromEnd(self: *Writer, offset: i64) !void {
-                    if (offset <= 0) {
-                        self.relative_position = self.size -| @as(u64, @intCast(@abs(offset)));
-                    }
-                }
-            };
-
-            pub fn readPath(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !?Cursor {
-                const slot_ptr = self.db.readSlot(.read_only, Ctx, path, self.slot_ptr) catch |err| {
-                    switch (err) {
-                        error.KeyNotFound => return null,
-                        else => return err,
-                    }
-                };
-                return .{
-                    .slot_ptr = slot_ptr,
-                    .db = self.db,
-                    .write_mode = self.write_mode,
-                };
-            }
-
-            pub fn writePath(self: Cursor, comptime Ctx: type, path: []const PathPart(Ctx)) !Cursor {
-                if (self.write_mode == .read_only) return error.WriteNotAllowed;
-                const slot_ptr = try self.db.readSlot(.read_write, Ctx, path, self.slot_ptr);
-                return .{
-                    .slot_ptr = slot_ptr,
-                    .db = self.db,
-                    .write_mode = self.write_mode,
-                };
-            }
-
-            pub fn readUint(self: Cursor) !u64 {
-                if (self.slot_ptr.slot.tag != .uint) {
-                    return error.UnexpectedTag;
-                }
-                return self.slot_ptr.slot.value;
-            }
-
-            pub fn readInt(self: Cursor) !i64 {
-                if (self.slot_ptr.slot.tag != .int) {
-                    return error.UnexpectedTag;
-                }
-                return @bitCast(self.slot_ptr.slot.value);
-            }
-
-            pub fn readFloat(self: Cursor) !f64 {
-                if (self.slot_ptr.slot.tag != .float) {
-                    return error.UnexpectedTag;
-                }
-                return @bitCast(self.slot_ptr.slot.value);
-            }
-
-            pub fn readBytesAlloc(self: Cursor, allocator: std.mem.Allocator, max_size: usize) ![]u8 {
-                const core_reader = self.db.core.reader();
-
-                if (self.slot_ptr.slot.tag != .bytes) {
-                    return error.UnexpectedTag;
-                }
-
-                try self.db.core.seekTo(self.slot_ptr.slot.value);
-                const value_size = try core_reader.readInt(u64, .big);
-
-                if (value_size > max_size) {
-                    return error.MaxSizeExceeded;
-                }
-
-                const value = try allocator.alloc(u8, value_size);
-                errdefer allocator.free(value);
-
-                try core_reader.readNoEof(value);
-                return value;
-            }
-
-            pub fn readBytes(self: Cursor, buffer: []u8) ![]u8 {
-                const core_reader = self.db.core.reader();
-
-                if (self.slot_ptr.slot.tag != .bytes) {
-                    return error.UnexpectedTag;
-                }
-
-                try self.db.core.seekTo(self.slot_ptr.slot.value);
-                const value_size = try core_reader.readInt(u64, .big);
-                const size = @min(buffer.len, value_size);
-
-                try core_reader.readNoEof(buffer[0..size]);
-                return buffer[0..size];
-            }
-
-            pub const KeyValuePairCursor = struct {
-                value_cursor: Cursor,
-                key_cursor: Cursor,
-                hash: Hash,
-            };
-
-            pub fn readKeyValuePair(self: Cursor) !KeyValuePairCursor {
-                const core_reader = self.db.core.reader();
-
-                if (self.slot_ptr.slot.tag != .kv_pair) {
-                    return error.UnexpectedTag;
-                }
-
-                try self.db.core.seekTo(self.slot_ptr.slot.value);
-                const kv_pair: KeyValuePair = @bitCast(try core_reader.readInt(KeyValuePairInt, .big));
-
-                try kv_pair.key_slot.tag.validate();
-                try kv_pair.value_slot.tag.validate();
-
-                const hash_pos = self.slot_ptr.slot.value;
-                const key_slot_pos = hash_pos + byteSizeOf(Hash);
-                const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
-
-                return .{
-                    .value_cursor = .{
-                        .slot_ptr = .{ .position = value_slot_pos, .slot = kv_pair.value_slot },
-                        .db = self.db,
-                        .write_mode = self.write_mode,
-                    },
-                    .key_cursor = .{
-                        .slot_ptr = .{ .position = key_slot_pos, .slot = kv_pair.key_slot },
-                        .db = self.db,
-                        .write_mode = self.write_mode,
-                    },
-                    .hash = kv_pair.hash,
-                };
-            }
-
-            pub fn writeBytes(self: *Cursor, buffer: []const u8, mode: enum { once, replace }) !void {
-                if (mode == .replace or self.slot_ptr.slot.tag == .none) {
-                    var cursor_writer = try self.writer();
-                    try cursor_writer.writeAll(buffer);
-                    try cursor_writer.finish();
-                }
-            }
-
-            pub fn reader(self: *Cursor) !Reader {
-                const core_reader = self.db.core.reader();
-                const slot = self.slot_ptr.slot;
-
-                if (slot.tag != .bytes) {
-                    return error.UnexpectedTag;
-                }
-
-                try self.db.core.seekTo(slot.value);
-                const size: u64 = @intCast(try core_reader.readInt(u64, .big));
-                const start_position = try self.db.core.getPos();
-
-                return Reader{
-                    .parent = self,
-                    .size = size,
-                    .start_position = start_position,
-                    .relative_position = 0,
-                };
-            }
-
-            pub fn writer(self: *Cursor) !Writer {
-                if (self.slot_ptr.slot.tag != .none and self.slot_ptr.slot.tag != .bytes) {
-                    return error.UnexpectedTag;
-                }
-
-                const core_writer = self.db.core.writer();
-                try self.db.core.seekFromEnd(0);
-                const ptr_pos = try self.db.core.getPos();
-                try core_writer.writeInt(u64, 0, .big);
-                const start_position = try self.db.core.getPos();
-
-                return Writer{
-                    .parent = self,
-                    .size = 0,
-                    .slot = .{ .value = ptr_pos, .tag = .bytes },
-                    .start_position = start_position,
-                    .relative_position = 0,
-                };
-            }
-
-            pub fn pointer(self: Cursor) ?Slot {
-                return if (self.slot_ptr.slot.tag == .none) null else self.slot_ptr.slot;
-            }
-
-            pub fn slice(self: Cursor, offset: u64, size: u64) !Cursor {
-                if (self.slot_ptr.slot.tag != .linked_array_list) {
-                    return error.UnexpectedTag;
-                }
-
-                const core_reader = self.db.core.reader();
-                const core_writer = self.db.core.writer();
-
-                const array_list_start = self.slot_ptr.slot.value;
-                try self.db.core.seekTo(array_list_start);
-                const header: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
-
-                if (offset + size > header.size) {
-                    return error.LinkedArrayListSliceOutOfBounds;
-                } else if (size == header.size) {
-                    return self;
-                }
-
-                // read the list's left blocks
-                var left_blocks = std.ArrayList(LinkedArrayListBlockInfo).init(self.db.allocator);
-                defer left_blocks.deinit();
-                try self.db.readLinkedArrayListBlocks(header.ptr, offset, header.shift, &left_blocks);
-
-                // read the list's right blocks
-                var right_blocks = std.ArrayList(LinkedArrayListBlockInfo).init(self.db.allocator);
-                defer right_blocks.deinit();
-                const right_key = if (offset + size == 0) 0 else offset + size - 1;
-                try self.db.readLinkedArrayListBlocks(header.ptr, right_key, header.shift, &right_blocks);
-
-                // create the new blocks
-                const block_count = left_blocks.items.len;
-                var next_slots = [_]?LinkedArrayListSlot{null} ** 2;
-                var next_shift: u6 = 0;
-                for (0..block_count) |i| {
-                    const is_leaf_node = next_slots[0] == null;
-
-                    const left_block = left_blocks.items[block_count - i - 1];
-                    const right_block = right_blocks.items[block_count - i - 1];
-                    const orig_block_infos = [_]LinkedArrayListBlockInfo{
-                        left_block,
-                        right_block,
-                    };
-                    var next_blocks: [2]?[SLOT_COUNT]LinkedArrayListSlot = .{ null, null };
-
-                    if (left_block.parent_slot.slot.value == right_block.parent_slot.slot.value) {
-                        var slot_i: usize = 0;
-                        var new_root_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
-                        // left slot
-                        if (next_slots[0]) |slot| {
-                            new_root_block[slot_i] = slot;
+                    pub fn seekBy(self: *Reader, offset: i64) !void {
+                        if (offset > 0) {
+                            self.relative_position = @min(self.size, self.relative_position +| @as(u64, @intCast(@abs(offset))));
                         } else {
-                            new_root_block[slot_i] = left_block.block[left_block.i];
+                            self.relative_position -|= @intCast(@abs(offset));
                         }
-                        slot_i += 1;
-                        // middle slots
-                        if (left_block.i != right_block.i) {
-                            for (left_block.block[left_block.i + 1 .. right_block.i]) |slot| {
+                    }
+
+                    pub fn seekFromEnd(self: *Reader, offset: i64) !void {
+                        if (offset <= 0) {
+                            self.relative_position = self.size -| @as(u64, @intCast(@abs(offset)));
+                        }
+                    }
+                };
+
+                pub const Writer = struct {
+                    parent: *Cursor(.read_write),
+                    size: u64,
+                    slot: Slot,
+                    start_position: u64,
+                    relative_position: u64,
+
+                    pub fn finish(self: Writer) !void {
+                        const core_writer = self.parent.db.core.writer();
+
+                        try self.parent.db.core.seekTo(self.slot.value);
+                        try core_writer.writeInt(u64, self.size, .big);
+
+                        const position = self.parent.slot_ptr.position orelse return error.CursorNotWriteable;
+                        try self.parent.db.core.seekTo(position);
+                        try core_writer.writeInt(SlotInt, @bitCast(self.slot), .big);
+
+                        self.parent.slot_ptr.slot = self.slot;
+                    }
+
+                    pub fn writeAll(self: *Writer, bytes: []const u8) !void {
+                        if (self.size < self.relative_position) return error.EndOfStream;
+                        try self.parent.db.core.seekTo(self.start_position + self.relative_position);
+                        const core_writer = self.parent.db.core.writer();
+                        try core_writer.writeAll(bytes);
+                        self.relative_position += @intCast(bytes.len);
+                        if (self.relative_position > self.size) {
+                            self.size = self.relative_position;
+                        }
+                    }
+
+                    pub fn writeInt(self: *Writer, comptime T: type, value: T, endian: std.builtin.Endian) !void {
+                        if (self.size < self.relative_position) return error.EndOfStream;
+                        try self.parent.db.core.seekTo(self.start_position + self.relative_position);
+                        const core_writer = self.parent.db.core.writer();
+                        try core_writer.writeInt(T, value, endian);
+                        self.relative_position += byteSizeOf(T);
+                        if (self.relative_position > self.size) {
+                            self.size = self.relative_position;
+                        }
+                    }
+
+                    pub fn seekTo(self: *Writer, offset: u64) !void {
+                        if (offset <= self.size) {
+                            self.relative_position = offset;
+                        }
+                    }
+
+                    pub fn seekBy(self: *Writer, offset: i64) !void {
+                        if (offset > 0) {
+                            self.relative_position = @min(self.size, self.relative_position +| @as(u64, @intCast(@abs(offset))));
+                        } else {
+                            self.relative_position -|= @intCast(@abs(offset));
+                        }
+                    }
+
+                    pub fn seekFromEnd(self: *Writer, offset: i64) !void {
+                        if (offset <= 0) {
+                            self.relative_position = self.size -| @as(u64, @intCast(@abs(offset)));
+                        }
+                    }
+                };
+
+                pub fn readOnly(self: Cursor(write_mode)) Cursor(.read_only) {
+                    return .{
+                        .slot_ptr = self.slot_ptr,
+                        .db = self.db,
+                    };
+                }
+
+                pub fn readPath(self: Cursor(write_mode), comptime Ctx: type, path: []const PathPart(Ctx)) !?Cursor(write_mode) {
+                    const slot_ptr = self.db.readSlot(.read_only, Ctx, path, self.slot_ptr) catch |err| {
+                        switch (err) {
+                            error.KeyNotFound => return null,
+                            else => return err,
+                        }
+                    };
+                    return .{
+                        .slot_ptr = slot_ptr,
+                        .db = self.db,
+                    };
+                }
+
+                pub fn writePath(self: Cursor(.read_write), comptime Ctx: type, path: []const PathPart(Ctx)) !Cursor(.read_write) {
+                    const slot_ptr = try self.db.readSlot(.read_write, Ctx, path, self.slot_ptr);
+                    return .{
+                        .slot_ptr = slot_ptr,
+                        .db = self.db,
+                    };
+                }
+
+                pub fn readUint(self: Cursor(write_mode)) !u64 {
+                    if (self.slot_ptr.slot.tag != .uint) {
+                        return error.UnexpectedTag;
+                    }
+                    return self.slot_ptr.slot.value;
+                }
+
+                pub fn readInt(self: Cursor(write_mode)) !i64 {
+                    if (self.slot_ptr.slot.tag != .int) {
+                        return error.UnexpectedTag;
+                    }
+                    return @bitCast(self.slot_ptr.slot.value);
+                }
+
+                pub fn readFloat(self: Cursor(write_mode)) !f64 {
+                    if (self.slot_ptr.slot.tag != .float) {
+                        return error.UnexpectedTag;
+                    }
+                    return @bitCast(self.slot_ptr.slot.value);
+                }
+
+                pub fn readBytesAlloc(self: Cursor(write_mode), allocator: std.mem.Allocator, max_size: usize) ![]u8 {
+                    const core_reader = self.db.core.reader();
+
+                    if (self.slot_ptr.slot.tag != .bytes) {
+                        return error.UnexpectedTag;
+                    }
+
+                    try self.db.core.seekTo(self.slot_ptr.slot.value);
+                    const value_size = try core_reader.readInt(u64, .big);
+
+                    if (value_size > max_size) {
+                        return error.MaxSizeExceeded;
+                    }
+
+                    const value = try allocator.alloc(u8, value_size);
+                    errdefer allocator.free(value);
+
+                    try core_reader.readNoEof(value);
+                    return value;
+                }
+
+                pub fn readBytes(self: Cursor(write_mode), buffer: []u8) ![]u8 {
+                    const core_reader = self.db.core.reader();
+
+                    if (self.slot_ptr.slot.tag != .bytes) {
+                        return error.UnexpectedTag;
+                    }
+
+                    try self.db.core.seekTo(self.slot_ptr.slot.value);
+                    const value_size = try core_reader.readInt(u64, .big);
+                    const size = @min(buffer.len, value_size);
+
+                    try core_reader.readNoEof(buffer[0..size]);
+                    return buffer[0..size];
+                }
+
+                pub const KeyValuePairCursor = struct {
+                    value_cursor: Cursor(write_mode),
+                    key_cursor: Cursor(write_mode),
+                    hash: Hash,
+                };
+
+                pub fn readKeyValuePair(self: Cursor(write_mode)) !KeyValuePairCursor {
+                    const core_reader = self.db.core.reader();
+
+                    if (self.slot_ptr.slot.tag != .kv_pair) {
+                        return error.UnexpectedTag;
+                    }
+
+                    try self.db.core.seekTo(self.slot_ptr.slot.value);
+                    const kv_pair: KeyValuePair = @bitCast(try core_reader.readInt(KeyValuePairInt, .big));
+
+                    try kv_pair.key_slot.tag.validate();
+                    try kv_pair.value_slot.tag.validate();
+
+                    const hash_pos = self.slot_ptr.slot.value;
+                    const key_slot_pos = hash_pos + byteSizeOf(Hash);
+                    const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
+
+                    return .{
+                        .value_cursor = .{ .slot_ptr = .{ .position = value_slot_pos, .slot = kv_pair.value_slot }, .db = self.db },
+                        .key_cursor = .{ .slot_ptr = .{ .position = key_slot_pos, .slot = kv_pair.key_slot }, .db = self.db },
+                        .hash = kv_pair.hash,
+                    };
+                }
+
+                pub fn writeBytes(self: *Cursor(.read_write), buffer: []const u8, mode: enum { once, replace }) !void {
+                    if (mode == .replace or self.slot_ptr.slot.tag == .none) {
+                        var cursor_writer = try self.writer();
+                        try cursor_writer.writeAll(buffer);
+                        try cursor_writer.finish();
+                    }
+                }
+
+                pub fn reader(self: *Cursor(write_mode)) !Reader {
+                    const core_reader = self.db.core.reader();
+                    const slot = self.slot_ptr.slot;
+
+                    if (slot.tag != .bytes) {
+                        return error.UnexpectedTag;
+                    }
+
+                    try self.db.core.seekTo(slot.value);
+                    const size: u64 = @intCast(try core_reader.readInt(u64, .big));
+                    const start_position = try self.db.core.getPos();
+
+                    return Reader{
+                        .parent = self,
+                        .size = size,
+                        .start_position = start_position,
+                        .relative_position = 0,
+                    };
+                }
+
+                pub fn writer(self: *Cursor(.read_write)) !Writer {
+                    if (self.slot_ptr.slot.tag != .none and self.slot_ptr.slot.tag != .bytes) {
+                        return error.UnexpectedTag;
+                    }
+
+                    const core_writer = self.db.core.writer();
+                    try self.db.core.seekFromEnd(0);
+                    const ptr_pos = try self.db.core.getPos();
+                    try core_writer.writeInt(u64, 0, .big);
+                    const start_position = try self.db.core.getPos();
+
+                    return Writer{
+                        .parent = self,
+                        .size = 0,
+                        .slot = .{ .value = ptr_pos, .tag = .bytes },
+                        .start_position = start_position,
+                        .relative_position = 0,
+                    };
+                }
+
+                pub fn pointer(self: Cursor(write_mode)) ?Slot {
+                    return if (self.slot_ptr.slot.tag == .none) null else self.slot_ptr.slot;
+                }
+
+                pub fn slice(self: Cursor(write_mode), offset: u64, size: u64) !Cursor(write_mode) {
+                    if (self.slot_ptr.slot.tag != .linked_array_list) {
+                        return error.UnexpectedTag;
+                    }
+
+                    const core_reader = self.db.core.reader();
+                    const core_writer = self.db.core.writer();
+
+                    const array_list_start = self.slot_ptr.slot.value;
+                    try self.db.core.seekTo(array_list_start);
+                    const header: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
+
+                    if (offset + size > header.size) {
+                        return error.LinkedArrayListSliceOutOfBounds;
+                    } else if (size == header.size) {
+                        return self;
+                    }
+
+                    // read the list's left blocks
+                    var left_blocks = std.ArrayList(LinkedArrayListBlockInfo).init(self.db.allocator);
+                    defer left_blocks.deinit();
+                    try self.db.readLinkedArrayListBlocks(header.ptr, offset, header.shift, &left_blocks);
+
+                    // read the list's right blocks
+                    var right_blocks = std.ArrayList(LinkedArrayListBlockInfo).init(self.db.allocator);
+                    defer right_blocks.deinit();
+                    const right_key = if (offset + size == 0) 0 else offset + size - 1;
+                    try self.db.readLinkedArrayListBlocks(header.ptr, right_key, header.shift, &right_blocks);
+
+                    // create the new blocks
+                    const block_count = left_blocks.items.len;
+                    var next_slots = [_]?LinkedArrayListSlot{null} ** 2;
+                    var next_shift: u6 = 0;
+                    for (0..block_count) |i| {
+                        const is_leaf_node = next_slots[0] == null;
+
+                        const left_block = left_blocks.items[block_count - i - 1];
+                        const right_block = right_blocks.items[block_count - i - 1];
+                        const orig_block_infos = [_]LinkedArrayListBlockInfo{
+                            left_block,
+                            right_block,
+                        };
+                        var next_blocks: [2]?[SLOT_COUNT]LinkedArrayListSlot = .{ null, null };
+
+                        if (left_block.parent_slot.slot.value == right_block.parent_slot.slot.value) {
+                            var slot_i: usize = 0;
+                            var new_root_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
+                            // left slot
+                            if (next_slots[0]) |slot| {
                                 new_root_block[slot_i] = slot;
+                            } else {
+                                new_root_block[slot_i] = left_block.block[left_block.i];
+                            }
+                            slot_i += 1;
+                            // middle slots
+                            if (left_block.i != right_block.i) {
+                                for (left_block.block[left_block.i + 1 .. right_block.i]) |slot| {
+                                    new_root_block[slot_i] = slot;
+                                    slot_i += 1;
+                                }
+                            }
+                            // right slot
+                            if (next_slots[1]) |slot| {
+                                new_root_block[slot_i] = slot;
+                            } else {
+                                new_root_block[slot_i] = left_block.block[right_block.i];
+                            }
+                            next_blocks[0] = new_root_block;
+                        } else {
+                            var slot_i: usize = 0;
+                            var new_left_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
+
+                            // first slot
+                            if (next_slots[0]) |slot| {
+                                new_left_block[slot_i] = slot;
+                            } else {
+                                new_left_block[slot_i] = left_block.block[left_block.i];
+                            }
+                            slot_i += 1;
+                            // rest of slots
+                            for (left_block.block[left_block.i + 1 ..]) |slot| {
+                                new_left_block[slot_i] = slot;
+                                slot_i += 1;
+                            }
+                            next_blocks[0] = new_left_block;
+
+                            slot_i = 0;
+                            var new_right_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
+                            // first slots
+                            for (right_block.block[0..right_block.i]) |slot| {
+                                new_right_block[slot_i] = slot;
+                                slot_i += 1;
+                            }
+                            // last slot
+                            if (next_slots[1]) |slot| {
+                                new_right_block[slot_i] = slot;
+                            } else {
+                                new_right_block[slot_i] = right_block.block[right_block.i];
+                            }
+                            next_blocks[1] = new_right_block;
+
+                            next_shift += 1;
+                        }
+
+                        // clear the next slots
+                        next_slots = .{ null, null };
+
+                        const Side = enum { left, right };
+                        const sides = [_]Side{ .left, .right };
+
+                        // write the block(s)
+                        try self.db.core.seekFromEnd(0);
+                        for (&next_slots, next_blocks, orig_block_infos, sides) |*next_slot, block_maybe, orig_block_info, side| {
+                            if (block_maybe) |block| {
+                                // determine if the block changed compared to the original block
+                                var eql = true;
+                                for (block, orig_block_info.block) |slot, orig_slot| {
+                                    if (!slot.slot.eql(orig_slot.slot)) {
+                                        eql = false;
+                                        break;
+                                    }
+                                }
+                                // if there is no change, just use the original block
+                                if (eql) {
+                                    next_slot.* = orig_block_info.parent_slot;
+                                }
+                                // otherwise make a new block
+                                else {
+                                    const next_ptr = try self.db.core.getPos();
+                                    var leaf_count: u64 = 0;
+                                    for (block) |slot| {
+                                        try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(slot), .big);
+                                        if (is_leaf_node) {
+                                            if (slot.slot.tag != .none) {
+                                                leaf_count += 1;
+                                            }
+                                        } else {
+                                            leaf_count += slot.size;
+                                        }
+                                    }
+                                    const slot: Slot = switch (side) {
+                                        // only the left side needs to have the flag set,
+                                        // because it can have a gap that affects indexing
+                                        .left => .{ .value = next_ptr, .tag = .index, .flag = 1 },
+                                        .right => .{ .value = next_ptr, .tag = .index },
+                                    };
+                                    next_slot.* = LinkedArrayListSlot{ .slot = slot, .size = leaf_count };
+                                }
+                            }
+                        }
+
+                        // we found the root node so we can exit
+                        if (next_slots[0] != null and next_slots[1] == null) {
+                            break;
+                        }
+                    }
+
+                    const root_slot = next_slots[0] orelse return error.ExpectedRootNode;
+
+                    // write new list header
+                    try self.db.core.seekFromEnd(0);
+                    const new_array_list_start = try self.db.core.getPos();
+                    try core_writer.writeInt(LinkedArrayListHeaderInt, @bitCast(LinkedArrayListHeader{
+                        .shift = next_shift,
+                        .ptr = root_slot.slot.value,
+                        .size = size,
+                    }), .big);
+
+                    return .{
+                        .slot_ptr = .{
+                            .position = null,
+                            .slot = .{ .value = new_array_list_start, .tag = .linked_array_list },
+                        },
+                        .db = self.db,
+                    };
+                }
+
+                pub fn concat(self: Cursor(write_mode), other: Cursor(write_mode)) !Cursor(write_mode) {
+                    if (self.slot_ptr.slot.tag != .linked_array_list) {
+                        return error.UnexpectedTag;
+                    }
+                    if (other.slot_ptr.slot.tag != .linked_array_list) {
+                        return error.UnexpectedTag;
+                    }
+
+                    const core_reader = self.db.core.reader();
+                    const core_writer = self.db.core.writer();
+
+                    // read the first list's blocks
+                    try self.db.core.seekTo(self.slot_ptr.slot.value);
+                    const header_a: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
+                    var blocks_a = std.ArrayList(LinkedArrayListBlockInfo).init(self.db.allocator);
+                    defer blocks_a.deinit();
+                    const key_a = if (header_a.size == 0) 0 else header_a.size - 1;
+                    try self.db.readLinkedArrayListBlocks(header_a.ptr, key_a, header_a.shift, &blocks_a);
+
+                    // read the second list's blocks
+                    try self.db.core.seekTo(other.slot_ptr.slot.value);
+                    const header_b: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
+                    var blocks_b = std.ArrayList(LinkedArrayListBlockInfo).init(self.db.allocator);
+                    defer blocks_b.deinit();
+                    try self.db.readLinkedArrayListBlocks(header_b.ptr, 0, header_b.shift, &blocks_b);
+
+                    // stitch the blocks together
+                    var next_slots = [_]?LinkedArrayListSlot{null} ** 2;
+                    var next_shift: u6 = 0;
+                    for (0..@max(blocks_a.items.len, blocks_b.items.len)) |i| {
+                        const block_infos: [2]?LinkedArrayListBlockInfo = .{
+                            if (i < blocks_a.items.len) blocks_a.items[blocks_a.items.len - 1 - i] else null,
+                            if (i < blocks_b.items.len) blocks_b.items[blocks_b.items.len - 1 - i] else null,
+                        };
+                        var next_blocks: [2]?[SLOT_COUNT]LinkedArrayListSlot = .{ null, null };
+                        const is_leaf_node = next_slots[0] == null;
+
+                        if (!is_leaf_node) {
+                            next_shift += 1;
+                        }
+
+                        for (block_infos, &next_blocks) |block_info_maybe, *next_block_maybe| {
+                            if (block_info_maybe) |block_info| {
+                                var block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
+                                var target_i: usize = 0;
+                                for (block_info.block, 0..) |slot, source_i| {
+                                    // skip i'th block if necessary
+                                    if (!is_leaf_node and block_info.i == source_i) {
+                                        continue;
+                                    }
+                                    // break on first empty slot
+                                    else if (slot.slot.tag == .none) {
+                                        break;
+                                    }
+                                    block[target_i] = slot;
+                                    target_i += 1;
+                                }
+
+                                // there are no slots in this block so don't bother writing it
+                                if (target_i == 0) {
+                                    continue;
+                                }
+
+                                next_block_maybe.* = block;
+                            }
+                        }
+
+                        var slots_to_write = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** (SLOT_COUNT * 2);
+                        var slot_i: usize = 0;
+
+                        // add the left block
+                        if (next_blocks[0]) |block| {
+                            for (block) |slot| {
+                                if (slot.slot.tag == .none) {
+                                    break;
+                                }
+                                slots_to_write[slot_i] = slot;
                                 slot_i += 1;
                             }
                         }
-                        // right slot
-                        if (next_slots[1]) |slot| {
-                            new_root_block[slot_i] = slot;
-                        } else {
-                            new_root_block[slot_i] = left_block.block[right_block.i];
+
+                        // add the center block
+                        for (next_slots) |slot_maybe| {
+                            if (slot_maybe) |slot| {
+                                slots_to_write[slot_i] = slot;
+                                slot_i += 1;
+                            }
                         }
-                        next_blocks[0] = new_root_block;
-                    } else {
-                        var slot_i: usize = 0;
-                        var new_left_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
 
-                        // first slot
-                        if (next_slots[0]) |slot| {
-                            new_left_block[slot_i] = slot;
-                        } else {
-                            new_left_block[slot_i] = left_block.block[left_block.i];
-                        }
-                        slot_i += 1;
-                        // rest of slots
-                        for (left_block.block[left_block.i + 1 ..]) |slot| {
-                            new_left_block[slot_i] = slot;
-                            slot_i += 1;
-                        }
-                        next_blocks[0] = new_left_block;
-
-                        slot_i = 0;
-                        var new_right_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
-                        // first slots
-                        for (right_block.block[0..right_block.i]) |slot| {
-                            new_right_block[slot_i] = slot;
-                            slot_i += 1;
-                        }
-                        // last slot
-                        if (next_slots[1]) |slot| {
-                            new_right_block[slot_i] = slot;
-                        } else {
-                            new_right_block[slot_i] = right_block.block[right_block.i];
-                        }
-                        next_blocks[1] = new_right_block;
-
-                        next_shift += 1;
-                    }
-
-                    // clear the next slots
-                    next_slots = .{ null, null };
-
-                    const Side = enum { left, right };
-                    const sides = [_]Side{ .left, .right };
-
-                    // write the block(s)
-                    try self.db.core.seekFromEnd(0);
-                    for (&next_slots, next_blocks, orig_block_infos, sides) |*next_slot, block_maybe, orig_block_info, side| {
-                        if (block_maybe) |block| {
-                            // determine if the block changed compared to the original block
-                            var eql = true;
-                            for (block, orig_block_info.block) |slot, orig_slot| {
-                                if (!slot.slot.eql(orig_slot.slot)) {
-                                    eql = false;
+                        // add the right block
+                        if (next_blocks[1]) |block| {
+                            for (block) |slot| {
+                                if (slot.slot.tag == .none) {
                                     break;
                                 }
-                            }
-                            // if there is no change, just use the original block
-                            if (eql) {
-                                next_slot.* = orig_block_info.parent_slot;
-                            }
-                            // otherwise make a new block
-                            else {
-                                const next_ptr = try self.db.core.getPos();
-                                var leaf_count: u64 = 0;
-                                for (block) |slot| {
-                                    try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(slot), .big);
-                                    if (is_leaf_node) {
-                                        if (slot.slot.tag != .none) {
-                                            leaf_count += 1;
-                                        }
-                                    } else {
-                                        leaf_count += slot.size;
-                                    }
-                                }
-                                const slot: Slot = switch (side) {
-                                    // only the left side needs to have the flag set,
-                                    // because it can have a gap that affects indexing
-                                    .left => .{ .value = next_ptr, .tag = .index, .flag = 1 },
-                                    .right => .{ .value = next_ptr, .tag = .index },
-                                };
-                                next_slot.* = LinkedArrayListSlot{ .slot = slot, .size = leaf_count };
+                                slots_to_write[slot_i] = slot;
+                                slot_i += 1;
                             }
                         }
-                    }
 
-                    // we found the root node so we can exit
-                    if (next_slots[0] != null and next_slots[1] == null) {
-                        break;
-                    }
-                }
+                        // clear the next slots
+                        next_slots = .{ null, null };
 
-                const root_slot = next_slots[0] orelse return error.ExpectedRootNode;
+                        // write the block(s)
+                        try self.db.core.seekFromEnd(0);
+                        for (&next_slots, 0..) |*next_slot, block_i| {
+                            const start = block_i * SLOT_COUNT;
+                            const block = slots_to_write[start .. start + SLOT_COUNT];
 
-                // write new list header
-                try self.db.core.seekFromEnd(0);
-                const new_array_list_start = try self.db.core.getPos();
-                try core_writer.writeInt(LinkedArrayListHeaderInt, @bitCast(LinkedArrayListHeader{
-                    .shift = next_shift,
-                    .ptr = root_slot.slot.value,
-                    .size = size,
-                }), .big);
-
-                return .{
-                    .slot_ptr = .{
-                        .position = null,
-                        .slot = .{ .value = new_array_list_start, .tag = .linked_array_list },
-                    },
-                    .db = self.db,
-                    .write_mode = .read_only,
-                };
-            }
-
-            pub fn concat(self: Cursor, other: Cursor) !Cursor {
-                if (self.slot_ptr.slot.tag != .linked_array_list) {
-                    return error.UnexpectedTag;
-                }
-                if (other.slot_ptr.slot.tag != .linked_array_list) {
-                    return error.UnexpectedTag;
-                }
-
-                const core_reader = self.db.core.reader();
-                const core_writer = self.db.core.writer();
-
-                // read the first list's blocks
-                try self.db.core.seekTo(self.slot_ptr.slot.value);
-                const header_a: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
-                var blocks_a = std.ArrayList(LinkedArrayListBlockInfo).init(self.db.allocator);
-                defer blocks_a.deinit();
-                const key_a = if (header_a.size == 0) 0 else header_a.size - 1;
-                try self.db.readLinkedArrayListBlocks(header_a.ptr, key_a, header_a.shift, &blocks_a);
-
-                // read the second list's blocks
-                try self.db.core.seekTo(other.slot_ptr.slot.value);
-                const header_b: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
-                var blocks_b = std.ArrayList(LinkedArrayListBlockInfo).init(self.db.allocator);
-                defer blocks_b.deinit();
-                try self.db.readLinkedArrayListBlocks(header_b.ptr, 0, header_b.shift, &blocks_b);
-
-                // stitch the blocks together
-                var next_slots = [_]?LinkedArrayListSlot{null} ** 2;
-                var next_shift: u6 = 0;
-                for (0..@max(blocks_a.items.len, blocks_b.items.len)) |i| {
-                    const block_infos: [2]?LinkedArrayListBlockInfo = .{
-                        if (i < blocks_a.items.len) blocks_a.items[blocks_a.items.len - 1 - i] else null,
-                        if (i < blocks_b.items.len) blocks_b.items[blocks_b.items.len - 1 - i] else null,
-                    };
-                    var next_blocks: [2]?[SLOT_COUNT]LinkedArrayListSlot = .{ null, null };
-                    const is_leaf_node = next_slots[0] == null;
-
-                    if (!is_leaf_node) {
-                        next_shift += 1;
-                    }
-
-                    for (block_infos, &next_blocks) |block_info_maybe, *next_block_maybe| {
-                        if (block_info_maybe) |block_info| {
-                            var block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
-                            var target_i: usize = 0;
-                            for (block_info.block, 0..) |slot, source_i| {
-                                // skip i'th block if necessary
-                                if (!is_leaf_node and block_info.i == source_i) {
-                                    continue;
-                                }
-                                // break on first empty slot
-                                else if (slot.slot.tag == .none) {
-                                    break;
-                                }
-                                block[target_i] = slot;
-                                target_i += 1;
-                            }
-
-                            // there are no slots in this block so don't bother writing it
-                            if (target_i == 0) {
-                                continue;
-                            }
-
-                            next_block_maybe.* = block;
-                        }
-                    }
-
-                    var slots_to_write = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** (SLOT_COUNT * 2);
-                    var slot_i: usize = 0;
-
-                    // add the left block
-                    if (next_blocks[0]) |block| {
-                        for (block) |slot| {
-                            if (slot.slot.tag == .none) {
+                            // this block is empty so don't bother writing it
+                            if (block[0].slot.tag == .none) {
                                 break;
                             }
-                            slots_to_write[slot_i] = slot;
-                            slot_i += 1;
-                        }
-                    }
 
-                    // add the center block
-                    for (next_slots) |slot_maybe| {
-                        if (slot_maybe) |slot| {
-                            slots_to_write[slot_i] = slot;
-                            slot_i += 1;
-                        }
-                    }
-
-                    // add the right block
-                    if (next_blocks[1]) |block| {
-                        for (block) |slot| {
-                            if (slot.slot.tag == .none) {
-                                break;
-                            }
-                            slots_to_write[slot_i] = slot;
-                            slot_i += 1;
-                        }
-                    }
-
-                    // clear the next slots
-                    next_slots = .{ null, null };
-
-                    // write the block(s)
-                    try self.db.core.seekFromEnd(0);
-                    for (&next_slots, 0..) |*next_slot, block_i| {
-                        const start = block_i * SLOT_COUNT;
-                        const block = slots_to_write[start .. start + SLOT_COUNT];
-
-                        // this block is empty so don't bother writing it
-                        if (block[0].slot.tag == .none) {
-                            break;
-                        }
-
-                        // write the block
-                        const next_ptr = try self.db.core.getPos();
-                        var leaf_count: u64 = 0;
-                        for (block) |slot| {
-                            try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(slot), .big);
-                            if (is_leaf_node) {
-                                if (slot.slot.tag != .none) {
-                                    leaf_count += 1;
-                                }
-                            } else {
-                                leaf_count += slot.size;
-                            }
-                        }
-
-                        next_slot.* = LinkedArrayListSlot{ .slot = .{ .value = next_ptr, .tag = .index, .flag = 1 }, .size = leaf_count };
-                    }
-                }
-
-                const root_ptr = blk: {
-                    if (next_slots[0]) |first_slot| {
-                        // if there is more than one slot, make a root node
-                        if (next_slots[1]) |second_slot| {
-                            var block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
-                            block[0] = first_slot;
-                            block[1] = second_slot;
-
-                            // write the root node
-                            const new_ptr = try self.db.core.getPos();
+                            // write the block
+                            const next_ptr = try self.db.core.getPos();
+                            var leaf_count: u64 = 0;
                             for (block) |slot| {
                                 try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(slot), .big);
+                                if (is_leaf_node) {
+                                    if (slot.slot.tag != .none) {
+                                        leaf_count += 1;
+                                    }
+                                } else {
+                                    leaf_count += slot.size;
+                                }
                             }
 
-                            next_shift += 1;
-
-                            break :blk new_ptr;
-                        }
-                        // otherwise the first slot is the root node
-                        else {
-                            break :blk first_slot.slot.value;
+                            next_slot.* = LinkedArrayListSlot{ .slot = .{ .value = next_ptr, .tag = .index, .flag = 1 }, .size = leaf_count };
                         }
                     }
-                    // lists were empty so just re-use existing empty block
-                    else {
-                        break :blk header_a.ptr;
-                    }
-                };
 
-                // write the header
-                const list_start = try self.db.core.getPos();
-                try core_writer.writeInt(LinkedArrayListHeaderInt, @bitCast(LinkedArrayListHeader{
-                    .shift = next_shift,
-                    .ptr = root_ptr,
-                    .size = header_a.size + header_b.size,
-                }), .big);
+                    const root_ptr = blk: {
+                        if (next_slots[0]) |first_slot| {
+                            // if there is more than one slot, make a root node
+                            if (next_slots[1]) |second_slot| {
+                                var block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
+                                block[0] = first_slot;
+                                block[1] = second_slot;
 
-                return .{
-                    .slot_ptr = .{
-                        .position = null,
-                        .slot = .{ .value = list_start, .tag = .linked_array_list },
-                    },
-                    .db = self.db,
-                    .write_mode = .read_only,
-                };
-            }
-
-            pub fn count(self: Cursor) !u64 {
-                const core_reader = self.db.core.reader();
-                switch (self.slot_ptr.slot.tag) {
-                    .array_list => {
-                        try self.db.core.seekTo(self.slot_ptr.slot.value);
-                        const header: ArrayListHeader = @bitCast(try core_reader.readInt(ArrayListHeaderInt, .big));
-                        return header.size;
-                    },
-                    .linked_array_list => {
-                        try self.db.core.seekTo(self.slot_ptr.slot.value);
-                        const header: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
-                        return header.size;
-                    },
-                    else => return error.UnexpectedTag,
-                }
-            }
-
-            pub const Iter = struct {
-                cursor: Cursor,
-                core: IterCore,
-
-                pub const IterCore = union(enum) {
-                    array_list: struct {
-                        index: u64,
-                    },
-                    linked_array_list: struct {
-                        index: u64,
-                    },
-                    hash_map: struct {
-                        stack: std.ArrayList(MapLevel),
-                    },
-
-                    pub const MapLevel = struct {
-                        position: u64,
-                        block: [SLOT_COUNT]Slot,
-                        index: u16,
-                    };
-                };
-
-                pub fn init(cursor: Cursor) !Iter {
-                    const core: IterCore = switch (cursor.slot_ptr.slot.tag) {
-                        .array_list => .{
-                            .array_list = .{
-                                .index = 0,
-                            },
-                        },
-                        .linked_array_list => .{
-                            .linked_array_list = .{
-                                .index = 0,
-                            },
-                        },
-                        .hash_map => .{
-                            .hash_map = .{
-                                .stack = blk: {
-                                    // find the block
-                                    const position = cursor.slot_ptr.slot.value;
-                                    if (cursor.slot_ptr.slot.tag != .hash_map) {
-                                        return error.UnexpectedTag;
-                                    }
-                                    try cursor.db.core.seekTo(position);
-                                    // read the block
-                                    const core_reader = cursor.db.core.reader();
-                                    var map_index_block_bytes = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                    try core_reader.readNoEof(&map_index_block_bytes);
-                                    // convert the block into 72-bit slots
-                                    var map_index_block = [_]Slot{.{}} ** SLOT_COUNT;
-                                    {
-                                        var stream = std.io.fixedBufferStream(&map_index_block_bytes);
-                                        var block_reader = stream.reader();
-                                        for (&map_index_block) |*block_slot| {
-                                            block_slot.* = @bitCast(try block_reader.readInt(SlotInt, .big));
-                                            try block_slot.tag.validate();
-                                        }
-                                    }
-                                    // init the stack
-                                    var stack = std.ArrayList(IterCore.MapLevel).init(cursor.db.allocator);
-                                    try stack.append(IterCore.MapLevel{
-                                        .position = position,
-                                        .block = map_index_block,
-                                        .index = 0,
-                                    });
-                                    break :blk stack;
-                                },
-                            },
-                        },
-                        else => return error.UnexpectedTag,
-                    };
-                    return .{
-                        .cursor = cursor,
-                        .core = core,
-                    };
-                }
-
-                pub fn deinit(self: *Iter) void {
-                    switch (self.core) {
-                        .array_list => {},
-                        .linked_array_list => {},
-                        .hash_map => self.core.hash_map.stack.deinit(),
-                    }
-                }
-
-                pub fn next(self: *Iter) !?Cursor {
-                    switch (self.core) {
-                        .array_list => {
-                            const index = self.core.array_list.index;
-                            const path = &[_]PathPart(void){.{ .array_list_get = .{ .index = index } }};
-                            const slot_ptr = self.cursor.db.readSlot(.read_only, void, path, self.cursor.slot_ptr) catch |err| {
-                                switch (err) {
-                                    error.KeyNotFound => return null,
-                                    else => return err,
+                                // write the root node
+                                const new_ptr = try self.db.core.getPos();
+                                for (block) |slot| {
+                                    try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(slot), .big);
                                 }
-                            };
-                            self.core.array_list.index += 1;
-                            return .{
-                                .slot_ptr = slot_ptr,
-                                .db = self.cursor.db,
-                                .write_mode = self.cursor.write_mode,
-                            };
+
+                                next_shift += 1;
+
+                                break :blk new_ptr;
+                            }
+                            // otherwise the first slot is the root node
+                            else {
+                                break :blk first_slot.slot.value;
+                            }
+                        }
+                        // lists were empty so just re-use existing empty block
+                        else {
+                            break :blk header_a.ptr;
+                        }
+                    };
+
+                    // write the header
+                    const list_start = try self.db.core.getPos();
+                    try core_writer.writeInt(LinkedArrayListHeaderInt, @bitCast(LinkedArrayListHeader{
+                        .shift = next_shift,
+                        .ptr = root_ptr,
+                        .size = header_a.size + header_b.size,
+                    }), .big);
+
+                    return .{
+                        .slot_ptr = .{
+                            .position = null,
+                            .slot = .{ .value = list_start, .tag = .linked_array_list },
+                        },
+                        .db = self.db,
+                    };
+                }
+
+                pub fn count(self: Cursor(write_mode)) !u64 {
+                    const core_reader = self.db.core.reader();
+                    switch (self.slot_ptr.slot.tag) {
+                        .array_list => {
+                            try self.db.core.seekTo(self.slot_ptr.slot.value);
+                            const header: ArrayListHeader = @bitCast(try core_reader.readInt(ArrayListHeaderInt, .big));
+                            return header.size;
                         },
                         .linked_array_list => {
-                            const index = self.core.linked_array_list.index;
-                            const path = &[_]PathPart(void){.{ .linked_array_list_get = .{ .index = index } }};
-                            const slot_ptr = self.cursor.db.readSlot(.read_only, void, path, self.cursor.slot_ptr) catch |err| {
-                                switch (err) {
-                                    error.KeyNotFound => return null,
-                                    else => return err,
-                                }
-                            };
-                            self.core.linked_array_list.index += 1;
-                            return .{
-                                .slot_ptr = slot_ptr,
-                                .db = self.cursor.db,
-                                .write_mode = self.cursor.write_mode,
-                            };
+                            try self.db.core.seekTo(self.slot_ptr.slot.value);
+                            const header: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
+                            return header.size;
                         },
-                        .hash_map => {
-                            while (self.core.hash_map.stack.items.len > 0) {
-                                const level = self.core.hash_map.stack.items[self.core.hash_map.stack.items.len - 1];
-                                if (level.index == level.block.len) {
-                                    _ = self.core.hash_map.stack.pop();
-                                    if (self.core.hash_map.stack.items.len > 0) {
-                                        self.core.hash_map.stack.items[self.core.hash_map.stack.items.len - 1].index += 1;
+                        else => return error.UnexpectedTag,
+                    }
+                }
+
+                pub const Iter = struct {
+                    cursor: Cursor(write_mode),
+                    core: IterCore,
+
+                    pub const IterCore = union(enum) {
+                        array_list: struct {
+                            index: u64,
+                        },
+                        linked_array_list: struct {
+                            index: u64,
+                        },
+                        hash_map: struct {
+                            stack: std.ArrayList(MapLevel),
+                        },
+
+                        pub const MapLevel = struct {
+                            position: u64,
+                            block: [SLOT_COUNT]Slot,
+                            index: u16,
+                        };
+                    };
+
+                    pub fn init(cursor: Cursor(write_mode)) !Iter {
+                        const core: IterCore = switch (cursor.slot_ptr.slot.tag) {
+                            .array_list => .{
+                                .array_list = .{
+                                    .index = 0,
+                                },
+                            },
+                            .linked_array_list => .{
+                                .linked_array_list = .{
+                                    .index = 0,
+                                },
+                            },
+                            .hash_map => .{
+                                .hash_map = .{
+                                    .stack = blk: {
+                                        // find the block
+                                        const position = cursor.slot_ptr.slot.value;
+                                        if (cursor.slot_ptr.slot.tag != .hash_map) {
+                                            return error.UnexpectedTag;
+                                        }
+                                        try cursor.db.core.seekTo(position);
+                                        // read the block
+                                        const core_reader = cursor.db.core.reader();
+                                        var map_index_block_bytes = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                                        try core_reader.readNoEof(&map_index_block_bytes);
+                                        // convert the block into 72-bit slots
+                                        var map_index_block = [_]Slot{.{}} ** SLOT_COUNT;
+                                        {
+                                            var stream = std.io.fixedBufferStream(&map_index_block_bytes);
+                                            var block_reader = stream.reader();
+                                            for (&map_index_block) |*block_slot| {
+                                                block_slot.* = @bitCast(try block_reader.readInt(SlotInt, .big));
+                                                try block_slot.tag.validate();
+                                            }
+                                        }
+                                        // init the stack
+                                        var stack = std.ArrayList(IterCore.MapLevel).init(cursor.db.allocator);
+                                        try stack.append(IterCore.MapLevel{
+                                            .position = position,
+                                            .block = map_index_block,
+                                            .index = 0,
+                                        });
+                                        break :blk stack;
+                                    },
+                                },
+                            },
+                            else => return error.UnexpectedTag,
+                        };
+                        return .{
+                            .cursor = cursor,
+                            .core = core,
+                        };
+                    }
+
+                    pub fn deinit(self: *Iter) void {
+                        switch (self.core) {
+                            .array_list => {},
+                            .linked_array_list => {},
+                            .hash_map => self.core.hash_map.stack.deinit(),
+                        }
+                    }
+
+                    pub fn next(self: *Iter) !?Cursor(write_mode) {
+                        switch (self.core) {
+                            .array_list => {
+                                const index = self.core.array_list.index;
+                                const path = &[_]PathPart(void){.{ .array_list_get = .{ .index = index } }};
+                                const slot_ptr = self.cursor.db.readSlot(.read_only, void, path, self.cursor.slot_ptr) catch |err| {
+                                    switch (err) {
+                                        error.KeyNotFound => return null,
+                                        else => return err,
                                     }
-                                    continue;
-                                } else {
-                                    const slot = level.block[level.index];
-                                    if (slot.tag == .none) {
-                                        self.core.hash_map.stack.items[self.core.hash_map.stack.items.len - 1].index += 1;
+                                };
+                                self.core.array_list.index += 1;
+                                return .{
+                                    .slot_ptr = slot_ptr,
+                                    .db = self.cursor.db,
+                                };
+                            },
+                            .linked_array_list => {
+                                const index = self.core.linked_array_list.index;
+                                const path = &[_]PathPart(void){.{ .linked_array_list_get = .{ .index = index } }};
+                                const slot_ptr = self.cursor.db.readSlot(.read_only, void, path, self.cursor.slot_ptr) catch |err| {
+                                    switch (err) {
+                                        error.KeyNotFound => return null,
+                                        else => return err,
+                                    }
+                                };
+                                self.core.linked_array_list.index += 1;
+                                return .{
+                                    .slot_ptr = slot_ptr,
+                                    .db = self.cursor.db,
+                                };
+                            },
+                            .hash_map => {
+                                while (self.core.hash_map.stack.items.len > 0) {
+                                    const level = self.core.hash_map.stack.items[self.core.hash_map.stack.items.len - 1];
+                                    if (level.index == level.block.len) {
+                                        _ = self.core.hash_map.stack.pop();
+                                        if (self.core.hash_map.stack.items.len > 0) {
+                                            self.core.hash_map.stack.items[self.core.hash_map.stack.items.len - 1].index += 1;
+                                        }
                                         continue;
                                     } else {
-                                        if (slot.tag == .index) {
-                                            // find the block
-                                            const next_pos = slot.value;
-                                            try self.cursor.db.core.seekTo(next_pos);
-                                            // read the block
-                                            const core_reader = self.cursor.db.core.reader();
-                                            var map_index_block_bytes = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                            try core_reader.readNoEof(&map_index_block_bytes);
-                                            // convert the block into 72-bit slots
-                                            var map_index_block = [_]Slot{.{}} ** SLOT_COUNT;
-                                            {
-                                                var stream = std.io.fixedBufferStream(&map_index_block_bytes);
-                                                var block_reader = stream.reader();
-                                                for (&map_index_block) |*block_slot| {
-                                                    block_slot.* = @bitCast(try block_reader.readInt(SlotInt, .big));
-                                                    try block_slot.tag.validate();
-                                                }
-                                            }
-                                            // append to the stack
-                                            try self.core.hash_map.stack.append(IterCore.MapLevel{
-                                                .position = next_pos,
-                                                .block = map_index_block,
-                                                .index = 0,
-                                            });
+                                        const slot = level.block[level.index];
+                                        if (slot.tag == .none) {
+                                            self.core.hash_map.stack.items[self.core.hash_map.stack.items.len - 1].index += 1;
                                             continue;
                                         } else {
-                                            self.core.hash_map.stack.items[self.core.hash_map.stack.items.len - 1].index += 1;
-                                            const position = level.position + (level.index * byteSizeOf(Slot));
-                                            return .{
-                                                .slot_ptr = .{ .position = position, .slot = slot },
-                                                .db = self.cursor.db,
-                                                .write_mode = self.cursor.write_mode,
-                                            };
+                                            if (slot.tag == .index) {
+                                                // find the block
+                                                const next_pos = slot.value;
+                                                try self.cursor.db.core.seekTo(next_pos);
+                                                // read the block
+                                                const core_reader = self.cursor.db.core.reader();
+                                                var map_index_block_bytes = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                                                try core_reader.readNoEof(&map_index_block_bytes);
+                                                // convert the block into 72-bit slots
+                                                var map_index_block = [_]Slot{.{}} ** SLOT_COUNT;
+                                                {
+                                                    var stream = std.io.fixedBufferStream(&map_index_block_bytes);
+                                                    var block_reader = stream.reader();
+                                                    for (&map_index_block) |*block_slot| {
+                                                        block_slot.* = @bitCast(try block_reader.readInt(SlotInt, .big));
+                                                        try block_slot.tag.validate();
+                                                    }
+                                                }
+                                                // append to the stack
+                                                try self.core.hash_map.stack.append(IterCore.MapLevel{
+                                                    .position = next_pos,
+                                                    .block = map_index_block,
+                                                    .index = 0,
+                                                });
+                                                continue;
+                                            } else {
+                                                self.core.hash_map.stack.items[self.core.hash_map.stack.items.len - 1].index += 1;
+                                                const position = level.position + (level.index * byteSizeOf(Slot));
+                                                return .{
+                                                    .slot_ptr = .{ .position = position, .slot = slot },
+                                                    .db = self.cursor.db,
+                                                };
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            return null;
-                        },
+                                return null;
+                            },
+                        }
                     }
+                };
+
+                pub fn iter(self: Cursor(write_mode)) !Iter {
+                    return try Iter.init(self);
                 }
             };
-
-            pub fn iter(self: Cursor) !Iter {
-                return try Iter.init(self);
-            }
-        };
+        }
 
         // high level API
 
         pub fn HashMap(comptime write_mode: UserWriteMode) type {
             return struct {
-                cursor: Database(db_kind, Hash).Cursor,
+                cursor: Database(db_kind, Hash).Cursor(write_mode),
 
-                pub fn init(cursor: Database(db_kind, Hash).Cursor) !HashMap(write_mode) {
+                pub fn init(cursor: Database(db_kind, Hash).Cursor(write_mode)) !HashMap(write_mode) {
                     return switch (write_mode) {
                         .read_only => .{
                             .cursor = .{
                                 .slot_ptr = cursor.slot_ptr,
                                 .db = cursor.db,
-                                .write_mode = write_mode,
                             },
                         },
                         .read_write => .{
@@ -2224,7 +2212,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     };
                 }
 
-                pub fn get(self: HashMap(write_mode), hash: Hash) !?Cursor {
+                pub fn get(self: HashMap(write_mode), hash: Hash) !?Cursor(write_mode) {
                     return try self.cursor.readPath(void, &.{
                         .{ .hash_map_get = .{ .value = hash } },
                     });
@@ -2237,7 +2225,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
-                pub fn put(self: HashMap(.read_write), hash: Hash) !Cursor {
+                pub fn put(self: HashMap(.read_write), hash: Hash) !Cursor(write_mode) {
                     return try self.cursor.writePath(void, &.{
                         .{ .hash_map_get = .{ .value = hash } },
                     });
@@ -2253,15 +2241,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
         pub fn ArrayList(comptime write_mode: UserWriteMode) type {
             return struct {
-                cursor: Database(db_kind, Hash).Cursor,
+                cursor: Database(db_kind, Hash).Cursor(write_mode),
 
-                pub fn init(cursor: Database(db_kind, Hash).Cursor) !ArrayList(write_mode) {
+                pub fn init(cursor: Database(db_kind, Hash).Cursor(write_mode)) !ArrayList(write_mode) {
                     return switch (write_mode) {
                         .read_only => .{
                             .cursor = .{
                                 .slot_ptr = cursor.slot_ptr,
                                 .db = cursor.db,
-                                .write_mode = write_mode,
                             },
                         },
                         .read_write => .{
@@ -2270,7 +2257,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     };
                 }
 
-                pub fn get(self: ArrayList(write_mode), index: i65) !?Cursor {
+                pub fn get(self: ArrayList(write_mode), index: i65) !?Cursor(write_mode) {
                     return try self.cursor.readPath(void, &.{
                         .{ .array_list_get = .{ .index = index } },
                     });
@@ -2283,7 +2270,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
-                pub fn append(self: ArrayList(.read_write)) !Cursor {
+                pub fn append(self: ArrayList(.read_write)) !Cursor(write_mode) {
                     return try self.cursor.writePath(void, &.{
                         .{ .array_list_get = .append },
                     });
@@ -2293,7 +2280,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     const InternalCtx = struct {
                         ctx: Ctx,
 
-                        pub fn run(ctx_self: @This(), cursor: *Database(db_kind, Hash).Cursor) !void {
+                        pub fn run(ctx_self: @This(), cursor: *Database(db_kind, Hash).Cursor(write_mode)) !void {
                             try ctx_self.ctx.run(cursor);
                         }
                     };

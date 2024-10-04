@@ -34,7 +34,7 @@ const list = try DB.ArrayList(.read_write).init(db.rootCursor());
 //    {"name": "Bob", "age": 42}
 //  ]}
 const Ctx = struct {
-    pub fn run(_: @This(), cursor: *DB.Cursor) !void {
+    pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
         const map = try DB.HashMap(.read_write).init(cursor.*);
 
         try map.putValue(hashBuffer("foo"), .{ .bytes = "foo" });
@@ -65,7 +65,7 @@ try list.appendCopy(Ctx, Ctx{});
 // get the most recent copy of the database.
 // the -1 index will return the last index in the list.
 const map_cursor = (try list.get(-1)).?;
-const map = try DB.HashMap(.read_only).init(map_cursor);
+const map = try DB.HashMap(.read_only).init(map_cursor.readOnly());
 
 // we can read the value of "foo" from the map by getting
 // the cursor to "foo" and then calling readBytesAlloc on it
