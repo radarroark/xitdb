@@ -298,7 +298,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
         };
 
         pub const WriteableValue = union(enum) {
-            slot: Slot,
+            slot: ?Slot,
             none,
             uint: u64,
             int: i64,
@@ -794,7 +794,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                     const core_writer = self.core.writer();
 
-                    var slot: Slot = switch (part.write) {
+                    var slot_maybe: ?Slot = switch (part.write) {
                         .slot => part.write.slot,
                         .none => .{ .tag = .none },
                         .uint => .{ .value = part.write.uint, .tag = .uint },
@@ -811,13 +811,18 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             break :blk writer.slot;
                         },
                     };
-                    slot.flag = 1; // important for linked array lists
 
-                    try self.core.seekTo(position);
-                    try core_writer.writeInt(SlotInt, @bitCast(slot), .big);
+                    if (slot_maybe) |*slot| {
+                        slot.flag = 1; // important for linked array lists
 
-                    const next_slot_ptr = SlotPointer{ .position = slot_ptr.position, .slot = slot };
-                    return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
+                        try self.core.seekTo(position);
+                        try core_writer.writeInt(SlotInt, @bitCast(slot.*), .big);
+
+                        const next_slot_ptr = SlotPointer{ .position = slot_ptr.position, .slot = slot.* };
+                        return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
+                    } else {
+                        return self.readSlotPointer(write_mode, Ctx, path[1..], slot_ptr);
+                    }
                 },
                 .ctx => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
@@ -2265,6 +2270,16 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
+                pub fn getSlot(self: ArrayList(write_mode), index: i65) !?Slot {
+                    if (try self.cursor.readPath(void, &.{
+                        .{ .array_list_get = .{ .index = index } },
+                    })) |cursor| {
+                        return cursor.slot();
+                    } else {
+                        return null;
+                    }
+                }
+
                 pub fn appendValue(self: ArrayList(.read_write), value: WriteableValue) !void {
                     _ = try self.cursor.writePath(void, &.{
                         .{ .array_list_get = .append },
@@ -2278,7 +2293,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
-                pub fn appendCopy(self: ArrayList(.read_write), comptime Ctx: type, ctx: Ctx) !void {
+                pub fn appendContext(self: ArrayList(.read_write), value: WriteableValue, comptime Ctx: type, ctx: Ctx) !void {
                     const InternalCtx = struct {
                         ctx: Ctx,
 
@@ -2287,7 +2302,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         }
                     };
                     _ = try self.cursor.writePath(InternalCtx, &.{
-                        .{ .array_list_get = .append_copy },
+                        .{ .array_list_get = .append },
+                        .{ .write = value },
                         .{ .ctx = .{ .ctx = ctx } },
                     });
                 }

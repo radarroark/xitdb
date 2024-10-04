@@ -30,10 +30,12 @@ test "high level api" {
     // because each transaction is stored as an item in this list
     const list = try DB.ArrayList(.read_write).init(db.rootCursor());
 
-    // this is how a transaction is executed. we call list.appendCopy,
-    // which grabs the most recent copy of the db and appends it to the list.
-    // then, in the context below, we interpret it as a HashMap
-    // and add a bunch of data to it.
+    // this is how a transaction is executed. we call list.appendContext,
+    // providing it with the most recent copy of the db and a context
+    // object. the context object has a method that will run before the
+    // transaction has completed. this method is where we can write
+    // changes to the db. if any error happens in it, the transaction
+    // will not complete and the db will be unaffected.
     const Ctx = struct {
         pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
             const map = try DB.HashMap(.read_write).init(cursor.*);
@@ -62,7 +64,7 @@ test "high level api" {
             try bob.putValue(hashBuffer("age"), .{ .uint = 42 });
         }
     };
-    try list.appendCopy(Ctx, Ctx{});
+    try list.appendContext(.{ .slot = try list.getSlot(-1) }, Ctx, Ctx{});
 
     // get the most recent copy of the database.
     // the -1 index will return the last index in the list.
