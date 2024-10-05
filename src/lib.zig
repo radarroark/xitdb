@@ -2205,6 +2205,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
+                pub fn getSlot(self: HashMap(write_mode), hash: Hash) !?Slot {
+                    return try self.cursor.readPathSlot(void, &.{
+                        .{ .hash_map_get = .{ .value = hash } },
+                    });
+                }
+
                 pub fn put(self: HashMap(.read_write), hash: Hash) !Cursor(.read_write) {
                     return try self.cursor.writePath(void, &.{
                         .{ .hash_map_get = .{ .value = hash } },

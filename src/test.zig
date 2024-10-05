@@ -78,7 +78,8 @@ test "high level api" {
     defer allocator.free(foo_value);
     try std.testing.expectEqualStrings("foo", foo_value);
 
-    try std.testing.expect(null == try map.get(hashBuffer("bar")));
+    try std.testing.expectEqual(.bytes, (try map.getSlot(hashBuffer("foo"))).?.tag);
+    try std.testing.expectEqual(null, try map.get(hashBuffer("bar")));
 
     // to get the "fruits" list, we get the cursor to it and
     // then pass it to the ArrayList.init method
