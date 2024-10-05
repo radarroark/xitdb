@@ -2211,6 +2211,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
+                pub fn getKey(self: HashMap(write_mode), hash: Hash) !?Cursor(.read_only) {
+                    return try self.cursor.readPath(void, &.{
+                        .{ .hash_map_get = .{ .key = hash } },
+                    });
+                }
+
                 pub fn put(self: HashMap(.read_write), hash: Hash) !Cursor(.read_write) {
                     return try self.cursor.writePath(void, &.{
                         .{ .hash_map_get = .{ .value = hash } },
@@ -2220,6 +2226,19 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 pub fn putData(self: HashMap(.read_write), hash: Hash, data: WriteableData) !void {
                     _ = try self.cursor.writePath(void, &.{
                         .{ .hash_map_get = .{ .value = hash } },
+                        .{ .write = data },
+                    });
+                }
+
+                pub fn putKey(self: HashMap(.read_write), hash: Hash) !Cursor(.read_write) {
+                    return try self.cursor.writePath(void, &.{
+                        .{ .hash_map_get = .{ .key = hash } },
+                    });
+                }
+
+                pub fn putKeyData(self: HashMap(.read_write), hash: Hash, data: WriteableData) !void {
+                    _ = try self.cursor.writePath(void, &.{
+                        .{ .hash_map_get = .{ .key = hash } },
                         .{ .write = data },
                     });
                 }

@@ -110,6 +110,12 @@ test "high level api" {
             pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
                 const map = try DB.HashMap(.read_write).init(cursor.*);
 
+                // this associates the hash of "fruits" with the actual string.
+                // hash maps use hashes directly as keys so they are not able
+                // to get the original bytes of the key unless we store it
+                // explicitly this way.
+                try map.putKeyData(hashBuffer("fruits"), .{ .bytes = "fruits" });
+
                 const fruits_cursor = try map.put(hashBuffer("fruits"));
                 const fruits = try DB.ArrayList(.read_write).init(fruits_cursor);
                 try fruits.putData(0, .{ .bytes = "lemon" });
@@ -126,6 +132,11 @@ test "high level api" {
 
         const map_cursor = (try list.get(-1)).?;
         const map = try DB.HashMap(.read_only).init(map_cursor);
+
+        const fruits_key_cursor = (try map.getKey(hashBuffer("fruits"))).?;
+        const fruits_key_value = try fruits_key_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+        defer allocator.free(fruits_key_value);
+        try std.testing.expectEqualStrings("fruits", fruits_key_value);
 
         const fruits_cursor = (try map.get(hashBuffer("fruits"))).?;
         const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
