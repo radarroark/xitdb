@@ -2262,6 +2262,19 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
+                pub fn put(self: ArrayList(.read_write), index: i65) !Cursor(.read_write) {
+                    return try self.cursor.writePath(void, &.{
+                        .{ .array_list_get = .{ .index = index } },
+                    });
+                }
+
+                pub fn putData(self: ArrayList(.read_write), index: i65, data: WriteableData) !void {
+                    _ = try self.cursor.writePath(void, &.{
+                        .{ .array_list_get = .{ .index = index } },
+                        .{ .write = data },
+                    });
+                }
+
                 pub fn append(self: ArrayList(.read_write)) !Cursor(.read_write) {
                     return try self.cursor.writePath(void, &.{
                         .{ .array_list_get = .append },
