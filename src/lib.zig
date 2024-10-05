@@ -1452,7 +1452,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     };
                 }
 
-                pub fn readPath(self: Cursor(write_mode), comptime Ctx: type, path: []const PathPart(Ctx)) !?Cursor(write_mode) {
+                pub fn readPath(self: Cursor(write_mode), comptime Ctx: type, path: []const PathPart(Ctx)) !?Cursor(.read_only) {
                     const slot_ptr = self.db.readSlotPointer(.read_only, Ctx, path, self.slot_ptr) catch |err| {
                         switch (err) {
                             error.KeyNotFound => return null,
@@ -2199,7 +2199,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     };
                 }
 
-                pub fn get(self: HashMap(write_mode), hash: Hash) !?Cursor(write_mode) {
+                pub fn get(self: HashMap(write_mode), hash: Hash) !?Cursor(.read_only) {
                     return try self.cursor.readPath(void, &.{
                         .{ .hash_map_get = .{ .value = hash } },
                     });
@@ -2244,7 +2244,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     };
                 }
 
-                pub fn get(self: ArrayList(write_mode), index: i65) !?Cursor(write_mode) {
+                pub fn get(self: ArrayList(write_mode), index: i65) !?Cursor(.read_only) {
                     return try self.cursor.readPath(void, &.{
                         .{ .array_list_get = .{ .index = index } },
                     });

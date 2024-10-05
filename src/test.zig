@@ -69,7 +69,7 @@ test "high level api" {
     // get the most recent copy of the database.
     // the -1 index will return the last index in the list.
     const map_cursor = (try list.get(-1)).?;
-    const map = try DB.HashMap(.read_only).init(map_cursor.readOnly());
+    const map = try DB.HashMap(.read_only).init(map_cursor);
 
     // we can read the value of "foo" from the map by getting
     // the cursor to "foo" and then calling readBytesAlloc on it
