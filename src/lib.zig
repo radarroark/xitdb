@@ -297,7 +297,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             value,
         };
 
-        pub const WriteableValue = union(enum) {
+        pub const WriteableData = union(enum) {
             slot: ?Slot,
             none,
             uint: u64,
@@ -325,7 +325,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     value: Hash,
                 },
                 hash_map_remove: Hash,
-                write: WriteableValue,
+                write: WriteableData,
                 ctx: Ctx,
             };
         }
@@ -2211,10 +2211,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
-                pub fn putValue(self: HashMap(.read_write), hash: Hash, value: WriteableValue) !void {
+                pub fn putData(self: HashMap(.read_write), hash: Hash, data: WriteableData) !void {
                     _ = try self.cursor.writePath(void, &.{
                         .{ .hash_map_get = .{ .value = hash } },
-                        .{ .write = value },
+                        .{ .write = data },
                     });
                 }
 
@@ -2262,14 +2262,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
-                pub fn appendValue(self: ArrayList(.read_write), value: WriteableValue) !void {
+                pub fn appendData(self: ArrayList(.read_write), data: WriteableData) !void {
                     _ = try self.cursor.writePath(void, &.{
                         .{ .array_list_get = .append },
-                        .{ .write = value },
+                        .{ .write = data },
                     });
                 }
 
-                pub fn appendValueContext(self: ArrayList(.read_write), value: WriteableValue, comptime Ctx: type, ctx: Ctx) !void {
+                pub fn appendDataContext(self: ArrayList(.read_write), data: WriteableData, comptime Ctx: type, ctx: Ctx) !void {
                     const InternalCtx = struct {
                         ctx: Ctx,
 
@@ -2279,7 +2279,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     };
                     _ = try self.cursor.writePath(InternalCtx, &.{
                         .{ .array_list_get = .append },
-                        .{ .write = value },
+                        .{ .write = data },
                         .{ .ctx = .{ .ctx = ctx } },
                     });
                 }

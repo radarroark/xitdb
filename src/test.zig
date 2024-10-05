@@ -30,7 +30,7 @@ test "high level api" {
     // because each transaction is stored as an item in this list
     const list = try DB.ArrayList(.read_write).init(db.rootCursor());
 
-    // this is how a transaction is executed. we call list.appendValueContext,
+    // this is how a transaction is executed. we call list.appendDataContext,
     // providing it with the most recent copy of the db and a context
     // object. the context object has a method that will run before the
     // transaction has completed. this method is where we can write
@@ -40,31 +40,31 @@ test "high level api" {
         pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
             const map = try DB.HashMap(.read_write).init(cursor.*);
 
-            try map.putValue(hashBuffer("foo"), .{ .bytes = "foo" });
-            try map.putValue(hashBuffer("bar"), .{ .bytes = "bar" });
+            try map.putData(hashBuffer("foo"), .{ .bytes = "foo" });
+            try map.putData(hashBuffer("bar"), .{ .bytes = "bar" });
             try map.remove(hashBuffer("bar"));
 
             const fruits_cursor = try map.put(hashBuffer("fruits"));
             const fruits = try DB.ArrayList(.read_write).init(fruits_cursor);
-            try fruits.appendValue(.{ .bytes = "apple" });
-            try fruits.appendValue(.{ .bytes = "pear" });
-            try fruits.appendValue(.{ .bytes = "grape" });
+            try fruits.appendData(.{ .bytes = "apple" });
+            try fruits.appendData(.{ .bytes = "pear" });
+            try fruits.appendData(.{ .bytes = "grape" });
 
             const people_cursor = try map.put(hashBuffer("people"));
             const people = try DB.ArrayList(.read_write).init(people_cursor);
 
             const alice_cursor = try people.append();
             const alice = try DB.HashMap(.read_write).init(alice_cursor);
-            try alice.putValue(hashBuffer("name"), .{ .bytes = "Alice" });
-            try alice.putValue(hashBuffer("age"), .{ .uint = 25 });
+            try alice.putData(hashBuffer("name"), .{ .bytes = "Alice" });
+            try alice.putData(hashBuffer("age"), .{ .uint = 25 });
 
             const bob_cursor = try people.append();
             const bob = try DB.HashMap(.read_write).init(bob_cursor);
-            try bob.putValue(hashBuffer("name"), .{ .bytes = "Bob" });
-            try bob.putValue(hashBuffer("age"), .{ .uint = 42 });
+            try bob.putData(hashBuffer("name"), .{ .bytes = "Bob" });
+            try bob.putData(hashBuffer("age"), .{ .uint = 42 });
         }
     };
-    try list.appendValueContext(.{ .slot = try list.getSlot(-1) }, Ctx, Ctx{});
+    try list.appendDataContext(.{ .slot = try list.getSlot(-1) }, Ctx, Ctx{});
 
     // get the most recent copy of the database.
     // the -1 index will return the last index in the list.
