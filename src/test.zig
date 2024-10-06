@@ -28,10 +28,10 @@ test "high level api" {
 
     // the top-level data structure *must* be an ArrayList,
     // because each transaction is stored as an item in this list
-    const list = try DB.ArrayList(.read_write).init(db.rootCursor());
+    const history = try DB.ArrayList(.read_write).init(db.rootCursor());
 
     {
-        // this is how a transaction is executed. we call list.appendDataContext,
+        // this is how a transaction is executed. we call history.appendDataContext,
         // providing it with the most recent copy of the db and a context
         // object. the context object has a method that will run before the
         // transaction has completed. this method is where we can write
@@ -39,19 +39,19 @@ test "high level api" {
         // will not complete and the db will be unaffected.
         const Ctx = struct {
             pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
-                const map = try DB.HashMap(.read_write).init(cursor.*);
+                const moment = try DB.HashMap(.read_write).init(cursor.*);
 
-                try map.putData(hashBuffer("foo"), .{ .bytes = "foo" });
-                try map.putData(hashBuffer("bar"), .{ .bytes = "bar" });
-                try map.remove(hashBuffer("bar"));
+                try moment.putData(hashBuffer("foo"), .{ .bytes = "foo" });
+                try moment.putData(hashBuffer("bar"), .{ .bytes = "bar" });
+                try moment.remove(hashBuffer("bar"));
 
-                const fruits_cursor = try map.put(hashBuffer("fruits"));
+                const fruits_cursor = try moment.put(hashBuffer("fruits"));
                 const fruits = try DB.ArrayList(.read_write).init(fruits_cursor);
                 try fruits.appendData(.{ .bytes = "apple" });
                 try fruits.appendData(.{ .bytes = "pear" });
                 try fruits.appendData(.{ .bytes = "grape" });
 
-                const people_cursor = try map.put(hashBuffer("people"));
+                const people_cursor = try moment.put(hashBuffer("people"));
                 const people = try DB.ArrayList(.read_write).init(people_cursor);
 
                 const alice_cursor = try people.append();
@@ -65,26 +65,26 @@ test "high level api" {
                 try bob.putData(hashBuffer("age"), .{ .uint = 42 });
             }
         };
-        try list.appendDataContext(.{ .slot = try list.getSlot(-1) }, Ctx{});
+        try history.appendDataContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
 
-        // get the most recent copy of the database.
-        // the -1 index will return the last index in the list.
-        const map_cursor = (try list.get(-1)).?;
-        const map = try DB.HashMap(.read_only).init(map_cursor);
+        // get the most recent copy of the database, like a moment
+        // in time. the -1 index will return the last index in the list.
+        const moment_cursor = (try history.get(-1)).?;
+        const moment = try DB.HashMap(.read_only).init(moment_cursor);
 
         // we can read the value of "foo" from the map by getting
         // the cursor to "foo" and then calling readBytesAlloc on it
-        const foo_cursor = (try map.get(hashBuffer("foo"))).?;
+        const foo_cursor = (try moment.get(hashBuffer("foo"))).?;
         const foo_value = try foo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(foo_value);
         try std.testing.expectEqualStrings("foo", foo_value);
 
-        try std.testing.expectEqual(.bytes, (try map.getSlot(hashBuffer("foo"))).?.tag);
-        try std.testing.expectEqual(null, try map.get(hashBuffer("bar")));
+        try std.testing.expectEqual(.bytes, (try moment.getSlot(hashBuffer("foo"))).?.tag);
+        try std.testing.expectEqual(null, try moment.get(hashBuffer("bar")));
 
         // to get the "fruits" list, we get the cursor to it and
         // then pass it to the ArrayList.init method
-        const fruits_cursor = (try map.get(hashBuffer("fruits"))).?;
+        const fruits_cursor = (try moment.get(hashBuffer("fruits"))).?;
         try std.testing.expectEqual(3, try fruits_cursor.count());
         const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
 
@@ -94,7 +94,7 @@ test "high level api" {
         defer allocator.free(apple_value);
         try std.testing.expectEqualStrings("apple", apple_value);
 
-        const people_cursor = (try map.get(hashBuffer("people"))).?;
+        const people_cursor = (try moment.get(hashBuffer("people"))).?;
         try std.testing.expectEqual(2, try people_cursor.count());
         const people = try DB.ArrayList(.read_only).init(people_cursor);
 
@@ -108,19 +108,19 @@ test "high level api" {
     {
         const Ctx = struct {
             pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
-                const map = try DB.HashMap(.read_write).init(cursor.*);
+                const moment = try DB.HashMap(.read_write).init(cursor.*);
 
                 // this associates the hash of "fruits" with the actual string.
                 // hash maps use hashes directly as keys so they are not able
                 // to get the original bytes of the key unless we store it
                 // explicitly this way.
-                try map.putKeyData(hashBuffer("fruits"), .{ .bytes = "fruits" });
+                try moment.putKeyData(hashBuffer("fruits"), .{ .bytes = "fruits" });
 
-                const fruits_cursor = try map.put(hashBuffer("fruits"));
+                const fruits_cursor = try moment.put(hashBuffer("fruits"));
                 const fruits = try DB.ArrayList(.read_write).init(fruits_cursor);
                 try fruits.putData(0, .{ .bytes = "lemon" });
 
-                const people_cursor = try map.put(hashBuffer("people"));
+                const people_cursor = try moment.put(hashBuffer("people"));
                 const people = try DB.ArrayList(.read_write).init(people_cursor);
 
                 const alice_cursor = try people.put(0);
@@ -128,17 +128,17 @@ test "high level api" {
                 try alice.putData(hashBuffer("age"), .{ .uint = 26 });
             }
         };
-        try list.appendDataContext(.{ .slot = try list.getSlot(-1) }, Ctx{});
+        try history.appendDataContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
 
-        const map_cursor = (try list.get(-1)).?;
-        const map = try DB.HashMap(.read_only).init(map_cursor);
+        const moment_cursor = (try history.get(-1)).?;
+        const moment = try DB.HashMap(.read_only).init(moment_cursor);
 
-        const fruits_key_cursor = (try map.getKey(hashBuffer("fruits"))).?;
+        const fruits_key_cursor = (try moment.getKey(hashBuffer("fruits"))).?;
         const fruits_key_value = try fruits_key_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(fruits_key_value);
         try std.testing.expectEqualStrings("fruits", fruits_key_value);
 
-        const fruits_cursor = (try map.get(hashBuffer("fruits"))).?;
+        const fruits_cursor = (try moment.get(hashBuffer("fruits"))).?;
         const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
 
         const lemon_cursor = (try fruits.get(0)).?;
@@ -146,7 +146,7 @@ test "high level api" {
         defer allocator.free(lemon_value);
         try std.testing.expectEqualStrings("lemon", lemon_value);
 
-        const people_cursor = (try map.get(hashBuffer("people"))).?;
+        const people_cursor = (try moment.get(hashBuffer("people"))).?;
         try std.testing.expectEqual(2, try people_cursor.count());
         const people = try DB.ArrayList(.read_only).init(people_cursor);
 
@@ -158,18 +158,18 @@ test "high level api" {
 
     // make sure the old data hasn't changed
     {
-        const map_cursor = (try list.get(0)).?;
-        const map = try DB.HashMap(.read_only).init(map_cursor);
+        const moment_cursor = (try history.get(0)).?;
+        const moment = try DB.HashMap(.read_only).init(moment_cursor);
 
-        const foo_cursor = (try map.get(hashBuffer("foo"))).?;
+        const foo_cursor = (try moment.get(hashBuffer("foo"))).?;
         const foo_value = try foo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(foo_value);
         try std.testing.expectEqualStrings("foo", foo_value);
 
-        try std.testing.expectEqual(.bytes, (try map.getSlot(hashBuffer("foo"))).?.tag);
-        try std.testing.expectEqual(null, try map.get(hashBuffer("bar")));
+        try std.testing.expectEqual(.bytes, (try moment.getSlot(hashBuffer("foo"))).?.tag);
+        try std.testing.expectEqual(null, try moment.get(hashBuffer("bar")));
 
-        const fruits_cursor = (try map.get(hashBuffer("fruits"))).?;
+        const fruits_cursor = (try moment.get(hashBuffer("fruits"))).?;
         try std.testing.expectEqual(3, try fruits_cursor.count());
         const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
 
@@ -178,7 +178,7 @@ test "high level api" {
         defer allocator.free(apple_value);
         try std.testing.expectEqualStrings("apple", apple_value);
 
-        const people_cursor = (try map.get(hashBuffer("people"))).?;
+        const people_cursor = (try moment.get(hashBuffer("people"))).?;
         try std.testing.expectEqual(2, try people_cursor.count());
         const people = try DB.ArrayList(.read_only).init(people_cursor);
 

@@ -18,9 +18,9 @@ var db = try DB.init(allocator, .{ .file = file });
 
 // the top-level data structure *must* be an ArrayList,
 // because each transaction is stored as an item in this list
-const list = try DB.ArrayList(.read_write).init(db.rootCursor());
+const history = try DB.ArrayList(.read_write).init(db.rootCursor());
 
-// this is how a transaction is executed. we call list.appendDataContext,
+// this is how a transaction is executed. we call history.appendDataContext,
 // providing it with the most recent copy of the db and a context
 // object. the context object has a method that will run before the
 // transaction has completed. this method is where we can write
@@ -39,18 +39,18 @@ const list = try DB.ArrayList(.read_write).init(db.rootCursor());
 //  ]}
 const Ctx = struct {
     pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
-        const map = try DB.HashMap(.read_write).init(cursor.*);
+        const moment = try DB.HashMap(.read_write).init(cursor.*);
 
-        try map.putData(hashBuffer("foo"), .{ .bytes = "foo" });
-        try map.putData(hashBuffer("bar"), .{ .bytes = "bar" });
+        try moment.putData(hashBuffer("foo"), .{ .bytes = "foo" });
+        try moment.putData(hashBuffer("bar"), .{ .bytes = "bar" });
 
-        const fruits_cursor = try map.put(hashBuffer("fruits"));
+        const fruits_cursor = try moment.put(hashBuffer("fruits"));
         const fruits = try DB.ArrayList(.read_write).init(fruits_cursor);
         try fruits.appendData(.{ .bytes = "apple" });
         try fruits.appendData(.{ .bytes = "pear" });
         try fruits.appendData(.{ .bytes = "grape" });
 
-        const people_cursor = try map.put(hashBuffer("people"));
+        const people_cursor = try moment.put(hashBuffer("people"));
         const people = try DB.ArrayList(.read_write).init(people_cursor);
 
         const alice_cursor = try people.append();
@@ -64,23 +64,23 @@ const Ctx = struct {
         try bob.putData(hashBuffer("age"), .{ .uint = 42 });
     }
 };
-try list.appendDataContext(.{ .slot = try list.getSlot(-1) }, Ctx{});
+try history.appendDataContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
 
-// get the most recent copy of the database.
-// the -1 index will return the last index in the list.
-const map_cursor = (try list.get(-1)).?;
-const map = try DB.HashMap(.read_only).init(map_cursor);
+// get the most recent copy of the database, like a moment
+// in time. the -1 index will return the last index in the list.
+const moment_cursor = (try history.get(-1)).?;
+const moment = try DB.HashMap(.read_only).init(moment_cursor);
 
 // we can read the value of "foo" from the map by getting
 // the cursor to "foo" and then calling readBytesAlloc on it
-const foo_cursor = (try map.get(hashBuffer("foo"))).?;
+const foo_cursor = (try moment.get(hashBuffer("foo"))).?;
 const foo_value = try foo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
 defer allocator.free(foo_value);
 try std.testing.expectEqualStrings("foo", foo_value);
 
 // to get the "fruits" list, we get the cursor to it and
 // then pass it to the ArrayList init method
-const fruits_cursor = (try map.get(hashBuffer("fruits"))).?;
+const fruits_cursor = (try moment.get(hashBuffer("fruits"))).?;
 const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
 
 // now we can get the first item from the fruits list and read it
