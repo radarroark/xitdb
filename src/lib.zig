@@ -2307,18 +2307,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
-                pub fn appendDataContext(self: ArrayList(.read_write), data: WriteableData, comptime Ctx: type, ctx: Ctx) !void {
-                    const InternalCtx = struct {
-                        ctx: Ctx,
-
-                        pub fn run(ctx_self: @This(), cursor: *Database(db_kind, Hash).Cursor(write_mode)) !void {
-                            try ctx_self.ctx.run(cursor);
-                        }
-                    };
-                    _ = try self.cursor.writePath(InternalCtx, &.{
+                pub fn appendDataContext(self: ArrayList(.read_write), data: WriteableData, ctx: anytype) !void {
+                    const Ctx = @TypeOf(ctx);
+                    _ = try self.cursor.writePath(Ctx, &.{
                         .{ .array_list_get = .append },
                         .{ .write = data },
-                        .{ .ctx = .{ .ctx = ctx } },
+                        .{ .ctx = ctx },
                     });
                 }
             };

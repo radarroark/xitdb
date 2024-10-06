@@ -65,7 +65,7 @@ test "high level api" {
                 try bob.putData(hashBuffer("age"), .{ .uint = 42 });
             }
         };
-        try list.appendDataContext(.{ .slot = try list.getSlot(-1) }, Ctx, Ctx{});
+        try list.appendDataContext(.{ .slot = try list.getSlot(-1) }, Ctx{});
 
         // get the most recent copy of the database.
         // the -1 index will return the last index in the list.
@@ -128,7 +128,7 @@ test "high level api" {
                 try alice.putData(hashBuffer("age"), .{ .uint = 26 });
             }
         };
-        try list.appendDataContext(.{ .slot = try list.getSlot(-1) }, Ctx, Ctx{});
+        try list.appendDataContext(.{ .slot = try list.getSlot(-1) }, Ctx{});
 
         const map_cursor = (try list.get(-1)).?;
         const map = try DB.HashMap(.read_only).init(map_cursor);

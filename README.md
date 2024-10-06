@@ -64,7 +64,7 @@ const Ctx = struct {
         try bob.putData(hashBuffer("age"), .{ .uint = 42 });
     }
 };
-try list.appendDataContext(.{ .slot = try list.getSlot(-1) }, Ctx, Ctx{});
+try list.appendDataContext(.{ .slot = try list.getSlot(-1) }, Ctx{});
 
 // get the most recent copy of the database.
 // the -1 index will return the last index in the list.
