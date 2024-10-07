@@ -1302,7 +1302,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             });
         }
 
-        // explicitly writing .none should also work
+        // explicitly writing a null slot should also work
         for (0..8) |_| {
             _ = try root_cursor.writePath(void, &.{
                 .array_list_init,
@@ -1310,7 +1310,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = .{ .index = -1 } }}) } },
                 .linked_array_list_init,
                 .{ .linked_array_list_get = .append },
-                .{ .write = .none },
+                .{ .write = .{ .slot = null } },
             });
         }
     }

@@ -299,7 +299,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
         pub const WriteableData = union(enum) {
             slot: ?Slot,
-            none,
             uint: u64,
             int: i64,
             float: f64,
@@ -760,9 +759,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                     const core_writer = self.core.writer();
 
-                    var slot_maybe: ?Slot = switch (part.write) {
-                        .slot => part.write.slot,
-                        .none => .{ .tag = .none },
+                    var slot: Slot = switch (part.write) {
+                        .slot => part.write.slot orelse .{ .tag = .none },
                         .uint => .{ .value = part.write.uint, .tag = .uint },
                         .int => .{ .value = @bitCast(part.write.int), .tag = .int },
                         .float => .{ .value = @bitCast(part.write.float), .tag = .float },
@@ -777,18 +775,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             break :blk writer.slot;
                         },
                     };
+                    slot.flag = 1; // important for linked array lists
 
-                    if (slot_maybe) |*slot| {
-                        slot.flag = 1; // important for linked array lists
+                    try self.core.seekTo(position);
+                    try core_writer.writeInt(SlotInt, @bitCast(slot), .big);
 
-                        try self.core.seekTo(position);
-                        try core_writer.writeInt(SlotInt, @bitCast(slot.*), .big);
-
-                        const next_slot_ptr = SlotPointer{ .position = slot_ptr.position, .slot = slot.* };
-                        return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
-                    } else {
-                        return self.readSlotPointer(write_mode, Ctx, path[1..], slot_ptr);
-                    }
+                    const next_slot_ptr = SlotPointer{ .position = slot_ptr.position, .slot = slot };
+                    return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                 },
                 .ctx => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
