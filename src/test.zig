@@ -90,8 +90,8 @@ test "high level api" {
         // to get the "fruits" list, we get the cursor to it and
         // then pass it to the ArrayList.init method
         const fruits_cursor = (try moment.get(hashBuffer("fruits"))).?;
-        try std.testing.expectEqual(3, try fruits_cursor.count());
         const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
+        try std.testing.expectEqual(3, try fruits.count());
 
         // now we can get the first item from the fruits list and read it
         const apple_cursor = (try fruits.get(0)).?;
@@ -100,8 +100,8 @@ test "high level api" {
         try std.testing.expectEqualStrings("apple", apple_value);
 
         const people_cursor = (try moment.get(hashBuffer("people"))).?;
-        try std.testing.expectEqual(2, try people_cursor.count());
         const people = try DB.ArrayList(.read_only).init(people_cursor);
+        try std.testing.expectEqual(2, try people.count());
 
         const alice_cursor = (try people.get(0)).?;
         const alice = try DB.HashMap(.read_only).init(alice_cursor);
@@ -109,8 +109,8 @@ test "high level api" {
         try std.testing.expectEqual(25, try alice_age_cursor.readUint());
 
         const todos_cursor = (try moment.get(hashBuffer("todos"))).?;
-        try std.testing.expectEqual(2, try todos_cursor.count());
         const todos = try DB.LinkedArrayList(.read_only).init(todos_cursor);
+        try std.testing.expectEqual(2, try todos.count());
 
         const todo_cursor = (try todos.get(0)).?;
         const todo_value = try todo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
@@ -166,8 +166,8 @@ test "high level api" {
         try std.testing.expectEqualStrings("lemon", lemon_value);
 
         const people_cursor = (try moment.get(hashBuffer("people"))).?;
-        try std.testing.expectEqual(2, try people_cursor.count());
         const people = try DB.ArrayList(.read_only).init(people_cursor);
+        try std.testing.expectEqual(2, try people.count());
 
         const alice_cursor = (try people.get(0)).?;
         const alice = try DB.HashMap(.read_only).init(alice_cursor);
@@ -175,8 +175,8 @@ test "high level api" {
         try std.testing.expectEqual(26, try alice_age_cursor.readUint());
 
         const todos_cursor = (try moment.get(hashBuffer("todos"))).?;
-        try std.testing.expectEqual(1, try todos_cursor.count());
         const todos = try DB.LinkedArrayList(.read_only).init(todos_cursor);
+        try std.testing.expectEqual(1, try todos.count());
 
         const todo_cursor = (try todos.get(0)).?;
         const todo_value = try todo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
@@ -198,8 +198,8 @@ test "high level api" {
         try std.testing.expectEqual(null, try moment.get(hashBuffer("bar")));
 
         const fruits_cursor = (try moment.get(hashBuffer("fruits"))).?;
-        try std.testing.expectEqual(3, try fruits_cursor.count());
         const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
+        try std.testing.expectEqual(3, try fruits.count());
 
         const apple_cursor = (try fruits.get(0)).?;
         const apple_value = try apple_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
@@ -207,8 +207,8 @@ test "high level api" {
         try std.testing.expectEqualStrings("apple", apple_value);
 
         const people_cursor = (try moment.get(hashBuffer("people"))).?;
-        try std.testing.expectEqual(2, try people_cursor.count());
         const people = try DB.ArrayList(.read_only).init(people_cursor);
+        try std.testing.expectEqual(2, try people.count());
 
         const alice_cursor = (try people.get(0)).?;
         const alice = try DB.HashMap(.read_only).init(alice_cursor);
@@ -216,8 +216,8 @@ test "high level api" {
         try std.testing.expectEqual(25, try alice_age_cursor.readUint());
 
         const todos_cursor = (try moment.get(hashBuffer("todos"))).?;
-        try std.testing.expectEqual(2, try todos_cursor.count());
         const todos = try DB.LinkedArrayList(.read_only).init(todos_cursor);
+        try std.testing.expectEqual(2, try todos.count());
 
         const todo_cursor = (try todos.get(0)).?;
         const todo_value = try todo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);

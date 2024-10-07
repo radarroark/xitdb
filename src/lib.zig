@@ -2265,6 +2265,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     };
                 }
 
+                pub fn count(self: ArrayList(write_mode)) !u64 {
+                    return try self.cursor.count();
+                }
+
                 pub fn get(self: ArrayList(write_mode), index: i65) !?Cursor(.read_only) {
                     return try self.cursor.readPath(void, &.{
                         .{ .array_list_get = .{ .index = index } },
@@ -2330,6 +2334,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             .cursor = try cursor.writePath(void, &.{.linked_array_list_init}),
                         },
                     };
+                }
+
+                pub fn count(self: LinkedArrayList(write_mode)) !u64 {
+                    return try self.cursor.count();
                 }
 
                 pub fn get(self: LinkedArrayList(write_mode), index: i65) !?Cursor(.read_only) {
