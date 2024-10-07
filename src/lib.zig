@@ -1619,7 +1619,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     return if (self.slot_ptr.slot.tag == .none) null else self.slot_ptr.slot;
                 }
 
-                pub fn slice(self: Cursor(write_mode), offset: u64, size: u64) !Cursor(write_mode) {
+                pub fn slice(self: Cursor(write_mode), offset: u64, size: u64) !Cursor(.read_only) {
                     if (self.slot_ptr.slot.tag != .linked_array_list) {
                         return error.UnexpectedTag;
                     }
@@ -1634,7 +1634,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     if (offset + size > header.size) {
                         return error.LinkedArrayListSliceOutOfBounds;
                     } else if (size == header.size) {
-                        return self;
+                        return switch (write_mode) {
+                            .read_only => self,
+                            .read_write => self.readOnly(),
+                        };
                     }
 
                     // read the list's left blocks
@@ -1798,7 +1801,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     };
                 }
 
-                pub fn concat(self: Cursor(write_mode), other: Cursor(write_mode)) !Cursor(write_mode) {
+                pub fn concat(self: Cursor(write_mode), other: Cursor(.read_only)) !Cursor(.read_only) {
                     if (self.slot_ptr.slot.tag != .linked_array_list) {
                         return error.UnexpectedTag;
                     }
