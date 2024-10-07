@@ -493,6 +493,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                 .{ .array_list_get = .{ .index = -1 } },
                 .{ .hash_map_get = .{ .value = foo_key } },
             })).?;
+            try std.testing.expectEqual(3, bar_cursor.count());
             const bar_value = try bar_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
             defer allocator.free(bar_value);
             try std.testing.expectEqualStrings("bar", bar_value);

@@ -1992,6 +1992,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             const header: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
                             return header.size;
                         },
+                        .bytes => {
+                            try self.db.core.seekTo(self.slot_ptr.slot.value);
+                            return try core_reader.readInt(u64, .big);
+                        },
                         else => return error.UnexpectedTag,
                     }
                 }
