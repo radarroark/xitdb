@@ -2313,5 +2313,71 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 }
             };
         }
+
+        pub fn LinkedArrayList(comptime write_mode: WriteMode) type {
+            return struct {
+                cursor: Database(db_kind, Hash).Cursor(write_mode),
+
+                pub fn init(cursor: Database(db_kind, Hash).Cursor(write_mode)) !LinkedArrayList(write_mode) {
+                    return switch (write_mode) {
+                        .read_only => .{
+                            .cursor = .{
+                                .slot_ptr = cursor.slot_ptr,
+                                .db = cursor.db,
+                            },
+                        },
+                        .read_write => .{
+                            .cursor = try cursor.writePath(void, &.{.linked_array_list_init}),
+                        },
+                    };
+                }
+
+                pub fn get(self: LinkedArrayList(write_mode), index: i65) !?Cursor(.read_only) {
+                    return try self.cursor.readPath(void, &.{
+                        .{ .linked_array_list_get = .{ .index = index } },
+                    });
+                }
+
+                pub fn getSlot(self: LinkedArrayList(write_mode), index: i65) !?Slot {
+                    return try self.cursor.readPathSlot(void, &.{
+                        .{ .linked_array_list_get = .{ .index = index } },
+                    });
+                }
+
+                pub fn put(self: LinkedArrayList(.read_write), index: i65) !Cursor(.read_write) {
+                    return try self.cursor.writePath(void, &.{
+                        .{ .linked_array_list_get = .{ .index = index } },
+                    });
+                }
+
+                pub fn putData(self: LinkedArrayList(.read_write), index: i65, data: WriteableData) !void {
+                    _ = try self.cursor.writePath(void, &.{
+                        .{ .linked_array_list_get = .{ .index = index } },
+                        .{ .write = data },
+                    });
+                }
+
+                pub fn append(self: LinkedArrayList(.read_write)) !Cursor(.read_write) {
+                    return try self.cursor.writePath(void, &.{
+                        .{ .linked_array_list_get = .append },
+                    });
+                }
+
+                pub fn appendData(self: LinkedArrayList(.read_write), data: WriteableData) !void {
+                    _ = try self.cursor.writePath(void, &.{
+                        .{ .linked_array_list_get = .append },
+                        .{ .write = data },
+                    });
+                }
+
+                pub fn slice(self: LinkedArrayList(write_mode), offset: u64, size: u64) !Cursor(.read_only) {
+                    return try self.cursor.slice(offset, size);
+                }
+
+                pub fn concat(self: LinkedArrayList(.read_write), other: Cursor(.read_only)) !Cursor(.read_only) {
+                    return try self.cursor.concat(other);
+                }
+            };
+        }
     };
 }

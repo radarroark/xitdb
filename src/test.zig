@@ -63,6 +63,11 @@ test "high level api" {
                 const bob = try DB.HashMap(.read_write).init(bob_cursor);
                 try bob.putData(hashBuffer("name"), .{ .bytes = "Bob" });
                 try bob.putData(hashBuffer("age"), .{ .uint = 42 });
+
+                const todos_cursor = try moment.put(hashBuffer("todos"));
+                const todos = try DB.LinkedArrayList(.read_write).init(todos_cursor);
+                try todos.appendData(.{ .bytes = "Pay the bills" });
+                try todos.appendData(.{ .bytes = "Get an oil change" });
             }
         };
         try history.appendDataContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
@@ -102,6 +107,15 @@ test "high level api" {
         const alice = try DB.HashMap(.read_only).init(alice_cursor);
         const alice_age_cursor = (try alice.get(hashBuffer("age"))).?;
         try std.testing.expectEqual(25, try alice_age_cursor.readUint());
+
+        const todos_cursor = (try moment.get(hashBuffer("todos"))).?;
+        try std.testing.expectEqual(2, try todos_cursor.count());
+        const todos = try DB.LinkedArrayList(.read_only).init(todos_cursor);
+
+        const todo_cursor = (try todos.get(0)).?;
+        const todo_value = try todo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+        defer allocator.free(todo_value);
+        try std.testing.expectEqualStrings("Pay the bills", todo_value);
     }
 
     // make a new transaction and change the data
@@ -126,6 +140,11 @@ test "high level api" {
                 const alice_cursor = try people.put(0);
                 const alice = try DB.HashMap(.read_write).init(alice_cursor);
                 try alice.putData(hashBuffer("age"), .{ .uint = 26 });
+
+                const todos_cursor = try moment.put(hashBuffer("todos"));
+                const todos = try DB.LinkedArrayList(.read_write).init(todos_cursor);
+                const new_todos = try todos.slice(1, 1);
+                try moment.putData(hashBuffer("todos"), .{ .slot = new_todos.slot() });
             }
         };
         try history.appendDataContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
@@ -154,6 +173,15 @@ test "high level api" {
         const alice = try DB.HashMap(.read_only).init(alice_cursor);
         const alice_age_cursor = (try alice.get(hashBuffer("age"))).?;
         try std.testing.expectEqual(26, try alice_age_cursor.readUint());
+
+        const todos_cursor = (try moment.get(hashBuffer("todos"))).?;
+        try std.testing.expectEqual(1, try todos_cursor.count());
+        const todos = try DB.LinkedArrayList(.read_only).init(todos_cursor);
+
+        const todo_cursor = (try todos.get(0)).?;
+        const todo_value = try todo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+        defer allocator.free(todo_value);
+        try std.testing.expectEqualStrings("Get an oil change", todo_value);
     }
 
     // make sure the old data hasn't changed
@@ -186,6 +214,15 @@ test "high level api" {
         const alice = try DB.HashMap(.read_only).init(alice_cursor);
         const alice_age_cursor = (try alice.get(hashBuffer("age"))).?;
         try std.testing.expectEqual(25, try alice_age_cursor.readUint());
+
+        const todos_cursor = (try moment.get(hashBuffer("todos"))).?;
+        try std.testing.expectEqual(2, try todos_cursor.count());
+        const todos = try DB.LinkedArrayList(.read_only).init(todos_cursor);
+
+        const todo_cursor = (try todos.get(0)).?;
+        const todo_value = try todo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+        defer allocator.free(todo_value);
+        try std.testing.expectEqualStrings("Pay the bills", todo_value);
     }
 }
 
