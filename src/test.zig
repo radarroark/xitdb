@@ -282,6 +282,18 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
                 try std.testing.expectEqual(val, n);
             }
 
+            // check all values in the new slice with an iterator
+            {
+                var iter = try even_list_slice_cursor.iter();
+                defer iter.deinit();
+                var i: u64 = 0;
+                while (try iter.next()) |num_cursor| {
+                    try std.testing.expectEqual(values.items[slice_offset + i], try num_cursor.readUint());
+                    i += 1;
+                }
+                try std.testing.expectEqual(slice_size, i);
+            }
+
             // there are no extra items
             try std.testing.expectEqual(null, try cursor.readPath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("even-slice") } },
@@ -400,6 +412,18 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
                     .{ .linked_array_list_get = .{ .index = i } },
                 })).?.slot_ptr.slot.value;
                 try std.testing.expectEqual(val, n);
+            }
+
+            // check all values in the new list with an iterator
+            {
+                var iter = try combo_list_cursor.iter();
+                defer iter.deinit();
+                var i: u64 = 0;
+                while (try iter.next()) |num_cursor| {
+                    try std.testing.expectEqual(values.items[i], try num_cursor.readUint());
+                    i += 1;
+                }
+                try std.testing.expectEqual(try even_list_cursor.count() + try odd_list_cursor.count(), i);
             }
 
             // there are no extra items
@@ -1111,21 +1135,44 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         }
 
         // iterate over array_list
-        var inner_cursor = (try root_cursor.readPath(void, &.{
-            .{ .array_list_get = .{ .index = -1 } },
-        })).?;
-        var iter = try inner_cursor.iter();
-        defer iter.deinit();
-        var i: u64 = 0;
-        while (try iter.next()) |*next_cursor| {
-            const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
-            defer allocator.free(value);
-            const value2 = try next_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
-            defer allocator.free(value2);
-            try std.testing.expectEqualStrings(value, value2);
-            i += 1;
+        {
+            var inner_cursor = (try root_cursor.readPath(void, &.{
+                .{ .array_list_get = .{ .index = -1 } },
+            })).?;
+            var iter = try inner_cursor.iter();
+            defer iter.deinit();
+            var i: u64 = 0;
+            while (try iter.next()) |*next_cursor| {
+                const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
+                defer allocator.free(value);
+                const value2 = try next_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+                defer allocator.free(value2);
+                try std.testing.expectEqualStrings(value, value2);
+                i += 1;
+            }
+            try std.testing.expectEqual(10, i);
         }
-        try std.testing.expectEqual(10, i);
+
+        // set first slot to .none and make sure iteration still works.
+        // this validates that it correctly returns .none slots if
+        // their flag is set, rather than skipping over them.
+        {
+            _ = try root_cursor.writePath(void, &.{
+                .{ .array_list_get = .{ .index = -1 } },
+                .{ .array_list_get = .{ .index = 0 } },
+                .{ .write = .{ .slot = null } },
+            });
+            var inner_cursor = (try root_cursor.readPath(void, &.{
+                .{ .array_list_get = .{ .index = -1 } },
+            })).?;
+            var iter = try inner_cursor.iter();
+            defer iter.deinit();
+            var i: u64 = 0;
+            while (try iter.next()) |_| {
+                i += 1;
+            }
+            try std.testing.expectEqual(10, i);
+        }
 
         // get list slot
         const list_cursor = (try root_cursor.readPath(void, &.{

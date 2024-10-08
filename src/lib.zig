@@ -2002,174 +2002,160 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                 pub const Iter = struct {
                     cursor: Cursor(write_mode),
-                    core: IterCore,
+                    core: struct {
+                        size: u64,
+                        index: u64,
+                        stack: std.ArrayList(Level),
+                    },
 
-                    pub const IterCore = union(enum) {
-                        array_list: struct {
-                            index: u64,
-                        },
-                        linked_array_list: struct {
-                            index: u64,
-                        },
-                        hash_map: struct {
-                            stack: std.ArrayList(MapLevel),
-                        },
-
-                        pub const MapLevel = struct {
-                            position: u64,
-                            block: [SLOT_COUNT]Slot,
-                            index: u16,
-                        };
+                    pub const Level = struct {
+                        position: u64,
+                        block: [SLOT_COUNT]Slot,
+                        index: u16,
                     };
 
                     pub fn init(cursor: Cursor(write_mode)) !Iter {
-                        const core: IterCore = switch (cursor.slot_ptr.slot.tag) {
-                            .array_list => .{
-                                .array_list = .{
-                                    .index = 0,
-                                },
-                            },
-                            .linked_array_list => .{
-                                .linked_array_list = .{
-                                    .index = 0,
-                                },
-                            },
-                            .hash_map => .{
-                                .hash_map = .{
-                                    .stack = blk: {
-                                        // find the block
-                                        const position = cursor.slot_ptr.slot.value;
-                                        if (cursor.slot_ptr.slot.tag != .hash_map) {
-                                            return error.UnexpectedTag;
-                                        }
-                                        try cursor.db.core.seekTo(position);
-                                        // read the block
-                                        const core_reader = cursor.db.core.reader();
-                                        var map_index_block_bytes = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                        try core_reader.readNoEof(&map_index_block_bytes);
-                                        // convert the block into 72-bit slots
-                                        var map_index_block = [_]Slot{.{}} ** SLOT_COUNT;
-                                        {
-                                            var stream = std.io.fixedBufferStream(&map_index_block_bytes);
-                                            var block_reader = stream.reader();
-                                            for (&map_index_block) |*block_slot| {
-                                                block_slot.* = @bitCast(try block_reader.readInt(SlotInt, .big));
-                                                try block_slot.tag.validate();
-                                            }
-                                        }
-                                        // init the stack
-                                        var stack = std.ArrayList(IterCore.MapLevel).init(cursor.db.allocator);
-                                        try stack.append(IterCore.MapLevel{
-                                            .position = position,
-                                            .block = map_index_block,
-                                            .index = 0,
-                                        });
-                                        break :blk stack;
-                                    },
-                                },
-                            },
-                            else => return error.UnexpectedTag,
-                        };
                         return .{
                             .cursor = cursor,
-                            .core = core,
+                            .core = switch (cursor.slot_ptr.slot.tag) {
+                                .array_list => blk: {
+                                    const position = cursor.slot_ptr.slot.value;
+                                    try cursor.db.core.seekTo(position);
+                                    const core_reader = cursor.db.core.reader();
+                                    const header: ArrayListHeader = @bitCast(try core_reader.readInt(ArrayListHeaderInt, .big));
+                                    break :blk .{
+                                        .size = try cursor.count(),
+                                        .index = 0,
+                                        .stack = try initStack(cursor, header.ptr, INDEX_BLOCK_SIZE),
+                                    };
+                                },
+                                .linked_array_list => blk: {
+                                    const position = cursor.slot_ptr.slot.value;
+                                    try cursor.db.core.seekTo(position);
+                                    const core_reader = cursor.db.core.reader();
+                                    const header: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
+                                    break :blk .{
+                                        .size = try cursor.count(),
+                                        .index = 0,
+                                        .stack = try initStack(cursor, header.ptr, LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE),
+                                    };
+                                },
+                                .hash_map => .{
+                                    .size = 0,
+                                    .index = 0,
+                                    .stack = try initStack(cursor, cursor.slot_ptr.slot.value, INDEX_BLOCK_SIZE),
+                                },
+                                else => return error.UnexpectedTag,
+                            },
                         };
                     }
 
                     pub fn deinit(self: *Iter) void {
-                        switch (self.core) {
-                            .array_list => {},
-                            .linked_array_list => {},
-                            .hash_map => self.core.hash_map.stack.deinit(),
+                        self.core.stack.deinit();
+                    }
+
+                    pub fn next(self: *Iter) !?Cursor(.read_only) {
+                        switch (self.cursor.slot_ptr.slot.tag) {
+                            .array_list => {
+                                if (self.core.index == self.core.size) return null;
+                                self.core.index += 1;
+                                return try self.nextInternal(INDEX_BLOCK_SIZE);
+                            },
+                            .linked_array_list => {
+                                if (self.core.index == self.core.size) return null;
+                                self.core.index += 1;
+                                return try self.nextInternal(LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE);
+                            },
+                            .hash_map => return try self.nextInternal(INDEX_BLOCK_SIZE),
+                            else => return error.UnexpectedTag,
                         }
                     }
 
-                    pub fn next(self: *Iter) !?Cursor(write_mode) {
-                        switch (self.core) {
-                            .array_list => {
-                                const index = self.core.array_list.index;
-                                const path = &[_]PathPart(void){.{ .array_list_get = .{ .index = index } }};
-                                const slot_ptr = self.cursor.db.readSlotPointer(.read_only, void, path, self.cursor.slot_ptr) catch |err| {
-                                    switch (err) {
-                                        error.KeyNotFound => return null,
-                                        else => return err,
-                                    }
-                                };
-                                self.core.array_list.index += 1;
-                                return .{
-                                    .slot_ptr = slot_ptr,
-                                    .db = self.cursor.db,
-                                };
-                            },
-                            .linked_array_list => {
-                                const index = self.core.linked_array_list.index;
-                                const path = &[_]PathPart(void){.{ .linked_array_list_get = .{ .index = index } }};
-                                const slot_ptr = self.cursor.db.readSlotPointer(.read_only, void, path, self.cursor.slot_ptr) catch |err| {
-                                    switch (err) {
-                                        error.KeyNotFound => return null,
-                                        else => return err,
-                                    }
-                                };
-                                self.core.linked_array_list.index += 1;
-                                return .{
-                                    .slot_ptr = slot_ptr,
-                                    .db = self.cursor.db,
-                                };
-                            },
-                            .hash_map => {
-                                while (self.core.hash_map.stack.items.len > 0) {
-                                    const level = self.core.hash_map.stack.items[self.core.hash_map.stack.items.len - 1];
-                                    if (level.index == level.block.len) {
-                                        _ = self.core.hash_map.stack.pop();
-                                        if (self.core.hash_map.stack.items.len > 0) {
-                                            self.core.hash_map.stack.items[self.core.hash_map.stack.items.len - 1].index += 1;
+                    fn initStack(cursor: Cursor(write_mode), position: u64, comptime block_size: u64) !std.ArrayList(Level) {
+                        // find the block
+                        try cursor.db.core.seekTo(position);
+                        // read the block
+                        const core_reader = cursor.db.core.reader();
+                        var index_block_bytes = [_]u8{0} ** block_size;
+                        try core_reader.readNoEof(&index_block_bytes);
+                        // convert the block into slots
+                        var index_block = [_]Slot{undefined} ** SLOT_COUNT;
+                        {
+                            var stream = std.io.fixedBufferStream(&index_block_bytes);
+                            var block_reader = stream.reader();
+                            for (&index_block) |*block_slot| {
+                                block_slot.* = @bitCast(try block_reader.readInt(SlotInt, .big));
+                                try block_slot.tag.validate();
+                                // linked array list has larger slots so we need to skip over the rest
+                                try block_reader.skipBytes((block_size / SLOT_COUNT) - byteSizeOf(Slot), .{});
+                            }
+                        }
+                        // init the stack
+                        var stack = std.ArrayList(Level).init(cursor.db.allocator);
+                        try stack.append(.{
+                            .position = position,
+                            .block = index_block,
+                            .index = 0,
+                        });
+                        return stack;
+                    }
+
+                    fn nextInternal(self: *Iter, comptime block_size: u64) !?Cursor(.read_only) {
+                        while (self.core.stack.items.len > 0) {
+                            const level = self.core.stack.items[self.core.stack.items.len - 1];
+                            if (level.index == level.block.len) {
+                                _ = self.core.stack.pop();
+                                if (self.core.stack.items.len > 0) {
+                                    self.core.stack.items[self.core.stack.items.len - 1].index += 1;
+                                }
+                                continue;
+                            } else {
+                                const next_slot = level.block[level.index];
+                                if (next_slot.tag == .index) {
+                                    // find the block
+                                    const next_pos = next_slot.value;
+                                    try self.cursor.db.core.seekTo(next_pos);
+                                    // read the block
+                                    const core_reader = self.cursor.db.core.reader();
+                                    var index_block_bytes = [_]u8{0} ** block_size;
+                                    try core_reader.readNoEof(&index_block_bytes);
+                                    // convert the block into slots
+                                    var index_block = [_]Slot{undefined} ** SLOT_COUNT;
+                                    {
+                                        var stream = std.io.fixedBufferStream(&index_block_bytes);
+                                        var block_reader = stream.reader();
+                                        for (&index_block) |*block_slot| {
+                                            block_slot.* = @bitCast(try block_reader.readInt(SlotInt, .big));
+                                            try block_slot.tag.validate();
+                                            // linked array list has larger slots so we need to skip over the rest
+                                            try block_reader.skipBytes((block_size / SLOT_COUNT) - byteSizeOf(Slot), .{});
                                         }
-                                        continue;
+                                    }
+                                    // append to the stack
+                                    try self.core.stack.append(.{
+                                        .position = next_pos,
+                                        .block = index_block,
+                                        .index = 0,
+                                    });
+                                    continue;
+                                } else {
+                                    self.core.stack.items[self.core.stack.items.len - 1].index += 1;
+                                    // normally a slot that is .none should be skipped because it doesn't
+                                    // have a value, but if its flag is set, then it is actually a valid
+                                    // item that should be returned.
+                                    if (next_slot.tag != .none or next_slot.flag == 1) {
+                                        const position = level.position + (level.index * byteSizeOf(Slot));
+                                        return .{
+                                            .slot_ptr = .{ .position = position, .slot = next_slot },
+                                            .db = self.cursor.db,
+                                        };
                                     } else {
-                                        const map_slot = level.block[level.index];
-                                        if (map_slot.tag == .none) {
-                                            self.core.hash_map.stack.items[self.core.hash_map.stack.items.len - 1].index += 1;
-                                            continue;
-                                        } else {
-                                            if (map_slot.tag == .index) {
-                                                // find the block
-                                                const next_pos = map_slot.value;
-                                                try self.cursor.db.core.seekTo(next_pos);
-                                                // read the block
-                                                const core_reader = self.cursor.db.core.reader();
-                                                var map_index_block_bytes = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                                try core_reader.readNoEof(&map_index_block_bytes);
-                                                // convert the block into 72-bit slots
-                                                var map_index_block = [_]Slot{.{}} ** SLOT_COUNT;
-                                                {
-                                                    var stream = std.io.fixedBufferStream(&map_index_block_bytes);
-                                                    var block_reader = stream.reader();
-                                                    for (&map_index_block) |*block_slot| {
-                                                        block_slot.* = @bitCast(try block_reader.readInt(SlotInt, .big));
-                                                        try block_slot.tag.validate();
-                                                    }
-                                                }
-                                                // append to the stack
-                                                try self.core.hash_map.stack.append(IterCore.MapLevel{
-                                                    .position = next_pos,
-                                                    .block = map_index_block,
-                                                    .index = 0,
-                                                });
-                                                continue;
-                                            } else {
-                                                self.core.hash_map.stack.items[self.core.hash_map.stack.items.len - 1].index += 1;
-                                                const position = level.position + (level.index * byteSizeOf(Slot));
-                                                return .{
-                                                    .slot_ptr = .{ .position = position, .slot = map_slot },
-                                                    .db = self.cursor.db,
-                                                };
-                                            }
-                                        }
+                                        continue;
                                     }
                                 }
-                                return null;
-                            },
+                            }
                         }
+                        return null;
                     }
                 };
 
