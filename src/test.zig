@@ -663,6 +663,18 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                 try next_bar_cursor.writeBytes("foo", .replace);
                 try std.testing.expect(!bar_cursor.slot_ptr.slot.eql(next_bar_cursor.slot_ptr.slot));
             }
+            // we can also use writeData, which can write other types as well
+            {
+                var next_bar_cursor = try root_cursor.writePath(void, &.{
+                    .array_list_init,
+                    .{ .array_list_get = .append },
+                    .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = .{ .index = -1 } }}) } },
+                    .hash_map_init,
+                    .{ .hash_map_get = .{ .value = bar_key } },
+                });
+                try next_bar_cursor.writeData(.{ .bytes = "foo" });
+                try std.testing.expect(!bar_cursor.slot_ptr.slot.eql(next_bar_cursor.slot_ptr.slot));
+            }
         }
 
         // read bar

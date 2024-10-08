@@ -1579,6 +1579,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     }
                 }
 
+                pub fn writeData(self: *Cursor(.read_write), data: WriteableData) !void {
+                    _ = try self.writePath(void, &.{.{ .write = data }});
+                }
+
                 pub fn reader(self: *Cursor(write_mode)) !Reader {
                     const core_reader = self.db.core.reader();
                     const cursor_slot = self.slot_ptr.slot;
