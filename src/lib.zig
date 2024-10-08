@@ -2015,7 +2015,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     pub const Level = struct {
                         position: u64,
                         block: [SLOT_COUNT]Slot,
-                        index: u16,
+                        index: u8,
                     };
 
                     pub fn init(cursor: Cursor(write_mode)) !Iter {
