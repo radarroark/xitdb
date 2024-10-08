@@ -86,7 +86,7 @@ const DatabaseHeader = packed struct {
     }
 };
 
-const WriteMode = enum {
+pub const WriteMode = enum {
     read_only,
     read_write,
 };
