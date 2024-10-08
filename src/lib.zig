@@ -2163,7 +2163,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     }
                 };
 
-                pub fn iter(self: Cursor(write_mode)) !Iter {
+                pub fn iterator(self: Cursor(write_mode)) !Iter {
                     return try Iter.init(self);
                 }
             };
@@ -2238,6 +2238,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         .{ .hash_map_remove = hash },
                     });
                 }
+
+                pub fn iterator(self: HashMap(write_mode)) !Cursor(write_mode).Iter {
+                    return try self.cursor.iterator();
+                }
             };
         }
 
@@ -2309,6 +2313,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         .{ .ctx = ctx },
                     });
                 }
+
+                pub fn iterator(self: ArrayList(write_mode)) !Cursor(write_mode).Iter {
+                    return try self.cursor.iterator();
+                }
             };
         }
 
@@ -2370,6 +2378,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         .{ .linked_array_list_get = .append },
                         .{ .write = data },
                     });
+                }
+
+                pub fn iterator(self: LinkedArrayList(write_mode)) !Cursor(write_mode).Iter {
+                    return try self.cursor.iterator();
                 }
 
                 pub fn slice(self: LinkedArrayList(write_mode), offset: u64, size: u64) !Cursor(.read_only) {

@@ -116,6 +116,17 @@ test "high level api" {
         const todo_value = try todo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(todo_value);
         try std.testing.expectEqualStrings("Pay the bills", todo_value);
+
+        var people_iter = try people.iterator();
+        defer people_iter.deinit();
+        while (try people_iter.next()) |person_cursor| {
+            const person = try DB.HashMap(.read_only).init(person_cursor);
+            var person_iter = try person.iterator();
+            defer person_iter.deinit();
+            while (try person_iter.next()) |kv_pair_cursor| {
+                _ = try kv_pair_cursor.readKeyValuePair();
+            }
+        }
     }
 
     // make a new transaction and change the data
@@ -284,7 +295,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
 
             // check all values in the new slice with an iterator
             {
-                var iter = try even_list_slice_cursor.iter();
+                var iter = try even_list_slice_cursor.iterator();
                 defer iter.deinit();
                 var i: u64 = 0;
                 while (try iter.next()) |num_cursor| {
@@ -416,7 +427,7 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
 
             // check all values in the new list with an iterator
             {
-                var iter = try combo_list_cursor.iter();
+                var iter = try combo_list_cursor.iterator();
                 defer iter.deinit();
                 var i: u64 = 0;
                 while (try iter.next()) |num_cursor| {
@@ -1139,7 +1150,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             var inner_cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
             })).?;
-            var iter = try inner_cursor.iter();
+            var iter = try inner_cursor.iterator();
             defer iter.deinit();
             var i: u64 = 0;
             while (try iter.next()) |*next_cursor| {
@@ -1165,7 +1176,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             var inner_cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = .{ .index = -1 } },
             })).?;
-            var iter = try inner_cursor.iter();
+            var iter = try inner_cursor.iterator();
             defer iter.deinit();
             var i: u64 = 0;
             while (try iter.next()) |_| {
@@ -1242,11 +1253,11 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
         var inner_cursor = (try root_cursor.readPath(void, &.{
             .{ .array_list_get = .{ .index = -1 } },
         })).?;
-        var iter = try inner_cursor.iter();
+        var iter = try inner_cursor.iterator();
         defer iter.deinit();
         var i: u64 = 0;
-        while (try iter.next()) |*next_cursor| {
-            const kv_pair = try next_cursor.readKeyValuePair();
+        while (try iter.next()) |kv_pair_cursor| {
+            const kv_pair = try kv_pair_cursor.readKeyValuePair();
             if (kv_pair.hash == foo_key) {
                 const key = try kv_pair.key_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
                 defer allocator.free(key);
@@ -1315,7 +1326,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                 var inner_cursor = (try cursor.readPath(void, &.{
                     .{ .hash_map_get = .{ .value = hashBuffer("even") } },
                 })).?;
-                var iter = try inner_cursor.iter();
+                var iter = try inner_cursor.iterator();
                 defer iter.deinit();
                 var i: u64 = 0;
                 while (try iter.next()) |_| {
