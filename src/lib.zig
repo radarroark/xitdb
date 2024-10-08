@@ -1508,8 +1508,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 pub fn readBytesAlloc(self: Cursor(write_mode), allocator: std.mem.Allocator, max_size: usize) ![]u8 {
                     const core_reader = self.db.core.reader();
 
-                    if (self.slot_ptr.slot.tag != .bytes) {
-                        return error.UnexpectedTag;
+                    switch (self.slot_ptr.slot.tag) {
+                        .none => return try allocator.alloc(u8, 0),
+                        .bytes => {},
+                        else => return error.UnexpectedTag,
                     }
 
                     try self.db.core.seekTo(self.slot_ptr.slot.value);
@@ -1529,8 +1531,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 pub fn readBytes(self: Cursor(write_mode), buffer: []u8) ![]u8 {
                     const core_reader = self.db.core.reader();
 
-                    if (self.slot_ptr.slot.tag != .bytes) {
-                        return error.UnexpectedTag;
+                    switch (self.slot_ptr.slot.tag) {
+                        .none => return if (buffer.len == 0) buffer else error.EndOfStream,
+                        .bytes => {},
+                        else => return error.UnexpectedTag,
                     }
 
                     try self.db.core.seekTo(self.slot_ptr.slot.value);
