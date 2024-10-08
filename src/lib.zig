@@ -18,7 +18,7 @@ const SlotInt = u72;
 pub const Slot = packed struct {
     value: u64 = 0,
     tag: Tag = .none,
-    flag: u1 = 0,
+    full: bool = false,
 
     pub fn eql(self: Slot, other: Slot) bool {
         const self_int: SlotInt = @bitCast(self);
@@ -775,7 +775,11 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             break :blk writer.slot;
                         },
                     };
-                    slot.flag = 1; // important for linked array lists
+
+                    // this bit allows us to distinguish between a slot explicitly set to .none
+                    // and a slot that hasn't been set yet. it also is particularly important
+                    // for linked array lists, which rely on it when doing index lookups.
+                    slot.full = true;
 
                     try self.core.seekTo(position);
                     try core_writer.writeInt(SlotInt, @bitCast(slot), .big);
@@ -1057,7 +1061,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     try writer.writeAll(&index_block);
                     try self.core.seekTo(next_ptr);
                     try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{
-                        .slot = .{ .value = ptr, .tag = .index, .flag = 1 },
+                        .slot = .{ .value = ptr, .tag = .index, .full = true },
                         .size = header.size,
                     }), .big);
                     ptr = next_ptr;
@@ -1067,15 +1071,15 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 else => return err,
             };
 
-            // newly-appended slots must have their flag set to 1
+            // newly-appended slots must have full set to true
             // or else the indexing will be screwed up
-            const new_slot = Slot{ .value = 0, .tag = .none, .flag = 1 };
+            const new_slot = Slot{ .value = 0, .tag = .none, .full = true };
             slot_ptr.slot_ptr.slot = new_slot;
             const position = slot_ptr.slot_ptr.position orelse return error.CursorNotWriteable;
             try self.core.seekTo(position);
             try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{ .slot = new_slot, .size = 0 }), .big);
             if (header.size < SLOT_COUNT and shift > 0) {
-                return error.MustSetFlagOnNewSlots;
+                return error.MustSetNewSlotsToFull;
             }
 
             return .{
@@ -1093,7 +1097,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             // for leaf nodes, count all non-empty slots along with the slot being accessed
             if (shift == 0) {
                 for (block, 0..) |block_slot, block_i| {
-                    if (block_slot.slot.tag != .none or block_slot.slot.flag == 1 or block_i == i) {
+                    if (block_slot.slot.tag != .none or block_slot.slot.full or block_i == i) {
                         n += 1;
                     }
                 }
@@ -1109,7 +1113,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
         fn slotLeafCount(slot: LinkedArrayListSlot, shift: u6) u64 {
             if (shift == 0) {
-                if (slot.slot.tag == .none and slot.slot.flag == 0) {
+                if (slot.slot.tag == .none and !slot.slot.full) {
                     return 0;
                 } else {
                     return 1;
@@ -1127,8 +1131,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 const slot_leaf_count = slotLeafCount(slot_block[i], shift);
                 if (next_key == slot_leaf_count) {
                     // if the slot's leaf count is at its maximum
-                    // or the flag is set, we have to skip to the next slot
-                    if (slot_leaf_count == max_leaf_count or slot_block[i].slot.flag == 1) {
+                    // or it is full, we have to skip to the next slot
+                    if (slot_leaf_count == max_leaf_count or slot_block[i].slot.full) {
                         if (i < SLOT_COUNT - 1) {
                             next_key -= slot_leaf_count;
                             i += 1;
@@ -1764,9 +1768,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                                     }
                                     next_slot.* = LinkedArrayListSlot{
                                         .slot = switch (side) {
-                                            // only the left side needs to have the flag set,
+                                            // only the left side needs to be set to full,
                                             // because it can have a gap that affects indexing
-                                            .left => .{ .value = next_ptr, .tag = .index, .flag = 1 },
+                                            .left => .{ .value = next_ptr, .tag = .index, .full = true },
                                             .right => .{ .value = next_ptr, .tag = .index },
                                         },
                                         .size = leaf_count,
@@ -1929,7 +1933,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                                 }
                             }
 
-                            next_slot.* = LinkedArrayListSlot{ .slot = .{ .value = next_ptr, .tag = .index, .flag = 1 }, .size = leaf_count };
+                            next_slot.* = LinkedArrayListSlot{ .slot = .{ .value = next_ptr, .tag = .index, .full = true }, .size = leaf_count };
                         }
                     }
 
@@ -2141,9 +2145,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                                 } else {
                                     self.core.stack.items[self.core.stack.items.len - 1].index += 1;
                                     // normally a slot that is .none should be skipped because it doesn't
-                                    // have a value, but if its flag is set, then it is actually a valid
+                                    // have a value, but if it's set to full, then it is actually a valid
                                     // item that should be returned.
-                                    if (next_slot.tag != .none or next_slot.flag == 1) {
+                                    if (next_slot.tag != .none or next_slot.full) {
                                         const position = level.position + (level.index * byteSizeOf(Slot));
                                         return .{
                                             .slot_ptr = .{ .position = position, .slot = next_slot },
