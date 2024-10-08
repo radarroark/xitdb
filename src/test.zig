@@ -628,7 +628,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             });
         }
 
-        // write bar -> foo with writeBytes
+        // write bar -> foo
         const bar_key = hashBuffer("bar");
         {
             var bar_cursor = try root_cursor.writePath(void, &.{
@@ -638,8 +638,8 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                 .hash_map_init,
                 .{ .hash_map_get = .{ .value = bar_key } },
             });
-            try bar_cursor.writeBytes("foo", .once);
-            // writing again with .once returns the same slot
+            try bar_cursor.writeDataIfEmpty(.{ .bytes = "foo" });
+            // writing again returns the same slot
             {
                 var next_bar_cursor = try root_cursor.writePath(void, &.{
                     .array_list_init,
@@ -648,22 +648,10 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                     .hash_map_init,
                     .{ .hash_map_get = .{ .value = bar_key } },
                 });
-                try next_bar_cursor.writeBytes("foo", .once);
+                try next_bar_cursor.writeDataIfEmpty(.{ .bytes = "foo" });
                 try std.testing.expectEqual(bar_cursor.slot_ptr.slot, next_bar_cursor.slot_ptr.slot);
             }
-            // writing again with .replace returns a new slot
-            {
-                var next_bar_cursor = try root_cursor.writePath(void, &.{
-                    .array_list_init,
-                    .{ .array_list_get = .append },
-                    .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = .{ .index = -1 } }}) } },
-                    .hash_map_init,
-                    .{ .hash_map_get = .{ .value = bar_key } },
-                });
-                try next_bar_cursor.writeBytes("foo", .replace);
-                try std.testing.expect(!bar_cursor.slot_ptr.slot.eql(next_bar_cursor.slot_ptr.slot));
-            }
-            // we can also use writeData, which can write other types as well
+            // writing with writeData returns a new slot
             {
                 var next_bar_cursor = try root_cursor.writePath(void, &.{
                     .array_list_init,

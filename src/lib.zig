@@ -1575,16 +1575,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     };
                 }
 
-                pub fn writeBytes(self: *Cursor(.read_write), buffer: []const u8, mode: enum { once, replace }) !void {
-                    if (mode == .replace or self.slot_ptr.slot.tag == .none) {
-                        var cursor_writer = try self.writer();
-                        try cursor_writer.writeAll(buffer);
-                        try cursor_writer.finish();
-                    }
+                pub fn writeData(self: *Cursor(.read_write), data: WriteableData) !void {
+                    self.* = try self.writePath(void, &.{.{ .write = data }});
                 }
 
-                pub fn writeData(self: *Cursor(.read_write), data: WriteableData) !void {
-                    _ = try self.writePath(void, &.{.{ .write = data }});
+                pub fn writeDataIfEmpty(self: *Cursor(.read_write), data: WriteableData) !void {
+                    if (self.slot_ptr.slot.tag == .none) {
+                        try self.writeData(data);
+                    }
                 }
 
                 pub fn reader(self: *Cursor(write_mode)) !Reader {
