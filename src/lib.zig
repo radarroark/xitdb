@@ -1990,6 +1990,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 pub fn count(self: Cursor(write_mode)) !u64 {
                     const core_reader = self.db.core.reader();
                     switch (self.slot_ptr.slot.tag) {
+                        .none => return 0,
                         .array_list => {
                             try self.db.core.seekTo(self.slot_ptr.slot.value);
                             const header: ArrayListHeader = @bitCast(try core_reader.readInt(ArrayListHeaderInt, .big));
