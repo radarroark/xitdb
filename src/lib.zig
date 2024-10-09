@@ -777,9 +777,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     };
 
                     // this bit allows us to distinguish between a slot explicitly set to .none
-                    // and a slot that hasn't been set yet. it also is particularly important
-                    // for linked array lists, which rely on it when doing index lookups.
-                    slot.full = true;
+                    // and a slot that hasn't been set yet
+                    if (slot.tag == .none) {
+                        slot.full = true;
+                    }
 
                     try self.core.seekTo(position);
                     try core_writer.writeInt(SlotInt, @bitCast(slot), .big);
@@ -1469,10 +1470,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             else => return err,
                         }
                     };
-                    if (slot_ptr.slot.tag == .none) {
-                        return null;
-                    } else {
+                    if (slot_ptr.slot.tag != .none or slot_ptr.slot.full) {
                         return slot_ptr.slot;
+                    } else {
+                        return null;
                     }
                 }
 
@@ -1626,7 +1627,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 }
 
                 pub fn slot(self: Cursor(write_mode)) ?Slot {
-                    return if (self.slot_ptr.slot.tag == .none) null else self.slot_ptr.slot;
+                    return if (self.slot_ptr.slot.tag != .none or self.slot_ptr.slot.full) self.slot_ptr.slot else null;
                 }
 
                 pub fn slice(self: Cursor(write_mode), offset: u64, size: u64) !Cursor(.read_only) {
