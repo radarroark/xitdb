@@ -1626,8 +1626,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     };
                 }
 
-                pub fn slot(self: Cursor(write_mode)) ?Slot {
-                    return if (self.slot_ptr.slot.tag != .none or self.slot_ptr.slot.full) self.slot_ptr.slot else null;
+                pub fn slot(self: Cursor(write_mode)) Slot {
+                    return self.slot_ptr.slot;
                 }
 
                 pub fn slice(self: Cursor(write_mode), offset: u64, size: u64) !Cursor(.read_only) {
