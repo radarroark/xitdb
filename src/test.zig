@@ -31,7 +31,7 @@ test "high level api" {
     const history = try DB.ArrayList(.read_write).init(db.rootCursor());
 
     {
-        // this is how a transaction is executed. we call history.appendDataContext,
+        // this is how a transaction is executed. we call history.appendContext,
         // providing it with the most recent copy of the db and a context
         // object. the context object has a method that will run before the
         // transaction has completed. this method is where we can write
@@ -41,78 +41,78 @@ test "high level api" {
             pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
                 const moment = try DB.HashMap(.read_write).init(cursor.*);
 
-                try moment.putData(hashBuffer("foo"), .{ .bytes = "foo" });
-                try moment.putData(hashBuffer("bar"), .{ .bytes = "bar" });
+                try moment.put(hashBuffer("foo"), .{ .bytes = "foo" });
+                try moment.put(hashBuffer("bar"), .{ .bytes = "bar" });
                 try moment.remove(hashBuffer("bar"));
 
-                const fruits_cursor = try moment.put(hashBuffer("fruits"));
+                const fruits_cursor = try moment.putCursor(hashBuffer("fruits"));
                 const fruits = try DB.ArrayList(.read_write).init(fruits_cursor);
-                try fruits.appendData(.{ .bytes = "apple" });
-                try fruits.appendData(.{ .bytes = "pear" });
-                try fruits.appendData(.{ .bytes = "grape" });
+                try fruits.append(.{ .bytes = "apple" });
+                try fruits.append(.{ .bytes = "pear" });
+                try fruits.append(.{ .bytes = "grape" });
 
-                const people_cursor = try moment.put(hashBuffer("people"));
+                const people_cursor = try moment.putCursor(hashBuffer("people"));
                 const people = try DB.ArrayList(.read_write).init(people_cursor);
 
-                const alice_cursor = try people.append();
+                const alice_cursor = try people.appendCursor();
                 const alice = try DB.HashMap(.read_write).init(alice_cursor);
-                try alice.putData(hashBuffer("name"), .{ .bytes = "Alice" });
-                try alice.putData(hashBuffer("age"), .{ .uint = 25 });
+                try alice.put(hashBuffer("name"), .{ .bytes = "Alice" });
+                try alice.put(hashBuffer("age"), .{ .uint = 25 });
 
-                const bob_cursor = try people.append();
+                const bob_cursor = try people.appendCursor();
                 const bob = try DB.HashMap(.read_write).init(bob_cursor);
-                try bob.putData(hashBuffer("name"), .{ .bytes = "Bob" });
-                try bob.putData(hashBuffer("age"), .{ .uint = 42 });
+                try bob.put(hashBuffer("name"), .{ .bytes = "Bob" });
+                try bob.put(hashBuffer("age"), .{ .uint = 42 });
 
-                const todos_cursor = try moment.put(hashBuffer("todos"));
+                const todos_cursor = try moment.putCursor(hashBuffer("todos"));
                 const todos = try DB.LinkedArrayList(.read_write).init(todos_cursor);
-                try todos.appendData(.{ .bytes = "Pay the bills" });
-                try todos.appendData(.{ .bytes = "Get an oil change" });
+                try todos.append(.{ .bytes = "Pay the bills" });
+                try todos.append(.{ .bytes = "Get an oil change" });
             }
         };
-        try history.appendDataContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
+        try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
 
         // get the most recent copy of the database, like a moment
         // in time. the -1 index will return the last index in the list.
-        const moment_cursor = (try history.get(-1)).?;
+        const moment_cursor = (try history.getCursor(-1)).?;
         const moment = try DB.HashMap(.read_only).init(moment_cursor);
 
         // we can read the value of "foo" from the map by getting
         // the cursor to "foo" and then calling readBytesAlloc on it
-        const foo_cursor = (try moment.get(hashBuffer("foo"))).?;
+        const foo_cursor = (try moment.getCursor(hashBuffer("foo"))).?;
         const foo_value = try foo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(foo_value);
         try std.testing.expectEqualStrings("foo", foo_value);
 
         try std.testing.expectEqual(.bytes, (try moment.getSlot(hashBuffer("foo"))).?.tag);
-        try std.testing.expectEqual(null, try moment.get(hashBuffer("bar")));
+        try std.testing.expectEqual(null, try moment.getCursor(hashBuffer("bar")));
 
         // to get the "fruits" list, we get the cursor to it and
         // then pass it to the ArrayList.init method
-        const fruits_cursor = (try moment.get(hashBuffer("fruits"))).?;
+        const fruits_cursor = (try moment.getCursor(hashBuffer("fruits"))).?;
         const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
         try std.testing.expectEqual(3, try fruits.count());
 
         // now we can get the first item from the fruits list and read it
-        const apple_cursor = (try fruits.get(0)).?;
+        const apple_cursor = (try fruits.getCursor(0)).?;
         const apple_value = try apple_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(apple_value);
         try std.testing.expectEqualStrings("apple", apple_value);
 
-        const people_cursor = (try moment.get(hashBuffer("people"))).?;
+        const people_cursor = (try moment.getCursor(hashBuffer("people"))).?;
         const people = try DB.ArrayList(.read_only).init(people_cursor);
         try std.testing.expectEqual(2, try people.count());
 
-        const alice_cursor = (try people.get(0)).?;
+        const alice_cursor = (try people.getCursor(0)).?;
         const alice = try DB.HashMap(.read_only).init(alice_cursor);
-        const alice_age_cursor = (try alice.get(hashBuffer("age"))).?;
+        const alice_age_cursor = (try alice.getCursor(hashBuffer("age"))).?;
         try std.testing.expectEqual(25, try alice_age_cursor.readUint());
 
-        const todos_cursor = (try moment.get(hashBuffer("todos"))).?;
+        const todos_cursor = (try moment.getCursor(hashBuffer("todos"))).?;
         const todos = try DB.LinkedArrayList(.read_only).init(todos_cursor);
         try std.testing.expectEqual(2, try todos.count());
 
-        const todo_cursor = (try todos.get(0)).?;
+        const todo_cursor = (try todos.getCursor(0)).?;
         const todo_value = try todo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(todo_value);
         try std.testing.expectEqualStrings("Pay the bills", todo_value);
@@ -139,57 +139,57 @@ test "high level api" {
                 // hash maps use hashes directly as keys so they are not able
                 // to get the original bytes of the key unless we store it
                 // explicitly this way.
-                try moment.putKeyData(hashBuffer("fruits"), .{ .bytes = "fruits" });
+                try moment.putKey(hashBuffer("fruits"), .{ .bytes = "fruits" });
 
-                const fruits_cursor = try moment.put(hashBuffer("fruits"));
+                const fruits_cursor = try moment.putCursor(hashBuffer("fruits"));
                 const fruits = try DB.ArrayList(.read_write).init(fruits_cursor);
-                try fruits.putData(0, .{ .bytes = "lemon" });
+                try fruits.put(0, .{ .bytes = "lemon" });
 
-                const people_cursor = try moment.put(hashBuffer("people"));
+                const people_cursor = try moment.putCursor(hashBuffer("people"));
                 const people = try DB.ArrayList(.read_write).init(people_cursor);
 
-                const alice_cursor = try people.put(0);
+                const alice_cursor = try people.putCursor(0);
                 const alice = try DB.HashMap(.read_write).init(alice_cursor);
-                try alice.putData(hashBuffer("age"), .{ .uint = 26 });
+                try alice.put(hashBuffer("age"), .{ .uint = 26 });
 
-                const todos_cursor = try moment.put(hashBuffer("todos"));
+                const todos_cursor = try moment.putCursor(hashBuffer("todos"));
                 const todos = try DB.LinkedArrayList(.read_write).init(todos_cursor);
                 const new_todos = try todos.slice(1, 1);
-                try moment.putData(hashBuffer("todos"), .{ .slot = new_todos.slot() });
+                try moment.put(hashBuffer("todos"), .{ .slot = new_todos.slot() });
             }
         };
-        try history.appendDataContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
+        try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
 
-        const moment_cursor = (try history.get(-1)).?;
+        const moment_cursor = (try history.getCursor(-1)).?;
         const moment = try DB.HashMap(.read_only).init(moment_cursor);
 
-        const fruits_key_cursor = (try moment.getKey(hashBuffer("fruits"))).?;
+        const fruits_key_cursor = (try moment.getKeyCursor(hashBuffer("fruits"))).?;
         const fruits_key_value = try fruits_key_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(fruits_key_value);
         try std.testing.expectEqualStrings("fruits", fruits_key_value);
 
-        const fruits_cursor = (try moment.get(hashBuffer("fruits"))).?;
+        const fruits_cursor = (try moment.getCursor(hashBuffer("fruits"))).?;
         const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
 
-        const lemon_cursor = (try fruits.get(0)).?;
+        const lemon_cursor = (try fruits.getCursor(0)).?;
         const lemon_value = try lemon_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(lemon_value);
         try std.testing.expectEqualStrings("lemon", lemon_value);
 
-        const people_cursor = (try moment.get(hashBuffer("people"))).?;
+        const people_cursor = (try moment.getCursor(hashBuffer("people"))).?;
         const people = try DB.ArrayList(.read_only).init(people_cursor);
         try std.testing.expectEqual(2, try people.count());
 
-        const alice_cursor = (try people.get(0)).?;
+        const alice_cursor = (try people.getCursor(0)).?;
         const alice = try DB.HashMap(.read_only).init(alice_cursor);
-        const alice_age_cursor = (try alice.get(hashBuffer("age"))).?;
+        const alice_age_cursor = (try alice.getCursor(hashBuffer("age"))).?;
         try std.testing.expectEqual(26, try alice_age_cursor.readUint());
 
-        const todos_cursor = (try moment.get(hashBuffer("todos"))).?;
+        const todos_cursor = (try moment.getCursor(hashBuffer("todos"))).?;
         const todos = try DB.LinkedArrayList(.read_only).init(todos_cursor);
         try std.testing.expectEqual(1, try todos.count());
 
-        const todo_cursor = (try todos.get(0)).?;
+        const todo_cursor = (try todos.getCursor(0)).?;
         const todo_value = try todo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(todo_value);
         try std.testing.expectEqualStrings("Get an oil change", todo_value);
@@ -197,40 +197,40 @@ test "high level api" {
 
     // make sure the old data hasn't changed
     {
-        const moment_cursor = (try history.get(0)).?;
+        const moment_cursor = (try history.getCursor(0)).?;
         const moment = try DB.HashMap(.read_only).init(moment_cursor);
 
-        const foo_cursor = (try moment.get(hashBuffer("foo"))).?;
+        const foo_cursor = (try moment.getCursor(hashBuffer("foo"))).?;
         const foo_value = try foo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(foo_value);
         try std.testing.expectEqualStrings("foo", foo_value);
 
         try std.testing.expectEqual(.bytes, (try moment.getSlot(hashBuffer("foo"))).?.tag);
-        try std.testing.expectEqual(null, try moment.get(hashBuffer("bar")));
+        try std.testing.expectEqual(null, try moment.getCursor(hashBuffer("bar")));
 
-        const fruits_cursor = (try moment.get(hashBuffer("fruits"))).?;
+        const fruits_cursor = (try moment.getCursor(hashBuffer("fruits"))).?;
         const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
         try std.testing.expectEqual(3, try fruits.count());
 
-        const apple_cursor = (try fruits.get(0)).?;
+        const apple_cursor = (try fruits.getCursor(0)).?;
         const apple_value = try apple_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(apple_value);
         try std.testing.expectEqualStrings("apple", apple_value);
 
-        const people_cursor = (try moment.get(hashBuffer("people"))).?;
+        const people_cursor = (try moment.getCursor(hashBuffer("people"))).?;
         const people = try DB.ArrayList(.read_only).init(people_cursor);
         try std.testing.expectEqual(2, try people.count());
 
-        const alice_cursor = (try people.get(0)).?;
+        const alice_cursor = (try people.getCursor(0)).?;
         const alice = try DB.HashMap(.read_only).init(alice_cursor);
-        const alice_age_cursor = (try alice.get(hashBuffer("age"))).?;
+        const alice_age_cursor = (try alice.getCursor(hashBuffer("age"))).?;
         try std.testing.expectEqual(25, try alice_age_cursor.readUint());
 
-        const todos_cursor = (try moment.get(hashBuffer("todos"))).?;
+        const todos_cursor = (try moment.getCursor(hashBuffer("todos"))).?;
         const todos = try DB.LinkedArrayList(.read_only).init(todos_cursor);
         try std.testing.expectEqual(2, try todos.count());
 
-        const todo_cursor = (try todos.get(0)).?;
+        const todo_cursor = (try todos.getCursor(0)).?;
         const todo_value = try todo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(todo_value);
         try std.testing.expectEqualStrings("Pay the bills", todo_value);
@@ -638,7 +638,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                 .hash_map_init,
                 .{ .hash_map_get = .{ .value = bar_key } },
             });
-            try bar_cursor.writeDataIfEmpty(.{ .bytes = "foo" });
+            try bar_cursor.writeIfEmpty(.{ .bytes = "foo" });
             // writing again returns the same slot
             {
                 var next_bar_cursor = try root_cursor.writePath(void, &.{
@@ -648,10 +648,10 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                     .hash_map_init,
                     .{ .hash_map_get = .{ .value = bar_key } },
                 });
-                try next_bar_cursor.writeDataIfEmpty(.{ .bytes = "foo" });
+                try next_bar_cursor.writeIfEmpty(.{ .bytes = "foo" });
                 try std.testing.expectEqual(bar_cursor.slot_ptr.slot, next_bar_cursor.slot_ptr.slot);
             }
-            // writing with writeData returns a new slot
+            // writing with write returns a new slot
             {
                 var next_bar_cursor = try root_cursor.writePath(void, &.{
                     .array_list_init,
@@ -660,7 +660,7 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                     .hash_map_init,
                     .{ .hash_map_get = .{ .value = bar_key } },
                 });
-                try next_bar_cursor.writeData(.{ .bytes = "foo" });
+                try next_bar_cursor.write(.{ .bytes = "foo" });
                 try std.testing.expect(!bar_cursor.slot_ptr.slot.eql(next_bar_cursor.slot_ptr.slot));
             }
         }

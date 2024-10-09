@@ -1575,13 +1575,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     };
                 }
 
-                pub fn writeData(self: *Cursor(.read_write), data: WriteableData) !void {
+                pub fn write(self: *Cursor(.read_write), data: WriteableData) !void {
                     self.* = try self.writePath(void, &.{.{ .write = data }});
                 }
 
-                pub fn writeDataIfEmpty(self: *Cursor(.read_write), data: WriteableData) !void {
+                pub fn writeIfEmpty(self: *Cursor(.read_write), data: WriteableData) !void {
                     if (self.slot_ptr.slot.tag == .none) {
-                        try self.writeData(data);
+                        try self.write(data);
                     }
                 }
 
@@ -2196,7 +2196,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     };
                 }
 
-                pub fn get(self: HashMap(write_mode), hash: Hash) !?Cursor(.read_only) {
+                pub fn getCursor(self: HashMap(write_mode), hash: Hash) !?Cursor(.read_only) {
                     return try self.cursor.readPath(void, &.{
                         .{ .hash_map_get = .{ .value = hash } },
                     });
@@ -2208,32 +2208,32 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
-                pub fn getKey(self: HashMap(write_mode), hash: Hash) !?Cursor(.read_only) {
+                pub fn getKeyCursor(self: HashMap(write_mode), hash: Hash) !?Cursor(.read_only) {
                     return try self.cursor.readPath(void, &.{
                         .{ .hash_map_get = .{ .key = hash } },
                     });
                 }
 
-                pub fn put(self: HashMap(.read_write), hash: Hash) !Cursor(.read_write) {
+                pub fn putCursor(self: HashMap(.read_write), hash: Hash) !Cursor(.read_write) {
                     return try self.cursor.writePath(void, &.{
                         .{ .hash_map_get = .{ .value = hash } },
                     });
                 }
 
-                pub fn putData(self: HashMap(.read_write), hash: Hash, data: WriteableData) !void {
+                pub fn put(self: HashMap(.read_write), hash: Hash, data: WriteableData) !void {
                     _ = try self.cursor.writePath(void, &.{
                         .{ .hash_map_get = .{ .value = hash } },
                         .{ .write = data },
                     });
                 }
 
-                pub fn putKey(self: HashMap(.read_write), hash: Hash) !Cursor(.read_write) {
+                pub fn putKeyCursor(self: HashMap(.read_write), hash: Hash) !Cursor(.read_write) {
                     return try self.cursor.writePath(void, &.{
                         .{ .hash_map_get = .{ .key = hash } },
                     });
                 }
 
-                pub fn putKeyData(self: HashMap(.read_write), hash: Hash, data: WriteableData) !void {
+                pub fn putKey(self: HashMap(.read_write), hash: Hash, data: WriteableData) !void {
                     _ = try self.cursor.writePath(void, &.{
                         .{ .hash_map_get = .{ .key = hash } },
                         .{ .write = data },
@@ -2274,7 +2274,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     return try self.cursor.count();
                 }
 
-                pub fn get(self: ArrayList(write_mode), index: i65) !?Cursor(.read_only) {
+                pub fn getCursor(self: ArrayList(write_mode), index: i65) !?Cursor(.read_only) {
                     return try self.cursor.readPath(void, &.{
                         .{ .array_list_get = .{ .index = index } },
                     });
@@ -2286,33 +2286,33 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
-                pub fn put(self: ArrayList(.read_write), index: i65) !Cursor(.read_write) {
+                pub fn putCursor(self: ArrayList(.read_write), index: i65) !Cursor(.read_write) {
                     return try self.cursor.writePath(void, &.{
                         .{ .array_list_get = .{ .index = index } },
                     });
                 }
 
-                pub fn putData(self: ArrayList(.read_write), index: i65, data: WriteableData) !void {
+                pub fn put(self: ArrayList(.read_write), index: i65, data: WriteableData) !void {
                     _ = try self.cursor.writePath(void, &.{
                         .{ .array_list_get = .{ .index = index } },
                         .{ .write = data },
                     });
                 }
 
-                pub fn append(self: ArrayList(.read_write)) !Cursor(.read_write) {
+                pub fn appendCursor(self: ArrayList(.read_write)) !Cursor(.read_write) {
                     return try self.cursor.writePath(void, &.{
                         .{ .array_list_get = .append },
                     });
                 }
 
-                pub fn appendData(self: ArrayList(.read_write), data: WriteableData) !void {
+                pub fn append(self: ArrayList(.read_write), data: WriteableData) !void {
                     _ = try self.cursor.writePath(void, &.{
                         .{ .array_list_get = .append },
                         .{ .write = data },
                     });
                 }
 
-                pub fn appendDataContext(self: ArrayList(.read_write), data: WriteableData, ctx: anytype) !void {
+                pub fn appendContext(self: ArrayList(.read_write), data: WriteableData, ctx: anytype) !void {
                     const Ctx = @TypeOf(ctx);
                     _ = try self.cursor.writePath(Ctx, &.{
                         .{ .array_list_get = .append },
@@ -2349,7 +2349,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     return try self.cursor.count();
                 }
 
-                pub fn get(self: LinkedArrayList(write_mode), index: i65) !?Cursor(.read_only) {
+                pub fn getCursor(self: LinkedArrayList(write_mode), index: i65) !?Cursor(.read_only) {
                     return try self.cursor.readPath(void, &.{
                         .{ .linked_array_list_get = .{ .index = index } },
                     });
@@ -2361,26 +2361,26 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
-                pub fn put(self: LinkedArrayList(.read_write), index: i65) !Cursor(.read_write) {
+                pub fn putCursor(self: LinkedArrayList(.read_write), index: i65) !Cursor(.read_write) {
                     return try self.cursor.writePath(void, &.{
                         .{ .linked_array_list_get = .{ .index = index } },
                     });
                 }
 
-                pub fn putData(self: LinkedArrayList(.read_write), index: i65, data: WriteableData) !void {
+                pub fn put(self: LinkedArrayList(.read_write), index: i65, data: WriteableData) !void {
                     _ = try self.cursor.writePath(void, &.{
                         .{ .linked_array_list_get = .{ .index = index } },
                         .{ .write = data },
                     });
                 }
 
-                pub fn append(self: LinkedArrayList(.read_write)) !Cursor(.read_write) {
+                pub fn appendCursor(self: LinkedArrayList(.read_write)) !Cursor(.read_write) {
                     return try self.cursor.writePath(void, &.{
                         .{ .linked_array_list_get = .append },
                     });
                 }
 
-                pub fn appendData(self: LinkedArrayList(.read_write), data: WriteableData) !void {
+                pub fn append(self: LinkedArrayList(.read_write), data: WriteableData) !void {
                     _ = try self.cursor.writePath(void, &.{
                         .{ .linked_array_list_get = .append },
                         .{ .write = data },
