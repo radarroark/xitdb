@@ -153,9 +153,21 @@ test "high level api" {
                 try alice.put(hashBuffer("age"), .{ .uint = 26 });
 
                 const todos_cursor = try moment.putCursor(hashBuffer("todos"));
-                const todos = try DB.LinkedArrayList(.read_write).init(todos_cursor);
-                const new_todos = try todos.slice(1, 1);
-                try moment.put(hashBuffer("todos"), .{ .slot = new_todos.slot() });
+                var todos = try DB.LinkedArrayList(.read_write).init(todos_cursor);
+
+                // slice to a new list
+                const todos_slice_cursor = try todos.sliceCursor(1, 1);
+                try std.testing.expectEqual(1, try todos_slice_cursor.count());
+
+                // concat to a new list
+                const todos_concat_cursor = try todos.concatCursor(todos_slice_cursor);
+                try std.testing.expectEqual(3, try todos_concat_cursor.count());
+
+                // concat in place
+                try todos.concat(todos_slice_cursor);
+
+                // slice in place
+                try todos.slice(1, 1);
             }
         };
         try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});

@@ -2392,11 +2392,21 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
-                pub fn slice(self: LinkedArrayList(write_mode), offset: u64, size: u64) !Cursor(.read_only) {
+                pub fn slice(self: *LinkedArrayList(.read_write), offset: u64, size: u64) !void {
+                    const cursor = try self.cursor.slice(offset, size);
+                    try self.cursor.write(.{ .slot = cursor.slot() });
+                }
+
+                pub fn sliceCursor(self: LinkedArrayList(write_mode), offset: u64, size: u64) !Cursor(.read_only) {
                     return try self.cursor.slice(offset, size);
                 }
 
-                pub fn concat(self: LinkedArrayList(.read_write), other: Cursor(.read_only)) !Cursor(.read_only) {
+                pub fn concat(self: *LinkedArrayList(.read_write), other: Cursor(.read_only)) !void {
+                    const cursor = try self.cursor.concat(other);
+                    try self.cursor.write(.{ .slot = cursor.slot() });
+                }
+
+                pub fn concatCursor(self: LinkedArrayList(write_mode), other: Cursor(.read_only)) !Cursor(.read_only) {
                     return try self.cursor.concat(other);
                 }
             };
