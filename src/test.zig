@@ -153,8 +153,8 @@ test "high level api" {
                 try alice.put(hashBuffer("age"), .{ .uint = 26 });
 
                 const todos_cursor = try moment.putCursor(hashBuffer("todos"));
-                var todos = try DB.LinkedArrayList(.read_write).init(todos_cursor);
-                try todos.concat(todos_cursor.readOnly());
+                const todos = try DB.LinkedArrayList(.read_write).init(todos_cursor);
+                try todos.concat(todos_cursor.slot());
                 try todos.slice(1, 1);
             }
         };

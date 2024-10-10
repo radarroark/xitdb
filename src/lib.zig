@@ -2402,15 +2402,15 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
-                pub fn slice(self: *LinkedArrayList(.read_write), offset: u64, size: u64) !void {
+                pub fn slice(self: LinkedArrayList(.read_write), offset: u64, size: u64) !void {
                     _ = try self.cursor.writePath(void, &.{
                         .{ .linked_array_list_slice = .{ .offset = offset, .size = size } },
                     });
                 }
 
-                pub fn concat(self: *LinkedArrayList(.read_write), other: Cursor(.read_only)) !void {
+                pub fn concat(self: LinkedArrayList(.read_write), list: Slot) !void {
                     _ = try self.cursor.writePath(void, &.{
-                        .{ .linked_array_list_concat = .{ .list = other.slot() } },
+                        .{ .linked_array_list_concat = .{ .list = list } },
                     });
                 }
             };
