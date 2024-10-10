@@ -321,6 +321,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     offset: u64,
                     size: u64,
                 },
+                linked_array_list_concat: struct {
+                    list: Slot,
+                },
                 hash_map_init,
                 hash_map_get: union(HashMapSlotKind) {
                     kv_pair: Hash,
@@ -682,6 +685,28 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     const writer = self.core.writer();
                     try self.core.seekTo(next_array_list_start);
                     try writer.writeInt(LinkedArrayListHeaderInt, @bitCast(slice_header), .big);
+
+                    return final_slot_ptr;
+                },
+                .linked_array_list_concat => {
+                    if (write_mode == .read_only) return error.WriteNotAllowed;
+
+                    if (slot_ptr.slot.tag != .linked_array_list) {
+                        return error.UnexpectedTag;
+                    }
+                    if (part.linked_array_list_concat.list.tag != .linked_array_list) {
+                        return error.UnexpectedTag;
+                    }
+
+                    const next_array_list_start = slot_ptr.slot.value;
+
+                    const concat_header = try self.readLinkedArrayListConcat(next_array_list_start, part.linked_array_list_concat.list);
+                    const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], slot_ptr);
+
+                    // update header
+                    const writer = self.core.writer();
+                    try self.core.seekTo(next_array_list_start);
+                    try writer.writeInt(LinkedArrayListHeaderInt, @bitCast(concat_header), .big);
 
                     return final_slot_ptr;
                 },
@@ -1460,6 +1485,167 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             };
         }
 
+        fn readLinkedArrayListConcat(self: *Database(db_kind, Hash), index_start: u64, list: Slot) !LinkedArrayListHeader {
+            const core_reader = self.core.reader();
+            const core_writer = self.core.writer();
+
+            // read the first list's blocks
+            try self.core.seekTo(index_start);
+            const header_a: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
+            var blocks_a = std.ArrayList(LinkedArrayListBlockInfo).init(self.allocator);
+            defer blocks_a.deinit();
+            const key_a = if (header_a.size == 0) 0 else header_a.size - 1;
+            try self.readLinkedArrayListBlocks(header_a.ptr, key_a, header_a.shift, &blocks_a);
+
+            // read the second list's blocks
+            try self.core.seekTo(list.value);
+            const header_b: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
+            var blocks_b = std.ArrayList(LinkedArrayListBlockInfo).init(self.allocator);
+            defer blocks_b.deinit();
+            try self.readLinkedArrayListBlocks(header_b.ptr, 0, header_b.shift, &blocks_b);
+
+            // stitch the blocks together
+            var next_slots = [_]?LinkedArrayListSlot{null} ** 2;
+            var next_shift: u6 = 0;
+            for (0..@max(blocks_a.items.len, blocks_b.items.len)) |i| {
+                const block_infos: [2]?LinkedArrayListBlockInfo = .{
+                    if (i < blocks_a.items.len) blocks_a.items[blocks_a.items.len - 1 - i] else null,
+                    if (i < blocks_b.items.len) blocks_b.items[blocks_b.items.len - 1 - i] else null,
+                };
+                var next_blocks: [2]?[SLOT_COUNT]LinkedArrayListSlot = .{ null, null };
+                const is_leaf_node = next_slots[0] == null;
+
+                if (!is_leaf_node) {
+                    next_shift += 1;
+                }
+
+                for (block_infos, &next_blocks) |block_info_maybe, *next_block_maybe| {
+                    if (block_info_maybe) |block_info| {
+                        var block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
+                        var target_i: usize = 0;
+                        for (block_info.block, 0..) |block_slot, source_i| {
+                            // skip i'th block if necessary
+                            if (!is_leaf_node and block_info.i == source_i) {
+                                continue;
+                            }
+                            // break on first empty slot
+                            else if (block_slot.slot.tag == .none) {
+                                break;
+                            }
+                            block[target_i] = block_slot;
+                            target_i += 1;
+                        }
+
+                        // there are no slots in this block so don't bother writing it
+                        if (target_i == 0) {
+                            continue;
+                        }
+
+                        next_block_maybe.* = block;
+                    }
+                }
+
+                var slots_to_write = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** (SLOT_COUNT * 2);
+                var slot_i: usize = 0;
+
+                // add the left block
+                if (next_blocks[0]) |block| {
+                    for (block) |block_slot| {
+                        if (block_slot.slot.tag == .none) {
+                            break;
+                        }
+                        slots_to_write[slot_i] = block_slot;
+                        slot_i += 1;
+                    }
+                }
+
+                // add the center block
+                for (next_slots) |slot_maybe| {
+                    if (slot_maybe) |block_slot| {
+                        slots_to_write[slot_i] = block_slot;
+                        slot_i += 1;
+                    }
+                }
+
+                // add the right block
+                if (next_blocks[1]) |block| {
+                    for (block) |block_slot| {
+                        if (block_slot.slot.tag == .none) {
+                            break;
+                        }
+                        slots_to_write[slot_i] = block_slot;
+                        slot_i += 1;
+                    }
+                }
+
+                // clear the next slots
+                next_slots = .{ null, null };
+
+                // write the block(s)
+                try self.core.seekFromEnd(0);
+                for (&next_slots, 0..) |*next_slot, block_i| {
+                    const start = block_i * SLOT_COUNT;
+                    const block = slots_to_write[start .. start + SLOT_COUNT];
+
+                    // this block is empty so don't bother writing it
+                    if (block[0].slot.tag == .none) {
+                        break;
+                    }
+
+                    // write the block
+                    const next_ptr = try self.core.getPos();
+                    var leaf_count: u64 = 0;
+                    for (block) |block_slot| {
+                        try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
+                        if (is_leaf_node) {
+                            if (block_slot.slot.tag != .none) {
+                                leaf_count += 1;
+                            }
+                        } else {
+                            leaf_count += block_slot.size;
+                        }
+                    }
+
+                    next_slot.* = LinkedArrayListSlot{ .slot = .{ .value = next_ptr, .tag = .index, .full = true }, .size = leaf_count };
+                }
+            }
+
+            const root_ptr = blk: {
+                if (next_slots[0]) |first_slot| {
+                    // if there is more than one slot, make a root node
+                    if (next_slots[1]) |second_slot| {
+                        var block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
+                        block[0] = first_slot;
+                        block[1] = second_slot;
+
+                        // write the root node
+                        const new_ptr = try self.core.getPos();
+                        for (block) |block_slot| {
+                            try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
+                        }
+
+                        next_shift += 1;
+
+                        break :blk new_ptr;
+                    }
+                    // otherwise the first slot is the root node
+                    else {
+                        break :blk first_slot.slot.value;
+                    }
+                }
+                // lists were empty so just re-use existing empty block
+                else {
+                    break :blk header_a.ptr;
+                }
+            };
+
+            return .{
+                .shift = next_shift,
+                .ptr = root_ptr,
+                .size = header_a.size + header_b.size,
+            };
+        }
+
         // Cursor
 
         pub fn Cursor(comptime write_mode: WriteMode) type {
@@ -1812,184 +1998,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                 pub fn slot(self: Cursor(write_mode)) Slot {
                     return self.slot_ptr.slot;
-                }
-
-                pub fn concat(self: Cursor(write_mode), other: Cursor(.read_only)) !Cursor(.read_only) {
-                    if (self.slot_ptr.slot.tag != .linked_array_list) {
-                        return error.UnexpectedTag;
-                    }
-                    if (other.slot_ptr.slot.tag != .linked_array_list) {
-                        return error.UnexpectedTag;
-                    }
-
-                    const core_reader = self.db.core.reader();
-                    const core_writer = self.db.core.writer();
-
-                    // read the first list's blocks
-                    try self.db.core.seekTo(self.slot_ptr.slot.value);
-                    const header_a: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
-                    var blocks_a = std.ArrayList(LinkedArrayListBlockInfo).init(self.db.allocator);
-                    defer blocks_a.deinit();
-                    const key_a = if (header_a.size == 0) 0 else header_a.size - 1;
-                    try self.db.readLinkedArrayListBlocks(header_a.ptr, key_a, header_a.shift, &blocks_a);
-
-                    // read the second list's blocks
-                    try self.db.core.seekTo(other.slot_ptr.slot.value);
-                    const header_b: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
-                    var blocks_b = std.ArrayList(LinkedArrayListBlockInfo).init(self.db.allocator);
-                    defer blocks_b.deinit();
-                    try self.db.readLinkedArrayListBlocks(header_b.ptr, 0, header_b.shift, &blocks_b);
-
-                    // stitch the blocks together
-                    var next_slots = [_]?LinkedArrayListSlot{null} ** 2;
-                    var next_shift: u6 = 0;
-                    for (0..@max(blocks_a.items.len, blocks_b.items.len)) |i| {
-                        const block_infos: [2]?LinkedArrayListBlockInfo = .{
-                            if (i < blocks_a.items.len) blocks_a.items[blocks_a.items.len - 1 - i] else null,
-                            if (i < blocks_b.items.len) blocks_b.items[blocks_b.items.len - 1 - i] else null,
-                        };
-                        var next_blocks: [2]?[SLOT_COUNT]LinkedArrayListSlot = .{ null, null };
-                        const is_leaf_node = next_slots[0] == null;
-
-                        if (!is_leaf_node) {
-                            next_shift += 1;
-                        }
-
-                        for (block_infos, &next_blocks) |block_info_maybe, *next_block_maybe| {
-                            if (block_info_maybe) |block_info| {
-                                var block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
-                                var target_i: usize = 0;
-                                for (block_info.block, 0..) |block_slot, source_i| {
-                                    // skip i'th block if necessary
-                                    if (!is_leaf_node and block_info.i == source_i) {
-                                        continue;
-                                    }
-                                    // break on first empty slot
-                                    else if (block_slot.slot.tag == .none) {
-                                        break;
-                                    }
-                                    block[target_i] = block_slot;
-                                    target_i += 1;
-                                }
-
-                                // there are no slots in this block so don't bother writing it
-                                if (target_i == 0) {
-                                    continue;
-                                }
-
-                                next_block_maybe.* = block;
-                            }
-                        }
-
-                        var slots_to_write = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** (SLOT_COUNT * 2);
-                        var slot_i: usize = 0;
-
-                        // add the left block
-                        if (next_blocks[0]) |block| {
-                            for (block) |block_slot| {
-                                if (block_slot.slot.tag == .none) {
-                                    break;
-                                }
-                                slots_to_write[slot_i] = block_slot;
-                                slot_i += 1;
-                            }
-                        }
-
-                        // add the center block
-                        for (next_slots) |slot_maybe| {
-                            if (slot_maybe) |block_slot| {
-                                slots_to_write[slot_i] = block_slot;
-                                slot_i += 1;
-                            }
-                        }
-
-                        // add the right block
-                        if (next_blocks[1]) |block| {
-                            for (block) |block_slot| {
-                                if (block_slot.slot.tag == .none) {
-                                    break;
-                                }
-                                slots_to_write[slot_i] = block_slot;
-                                slot_i += 1;
-                            }
-                        }
-
-                        // clear the next slots
-                        next_slots = .{ null, null };
-
-                        // write the block(s)
-                        try self.db.core.seekFromEnd(0);
-                        for (&next_slots, 0..) |*next_slot, block_i| {
-                            const start = block_i * SLOT_COUNT;
-                            const block = slots_to_write[start .. start + SLOT_COUNT];
-
-                            // this block is empty so don't bother writing it
-                            if (block[0].slot.tag == .none) {
-                                break;
-                            }
-
-                            // write the block
-                            const next_ptr = try self.db.core.getPos();
-                            var leaf_count: u64 = 0;
-                            for (block) |block_slot| {
-                                try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
-                                if (is_leaf_node) {
-                                    if (block_slot.slot.tag != .none) {
-                                        leaf_count += 1;
-                                    }
-                                } else {
-                                    leaf_count += block_slot.size;
-                                }
-                            }
-
-                            next_slot.* = LinkedArrayListSlot{ .slot = .{ .value = next_ptr, .tag = .index, .full = true }, .size = leaf_count };
-                        }
-                    }
-
-                    const root_ptr = blk: {
-                        if (next_slots[0]) |first_slot| {
-                            // if there is more than one slot, make a root node
-                            if (next_slots[1]) |second_slot| {
-                                var block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
-                                block[0] = first_slot;
-                                block[1] = second_slot;
-
-                                // write the root node
-                                const new_ptr = try self.db.core.getPos();
-                                for (block) |block_slot| {
-                                    try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
-                                }
-
-                                next_shift += 1;
-
-                                break :blk new_ptr;
-                            }
-                            // otherwise the first slot is the root node
-                            else {
-                                break :blk first_slot.slot.value;
-                            }
-                        }
-                        // lists were empty so just re-use existing empty block
-                        else {
-                            break :blk header_a.ptr;
-                        }
-                    };
-
-                    // write the header
-                    const list_start = try self.db.core.getPos();
-                    try core_writer.writeInt(LinkedArrayListHeaderInt, @bitCast(LinkedArrayListHeader{
-                        .shift = next_shift,
-                        .ptr = root_ptr,
-                        .size = header_a.size + header_b.size,
-                    }), .big);
-
-                    return .{
-                        .slot_ptr = .{
-                            .position = null,
-                            .slot = .{ .value = list_start, .tag = .linked_array_list },
-                        },
-                        .db = self.db,
-                    };
                 }
 
                 pub fn count(self: Cursor(write_mode)) !u64 {
@@ -2401,8 +2409,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 }
 
                 pub fn concat(self: *LinkedArrayList(.read_write), other: Cursor(.read_only)) !void {
-                    const cursor = try self.cursor.concat(other);
-                    try self.cursor.write(.{ .slot = cursor.slot() });
+                    _ = try self.cursor.writePath(void, &.{
+                        .{ .linked_array_list_concat = .{ .list = other.slot() } },
+                    });
                 }
             };
         }

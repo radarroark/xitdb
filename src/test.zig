@@ -279,6 +279,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
             var even_list_slice_cursor = try cursor.writePath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("even-slice") } },
                 .{ .write = .{ .slot = even_list_cursor.slot_ptr.slot } },
+                .linked_array_list_init,
                 .{ .linked_array_list_slice = .{ .offset = slice_offset, .size = slice_size } },
             });
 
@@ -310,10 +311,11 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
             }));
 
             // concat the slice with itself
-            const combo_list_cursor = try even_list_slice_cursor.concat(even_list_slice_cursor.readOnly());
             _ = try cursor.writePath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
-                .{ .write = .{ .slot = combo_list_cursor.slot_ptr.slot } },
+                .{ .write = .{ .slot = even_list_slice_cursor.slot_ptr.slot } },
+                .linked_array_list_init,
+                .{ .linked_array_list_concat = .{ .list = even_list_slice_cursor.slot_ptr.slot } },
             });
 
             // check all values in the combo list
@@ -358,97 +360,117 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
     var db = try xitdb.Database(db_kind, Hash).init(allocator, init_opts);
     var root_cursor = db.rootCursor();
 
-    const Ctx = struct {
-        allocator: std.mem.Allocator,
+    var values = std.ArrayList(u64).init(allocator);
+    defer values.deinit();
 
-        pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor(.read_write)) !void {
-            var values = std.ArrayList(u64).init(self.allocator);
-            defer values.deinit();
+    {
+        const Ctx = struct {
+            allocator: std.mem.Allocator,
+            values: *std.ArrayList(u64),
 
-            // create even list
-            _ = try cursor.writePath(void, &.{
-                .{ .hash_map_get = .{ .value = hashBuffer("even") } },
-                .linked_array_list_init,
-            });
-            for (0..list_a_size) |i| {
-                const n = i * 2;
-                try values.append(n);
+            pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor(.read_write)) !void {
+                // create even list
                 _ = try cursor.writePath(void, &.{
                     .{ .hash_map_get = .{ .value = hashBuffer("even") } },
                     .linked_array_list_init,
-                    .{ .linked_array_list_get = .append },
-                    .{ .write = .{ .uint = n } },
                 });
-            }
+                for (0..list_a_size) |i| {
+                    const n = i * 2;
+                    try self.values.append(n);
+                    _ = try cursor.writePath(void, &.{
+                        .{ .hash_map_get = .{ .value = hashBuffer("even") } },
+                        .linked_array_list_init,
+                        .{ .linked_array_list_get = .append },
+                        .{ .write = .{ .uint = n } },
+                    });
+                }
 
-            // get even list
-            const even_list_cursor = (try cursor.readPath(void, &.{
-                .{ .hash_map_get = .{ .value = hashBuffer("even") } },
-            })).?;
-
-            // create odd list
-            _ = try cursor.writePath(void, &.{
-                .{ .hash_map_get = .{ .value = hashBuffer("odd") } },
-                .linked_array_list_init,
-            });
-            for (0..list_b_size) |i| {
-                const n = (i * 2) + 1;
-                try values.append(n);
+                // create odd list
                 _ = try cursor.writePath(void, &.{
                     .{ .hash_map_get = .{ .value = hashBuffer("odd") } },
                     .linked_array_list_init,
-                    .{ .linked_array_list_get = .append },
-                    .{ .write = .{ .uint = n } },
                 });
-            }
-
-            // get odd list
-            const odd_list_cursor = (try cursor.readPath(void, &.{
-                .{ .hash_map_get = .{ .value = hashBuffer("odd") } },
-            })).?;
-
-            // concat the lists
-            const combo_list_cursor = try even_list_cursor.concat(odd_list_cursor);
-            _ = try cursor.writePath(void, &.{
-                .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
-                .{ .write = .{ .slot = combo_list_cursor.slot_ptr.slot } },
-            });
-
-            // check all values in the new list
-            for (values.items, 0..) |val, i| {
-                const n = (try cursor.readPath(void, &.{
-                    .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
-                    .{ .linked_array_list_get = .{ .index = i } },
-                })).?.slot_ptr.slot.value;
-                try std.testing.expectEqual(val, n);
-            }
-
-            // check all values in the new list with an iterator
-            {
-                var iter = try combo_list_cursor.iterator();
-                defer iter.deinit();
-                var i: u64 = 0;
-                while (try iter.next()) |num_cursor| {
-                    try std.testing.expectEqual(values.items[i], try num_cursor.readUint());
-                    i += 1;
+                for (0..list_b_size) |i| {
+                    const n = (i * 2) + 1;
+                    try self.values.append(n);
+                    _ = try cursor.writePath(void, &.{
+                        .{ .hash_map_get = .{ .value = hashBuffer("odd") } },
+                        .linked_array_list_init,
+                        .{ .linked_array_list_get = .append },
+                        .{ .write = .{ .uint = n } },
+                    });
                 }
-                try std.testing.expectEqual(try even_list_cursor.count() + try odd_list_cursor.count(), i);
             }
+        };
+        _ = try root_cursor.writePath(Ctx, &.{
+            .array_list_init,
+            .{ .array_list_get = .append },
+            .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = .{ .index = -1 } }}) } },
+            .hash_map_init,
+            .{ .ctx = .{ .allocator = allocator, .values = &values } },
+        });
+    }
 
-            // there are no extra items
-            try std.testing.expectEqual(null, try cursor.readPath(void, &.{
-                .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
-                .{ .linked_array_list_get = .{ .index = values.items.len } },
-            }));
-        }
-    };
-    _ = try root_cursor.writePath(Ctx, &.{
-        .array_list_init,
-        .{ .array_list_get = .append },
-        .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = .{ .index = -1 } }}) } },
-        .hash_map_init,
-        .{ .ctx = .{ .allocator = allocator } },
-    });
+    {
+        const Ctx = struct {
+            allocator: std.mem.Allocator,
+            values: *std.ArrayList(u64),
+
+            pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, Hash).Cursor(.read_write)) !void {
+                // get even list
+                const even_list_cursor = (try cursor.readPath(void, &.{
+                    .{ .hash_map_get = .{ .value = hashBuffer("even") } },
+                })).?;
+
+                // get odd list
+                const odd_list_cursor = (try cursor.readPath(void, &.{
+                    .{ .hash_map_get = .{ .value = hashBuffer("odd") } },
+                })).?;
+
+                // concat the lists
+                const combo_list_cursor = try cursor.writePath(void, &.{
+                    .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
+                    .{ .write = .{ .slot = even_list_cursor.slot_ptr.slot } },
+                    .linked_array_list_init,
+                    .{ .linked_array_list_concat = .{ .list = odd_list_cursor.slot_ptr.slot } },
+                });
+
+                // check all values in the new list
+                for (self.values.items, 0..) |val, i| {
+                    const n = (try cursor.readPath(void, &.{
+                        .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
+                        .{ .linked_array_list_get = .{ .index = i } },
+                    })).?.slot_ptr.slot.value;
+                    try std.testing.expectEqual(val, n);
+                }
+
+                // check all values in the new list with an iterator
+                {
+                    var iter = try combo_list_cursor.iterator();
+                    defer iter.deinit();
+                    var i: u64 = 0;
+                    while (try iter.next()) |num_cursor| {
+                        try std.testing.expectEqual(self.values.items[i], try num_cursor.readUint());
+                        i += 1;
+                    }
+                    try std.testing.expectEqual(try even_list_cursor.count() + try odd_list_cursor.count(), i);
+                }
+
+                // there are no extra items
+                try std.testing.expectEqual(null, try cursor.readPath(void, &.{
+                    .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
+                    .{ .linked_array_list_get = .{ .index = self.values.items.len } },
+                }));
+            }
+        };
+        _ = try root_cursor.writePath(Ctx, &.{
+            .array_list_init,
+            .{ .array_list_get = .append },
+            .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = .{ .index = -1 } }}) } },
+            .hash_map_init,
+            .{ .ctx = .{ .allocator = allocator, .values = &values } },
+        });
+    }
 }
 
 fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, Hash).InitOpts) !void {
@@ -1336,16 +1358,16 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
                 // since each list has 17 items, each concat
                 // will create a gap, causing a root overflow
                 // before a normal array list would've.
-                var combo_list_cursor = even_list_cursor;
-                for (0..16) |_| {
-                    combo_list_cursor = try combo_list_cursor.concat(even_list_cursor);
-                }
-
-                // save the new list
-                _ = try cursor.writePath(void, &.{
+                var combo_list_cursor = try cursor.writePath(void, &.{
                     .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
-                    .{ .write = .{ .slot = combo_list_cursor.slot_ptr.slot } },
+                    .{ .write = .{ .slot = even_list_cursor.slot_ptr.slot } },
+                    .linked_array_list_init,
                 });
+                for (0..16) |_| {
+                    combo_list_cursor = try combo_list_cursor.writePath(void, &.{
+                        .{ .linked_array_list_concat = .{ .list = even_list_cursor.slot_ptr.slot } },
+                    });
+                }
 
                 // append to the new list
                 _ = try cursor.writePath(void, &.{
