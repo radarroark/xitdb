@@ -317,6 +317,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     index: i65,
                     append,
                 },
+                linked_array_list_slice: struct {
+                    offset: u64,
+                    size: u64,
+                },
                 hash_map_init,
                 hash_map_get: union(HashMapSlotKind) {
                     kv_pair: Hash,
@@ -661,6 +665,25 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             return final_slot_ptr;
                         },
                     }
+                },
+                .linked_array_list_slice => {
+                    if (write_mode == .read_only) return error.WriteNotAllowed;
+
+                    if (slot_ptr.slot.tag != .linked_array_list) {
+                        return error.UnexpectedTag;
+                    }
+
+                    const next_array_list_start = slot_ptr.slot.value;
+
+                    const slice_header = try self.readLinkedArrayListSlice(next_array_list_start, part.linked_array_list_slice.offset, part.linked_array_list_slice.size);
+                    const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], slot_ptr);
+
+                    // update header
+                    const writer = self.core.writer();
+                    try self.core.seekTo(next_array_list_start);
+                    try writer.writeInt(LinkedArrayListHeaderInt, @bitCast(slice_header), .big);
+
+                    return final_slot_ptr;
                 },
                 .hash_map_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
@@ -1276,6 +1299,167 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             }
         }
 
+        fn readLinkedArrayListSlice(self: *Database(db_kind, Hash), index_start: u64, offset: u64, size: u64) !LinkedArrayListHeader {
+            const core_reader = self.core.reader();
+            const core_writer = self.core.writer();
+
+            try self.core.seekTo(index_start);
+            const header: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
+
+            if (offset + size > header.size) {
+                return error.LinkedArrayListSliceOutOfBounds;
+            }
+
+            // read the list's left blocks
+            var left_blocks = std.ArrayList(LinkedArrayListBlockInfo).init(self.allocator);
+            defer left_blocks.deinit();
+            try self.readLinkedArrayListBlocks(header.ptr, offset, header.shift, &left_blocks);
+
+            // read the list's right blocks
+            var right_blocks = std.ArrayList(LinkedArrayListBlockInfo).init(self.allocator);
+            defer right_blocks.deinit();
+            const right_key = if (offset + size == 0) 0 else offset + size - 1;
+            try self.readLinkedArrayListBlocks(header.ptr, right_key, header.shift, &right_blocks);
+
+            // create the new blocks
+            const block_count = left_blocks.items.len;
+            var next_slots = [_]?LinkedArrayListSlot{null} ** 2;
+            var next_shift: u6 = 0;
+            for (0..block_count) |i| {
+                const is_leaf_node = next_slots[0] == null;
+
+                const left_block = left_blocks.items[block_count - i - 1];
+                const right_block = right_blocks.items[block_count - i - 1];
+                const orig_block_infos = [_]LinkedArrayListBlockInfo{
+                    left_block,
+                    right_block,
+                };
+                var next_blocks: [2]?[SLOT_COUNT]LinkedArrayListSlot = .{ null, null };
+
+                if (left_block.parent_slot.slot.value == right_block.parent_slot.slot.value) {
+                    var slot_i: usize = 0;
+                    var new_root_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
+                    // left slot
+                    if (next_slots[0]) |left_slot| {
+                        new_root_block[slot_i] = left_slot;
+                    } else {
+                        new_root_block[slot_i] = left_block.block[left_block.i];
+                    }
+                    slot_i += 1;
+                    // middle slots
+                    if (left_block.i != right_block.i) {
+                        for (left_block.block[left_block.i + 1 .. right_block.i]) |middle_slot| {
+                            new_root_block[slot_i] = middle_slot;
+                            slot_i += 1;
+                        }
+                    }
+                    // right slot
+                    if (next_slots[1]) |right_slot| {
+                        new_root_block[slot_i] = right_slot;
+                    } else {
+                        new_root_block[slot_i] = left_block.block[right_block.i];
+                    }
+                    next_blocks[0] = new_root_block;
+                } else {
+                    var slot_i: usize = 0;
+                    var new_left_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
+
+                    // first slot
+                    if (next_slots[0]) |first_slot| {
+                        new_left_block[slot_i] = first_slot;
+                    } else {
+                        new_left_block[slot_i] = left_block.block[left_block.i];
+                    }
+                    slot_i += 1;
+                    // rest of slots
+                    for (left_block.block[left_block.i + 1 ..]) |next_slot| {
+                        new_left_block[slot_i] = next_slot;
+                        slot_i += 1;
+                    }
+                    next_blocks[0] = new_left_block;
+
+                    slot_i = 0;
+                    var new_right_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
+                    // first slots
+                    for (right_block.block[0..right_block.i]) |first_slot| {
+                        new_right_block[slot_i] = first_slot;
+                        slot_i += 1;
+                    }
+                    // last slot
+                    if (next_slots[1]) |last_slot| {
+                        new_right_block[slot_i] = last_slot;
+                    } else {
+                        new_right_block[slot_i] = right_block.block[right_block.i];
+                    }
+                    next_blocks[1] = new_right_block;
+
+                    next_shift += 1;
+                }
+
+                // clear the next slots
+                next_slots = .{ null, null };
+
+                const Side = enum { left, right };
+                const sides = [_]Side{ .left, .right };
+
+                // write the block(s)
+                try self.core.seekFromEnd(0);
+                for (&next_slots, next_blocks, orig_block_infos, sides) |*next_slot, block_maybe, orig_block_info, side| {
+                    if (block_maybe) |block| {
+                        // determine if the block changed compared to the original block
+                        var eql = true;
+                        for (block, orig_block_info.block) |block_slot, orig_slot| {
+                            if (!block_slot.slot.eql(orig_slot.slot)) {
+                                eql = false;
+                                break;
+                            }
+                        }
+                        // if there is no change, just use the original block
+                        if (eql) {
+                            next_slot.* = orig_block_info.parent_slot;
+                        }
+                        // otherwise make a new block
+                        else {
+                            const next_ptr = try self.core.getPos();
+                            var leaf_count: u64 = 0;
+                            for (block) |block_slot| {
+                                try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
+                                if (is_leaf_node) {
+                                    if (block_slot.slot.tag != .none) {
+                                        leaf_count += 1;
+                                    }
+                                } else {
+                                    leaf_count += block_slot.size;
+                                }
+                            }
+                            next_slot.* = LinkedArrayListSlot{
+                                .slot = switch (side) {
+                                    // only the left side needs to be set to full,
+                                    // because it can have a gap that affects indexing
+                                    .left => .{ .value = next_ptr, .tag = .index, .full = true },
+                                    .right => .{ .value = next_ptr, .tag = .index },
+                                },
+                                .size = leaf_count,
+                            };
+                        }
+                    }
+                }
+
+                // we found the root node so we can exit
+                if (next_slots[0] != null and next_slots[1] == null) {
+                    break;
+                }
+            }
+
+            const root_slot = next_slots[0] orelse return error.ExpectedRootNode;
+
+            return .{
+                .shift = next_shift,
+                .ptr = root_slot.slot.value,
+                .size = size,
+            };
+        }
+
         // Cursor
 
         pub fn Cursor(comptime write_mode: WriteMode) type {
@@ -1628,188 +1812,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                 pub fn slot(self: Cursor(write_mode)) Slot {
                     return self.slot_ptr.slot;
-                }
-
-                pub fn slice(self: Cursor(write_mode), offset: u64, size: u64) !Cursor(.read_only) {
-                    if (self.slot_ptr.slot.tag != .linked_array_list) {
-                        return error.UnexpectedTag;
-                    }
-
-                    const core_reader = self.db.core.reader();
-                    const core_writer = self.db.core.writer();
-
-                    const array_list_start = self.slot_ptr.slot.value;
-                    try self.db.core.seekTo(array_list_start);
-                    const header: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
-
-                    if (offset + size > header.size) {
-                        return error.LinkedArrayListSliceOutOfBounds;
-                    } else if (size == header.size) {
-                        return switch (write_mode) {
-                            .read_only => self,
-                            .read_write => self.readOnly(),
-                        };
-                    }
-
-                    // read the list's left blocks
-                    var left_blocks = std.ArrayList(LinkedArrayListBlockInfo).init(self.db.allocator);
-                    defer left_blocks.deinit();
-                    try self.db.readLinkedArrayListBlocks(header.ptr, offset, header.shift, &left_blocks);
-
-                    // read the list's right blocks
-                    var right_blocks = std.ArrayList(LinkedArrayListBlockInfo).init(self.db.allocator);
-                    defer right_blocks.deinit();
-                    const right_key = if (offset + size == 0) 0 else offset + size - 1;
-                    try self.db.readLinkedArrayListBlocks(header.ptr, right_key, header.shift, &right_blocks);
-
-                    // create the new blocks
-                    const block_count = left_blocks.items.len;
-                    var next_slots = [_]?LinkedArrayListSlot{null} ** 2;
-                    var next_shift: u6 = 0;
-                    for (0..block_count) |i| {
-                        const is_leaf_node = next_slots[0] == null;
-
-                        const left_block = left_blocks.items[block_count - i - 1];
-                        const right_block = right_blocks.items[block_count - i - 1];
-                        const orig_block_infos = [_]LinkedArrayListBlockInfo{
-                            left_block,
-                            right_block,
-                        };
-                        var next_blocks: [2]?[SLOT_COUNT]LinkedArrayListSlot = .{ null, null };
-
-                        if (left_block.parent_slot.slot.value == right_block.parent_slot.slot.value) {
-                            var slot_i: usize = 0;
-                            var new_root_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
-                            // left slot
-                            if (next_slots[0]) |left_slot| {
-                                new_root_block[slot_i] = left_slot;
-                            } else {
-                                new_root_block[slot_i] = left_block.block[left_block.i];
-                            }
-                            slot_i += 1;
-                            // middle slots
-                            if (left_block.i != right_block.i) {
-                                for (left_block.block[left_block.i + 1 .. right_block.i]) |middle_slot| {
-                                    new_root_block[slot_i] = middle_slot;
-                                    slot_i += 1;
-                                }
-                            }
-                            // right slot
-                            if (next_slots[1]) |right_slot| {
-                                new_root_block[slot_i] = right_slot;
-                            } else {
-                                new_root_block[slot_i] = left_block.block[right_block.i];
-                            }
-                            next_blocks[0] = new_root_block;
-                        } else {
-                            var slot_i: usize = 0;
-                            var new_left_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
-
-                            // first slot
-                            if (next_slots[0]) |first_slot| {
-                                new_left_block[slot_i] = first_slot;
-                            } else {
-                                new_left_block[slot_i] = left_block.block[left_block.i];
-                            }
-                            slot_i += 1;
-                            // rest of slots
-                            for (left_block.block[left_block.i + 1 ..]) |next_slot| {
-                                new_left_block[slot_i] = next_slot;
-                                slot_i += 1;
-                            }
-                            next_blocks[0] = new_left_block;
-
-                            slot_i = 0;
-                            var new_right_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
-                            // first slots
-                            for (right_block.block[0..right_block.i]) |first_slot| {
-                                new_right_block[slot_i] = first_slot;
-                                slot_i += 1;
-                            }
-                            // last slot
-                            if (next_slots[1]) |last_slot| {
-                                new_right_block[slot_i] = last_slot;
-                            } else {
-                                new_right_block[slot_i] = right_block.block[right_block.i];
-                            }
-                            next_blocks[1] = new_right_block;
-
-                            next_shift += 1;
-                        }
-
-                        // clear the next slots
-                        next_slots = .{ null, null };
-
-                        const Side = enum { left, right };
-                        const sides = [_]Side{ .left, .right };
-
-                        // write the block(s)
-                        try self.db.core.seekFromEnd(0);
-                        for (&next_slots, next_blocks, orig_block_infos, sides) |*next_slot, block_maybe, orig_block_info, side| {
-                            if (block_maybe) |block| {
-                                // determine if the block changed compared to the original block
-                                var eql = true;
-                                for (block, orig_block_info.block) |block_slot, orig_slot| {
-                                    if (!block_slot.slot.eql(orig_slot.slot)) {
-                                        eql = false;
-                                        break;
-                                    }
-                                }
-                                // if there is no change, just use the original block
-                                if (eql) {
-                                    next_slot.* = orig_block_info.parent_slot;
-                                }
-                                // otherwise make a new block
-                                else {
-                                    const next_ptr = try self.db.core.getPos();
-                                    var leaf_count: u64 = 0;
-                                    for (block) |block_slot| {
-                                        try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
-                                        if (is_leaf_node) {
-                                            if (block_slot.slot.tag != .none) {
-                                                leaf_count += 1;
-                                            }
-                                        } else {
-                                            leaf_count += block_slot.size;
-                                        }
-                                    }
-                                    next_slot.* = LinkedArrayListSlot{
-                                        .slot = switch (side) {
-                                            // only the left side needs to be set to full,
-                                            // because it can have a gap that affects indexing
-                                            .left => .{ .value = next_ptr, .tag = .index, .full = true },
-                                            .right => .{ .value = next_ptr, .tag = .index },
-                                        },
-                                        .size = leaf_count,
-                                    };
-                                }
-                            }
-                        }
-
-                        // we found the root node so we can exit
-                        if (next_slots[0] != null and next_slots[1] == null) {
-                            break;
-                        }
-                    }
-
-                    const root_slot = next_slots[0] orelse return error.ExpectedRootNode;
-
-                    // write new list header
-                    try self.db.core.seekFromEnd(0);
-                    const new_array_list_start = try self.db.core.getPos();
-                    try core_writer.writeInt(LinkedArrayListHeaderInt, @bitCast(LinkedArrayListHeader{
-                        .shift = next_shift,
-                        .ptr = root_slot.slot.value,
-                        .size = size,
-                    }), .big);
-
-                    return .{
-                        .slot_ptr = .{
-                            .position = null,
-                            .slot = .{ .value = new_array_list_start, .tag = .linked_array_list },
-                        },
-                        .db = self.db,
-                    };
                 }
 
                 pub fn concat(self: Cursor(write_mode), other: Cursor(.read_only)) !Cursor(.read_only) {
@@ -2393,21 +2395,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 }
 
                 pub fn slice(self: *LinkedArrayList(.read_write), offset: u64, size: u64) !void {
-                    const cursor = try self.cursor.slice(offset, size);
-                    try self.cursor.write(.{ .slot = cursor.slot() });
-                }
-
-                pub fn sliceCursor(self: LinkedArrayList(write_mode), offset: u64, size: u64) !Cursor(.read_only) {
-                    return try self.cursor.slice(offset, size);
+                    _ = try self.cursor.writePath(void, &.{
+                        .{ .linked_array_list_slice = .{ .offset = offset, .size = size } },
+                    });
                 }
 
                 pub fn concat(self: *LinkedArrayList(.read_write), other: Cursor(.read_only)) !void {
                     const cursor = try self.cursor.concat(other);
                     try self.cursor.write(.{ .slot = cursor.slot() });
-                }
-
-                pub fn concatCursor(self: LinkedArrayList(write_mode), other: Cursor(.read_only)) !Cursor(.read_only) {
-                    return try self.cursor.concat(other);
                 }
             };
         }

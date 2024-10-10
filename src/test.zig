@@ -154,19 +154,7 @@ test "high level api" {
 
                 const todos_cursor = try moment.putCursor(hashBuffer("todos"));
                 var todos = try DB.LinkedArrayList(.read_write).init(todos_cursor);
-
-                // slice to a new list
-                const todos_slice_cursor = try todos.sliceCursor(1, 1);
-                try std.testing.expectEqual(1, try todos_slice_cursor.count());
-
-                // concat to a new list
-                const todos_concat_cursor = try todos.concatCursor(todos_slice_cursor);
-                try std.testing.expectEqual(3, try todos_concat_cursor.count());
-
-                // concat in place
-                try todos.concat(todos_slice_cursor);
-
-                // slice in place
+                try todos.concat(todos_cursor.readOnly());
                 try todos.slice(1, 1);
             }
         };
@@ -288,12 +276,10 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
             const even_list_cursor = (try cursor.readPath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("even") } },
             })).?;
-            const even_list_slice_cursor = try even_list_cursor.slice(slice_offset, slice_size);
-
-            // save the newly-made slice
-            _ = try cursor.writePath(void, &.{
+            var even_list_slice_cursor = try cursor.writePath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("even-slice") } },
-                .{ .write = .{ .slot = even_list_slice_cursor.slot_ptr.slot } },
+                .{ .write = .{ .slot = even_list_cursor.slot_ptr.slot } },
+                .{ .linked_array_list_slice = .{ .offset = slice_offset, .size = slice_size } },
             });
 
             // check all values in the new slice
@@ -324,7 +310,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
             }));
 
             // concat the slice with itself
-            const combo_list_cursor = try even_list_slice_cursor.concat(even_list_slice_cursor);
+            const combo_list_cursor = try even_list_slice_cursor.concat(even_list_slice_cursor.readOnly());
             _ = try cursor.writePath(void, &.{
                 .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
                 .{ .write = .{ .slot = combo_list_cursor.slot_ptr.slot } },
