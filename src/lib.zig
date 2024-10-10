@@ -2040,6 +2040,11 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         return .{
                             .cursor = cursor,
                             .core = switch (cursor.slot_ptr.slot.tag) {
+                                .none => .{
+                                    .size = 0,
+                                    .index = 0,
+                                    .stack = std.ArrayList(Level).init(cursor.db.allocator),
+                                },
                                 .array_list => blk: {
                                     const position = cursor.slot_ptr.slot.value;
                                     try cursor.db.core.seekTo(position);
@@ -2078,6 +2083,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                     pub fn next(self: *Iter) !?Cursor(.read_only) {
                         switch (self.cursor.slot_ptr.slot.tag) {
+                            .none => return null,
                             .array_list => {
                                 if (self.core.index == self.core.size) return null;
                                 self.core.index += 1;
