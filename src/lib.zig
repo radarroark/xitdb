@@ -308,15 +308,11 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
         pub fn PathPart(comptime Ctx: type) type {
             return union(enum) {
                 array_list_init,
-                array_list_get: union(enum) {
-                    index: i65,
-                    append,
-                },
+                array_list_get: i65,
+                array_list_append,
                 linked_array_list_init,
-                linked_array_list_get: union(enum) {
-                    index: i65,
-                    append,
-                },
+                linked_array_list_get: i65,
+                linked_array_list_append,
                 linked_array_list_slice: struct {
                     offset: u64,
                     size: u64,
@@ -537,39 +533,46 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     } else if (tag != .array_list) {
                         return error.UnexpectedTag;
                     }
+
                     const next_array_list_start = slot_ptr.slot.value;
-                    switch (part.array_list_get) {
-                        .index => {
-                            const index = part.array_list_get.index;
-                            try self.core.seekTo(next_array_list_start);
-                            const reader = self.core.reader();
-                            const header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
-                            if (index >= header.size or index < -@as(i65, header.size)) {
-                                return error.KeyNotFound;
-                            }
-                            const key: u64 = if (index < 0)
-                                @intCast(header.size - @abs(index))
-                            else
-                                @intCast(index);
-                            const last_key = header.size - 1;
-                            const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
-                            const final_slot_ptr = try self.readArrayListSlot(header.ptr, key, shift, internal_write_mode);
-                            return try self.readSlotPointer(write_mode, Ctx, path[1..], final_slot_ptr);
-                        },
-                        .append => {
-                            if (write_mode == .read_only) return error.WriteNotAllowed;
+                    const index = part.array_list_get;
 
-                            const append_result = try self.readArrayListSlotAppend(next_array_list_start, internal_write_mode);
-                            const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], append_result.slot_ptr);
-
-                            // update header
-                            const writer = self.core.writer();
-                            try self.core.seekTo(next_array_list_start);
-                            try writer.writeInt(ArrayListHeaderInt, @bitCast(append_result.header), .big);
-
-                            return final_slot_ptr;
-                        },
+                    try self.core.seekTo(next_array_list_start);
+                    const reader = self.core.reader();
+                    const header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
+                    if (index >= header.size or index < -@as(i65, header.size)) {
+                        return error.KeyNotFound;
                     }
+
+                    const key: u64 = if (index < 0)
+                        @intCast(header.size - @abs(index))
+                    else
+                        @intCast(index);
+                    const last_key = header.size - 1;
+                    const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
+                    const final_slot_ptr = try self.readArrayListSlot(header.ptr, key, shift, internal_write_mode);
+
+                    return try self.readSlotPointer(write_mode, Ctx, path[1..], final_slot_ptr);
+                },
+                .array_list_append => {
+                    if (write_mode == .read_only) return error.WriteNotAllowed;
+
+                    const tag = if (slot_ptr.slot.value == DATABASE_START) self.header.tag else slot_ptr.slot.tag;
+                    if (tag != .array_list) {
+                        return error.UnexpectedTag;
+                    }
+
+                    const next_array_list_start = slot_ptr.slot.value;
+
+                    const append_result = try self.readArrayListSlotAppend(next_array_list_start, internal_write_mode);
+                    const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], append_result.slot_ptr);
+
+                    // update header
+                    const writer = self.core.writer();
+                    try self.core.seekTo(next_array_list_start);
+                    try writer.writeInt(ArrayListHeaderInt, @bitCast(append_result.header), .big);
+
+                    return final_slot_ptr;
                 },
                 .linked_array_list_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
@@ -636,38 +639,43 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     } else if (slot_ptr.slot.tag != .linked_array_list) {
                         return error.UnexpectedTag;
                     }
+
+                    const next_array_list_start = slot_ptr.slot.value;
+                    const index = part.linked_array_list_get;
+
+                    try self.core.seekTo(next_array_list_start);
+                    const reader = self.core.reader();
+                    const header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
+                    if (index >= header.size or index < -@as(i65, header.size)) {
+                        return error.KeyNotFound;
+                    }
+
+                    const key: u64 = if (index < 0)
+                        @intCast(header.size - @abs(index))
+                    else
+                        @intCast(index);
+                    const final_slot_ptr = try self.readLinkedArrayListSlot(header.ptr, key, header.shift, internal_write_mode);
+
+                    return try self.readSlotPointer(write_mode, Ctx, path[1..], final_slot_ptr.slot_ptr);
+                },
+                .linked_array_list_append => {
+                    if (write_mode == .read_only) return error.WriteNotAllowed;
+
+                    if (slot_ptr.slot.tag != .linked_array_list) {
+                        return error.UnexpectedTag;
+                    }
+
                     const next_array_list_start = slot_ptr.slot.value;
 
-                    switch (part.linked_array_list_get) {
-                        .index => {
-                            const index = part.linked_array_list_get.index;
-                            try self.core.seekTo(next_array_list_start);
-                            const reader = self.core.reader();
-                            const header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
-                            if (index >= header.size or index < -@as(i65, header.size)) {
-                                return error.KeyNotFound;
-                            }
-                            const key: u64 = if (index < 0)
-                                @intCast(header.size - @abs(index))
-                            else
-                                @intCast(index);
-                            const final_slot_ptr = try self.readLinkedArrayListSlot(header.ptr, key, header.shift, internal_write_mode);
-                            return try self.readSlotPointer(write_mode, Ctx, path[1..], final_slot_ptr.slot_ptr);
-                        },
-                        .append => {
-                            if (write_mode == .read_only) return error.WriteNotAllowed;
+                    const append_result = try self.readLinkedArrayListSlotAppend(next_array_list_start, internal_write_mode);
+                    const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], append_result.slot_ptr.slot_ptr);
 
-                            const append_result = try self.readLinkedArrayListSlotAppend(next_array_list_start, internal_write_mode);
-                            const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], append_result.slot_ptr.slot_ptr);
+                    // update header
+                    const writer = self.core.writer();
+                    try self.core.seekTo(next_array_list_start);
+                    try writer.writeInt(LinkedArrayListHeaderInt, @bitCast(append_result.header), .big);
 
-                            // update header
-                            const writer = self.core.writer();
-                            try self.core.seekTo(next_array_list_start);
-                            try writer.writeInt(LinkedArrayListHeaderInt, @bitCast(append_result.header), .big);
-
-                            return final_slot_ptr;
-                        },
-                    }
+                    return final_slot_ptr;
                 },
                 .linked_array_list_slice => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
@@ -2297,46 +2305,46 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                 pub fn getCursor(self: ArrayList(write_mode), index: i65) !?Cursor(.read_only) {
                     return try self.cursor.readPath(void, &.{
-                        .{ .array_list_get = .{ .index = index } },
+                        .{ .array_list_get = index },
                     });
                 }
 
                 pub fn getSlot(self: ArrayList(write_mode), index: i65) !?Slot {
                     return try self.cursor.readPathSlot(void, &.{
-                        .{ .array_list_get = .{ .index = index } },
+                        .{ .array_list_get = index },
                     });
                 }
 
                 pub fn put(self: ArrayList(.read_write), index: i65, data: WriteableData) !void {
                     _ = try self.cursor.writePath(void, &.{
-                        .{ .array_list_get = .{ .index = index } },
+                        .{ .array_list_get = index },
                         .{ .write = data },
                     });
                 }
 
                 pub fn putCursor(self: ArrayList(.read_write), index: i65) !Cursor(.read_write) {
                     return try self.cursor.writePath(void, &.{
-                        .{ .array_list_get = .{ .index = index } },
+                        .{ .array_list_get = index },
                     });
                 }
 
                 pub fn append(self: ArrayList(.read_write), data: WriteableData) !void {
                     _ = try self.cursor.writePath(void, &.{
-                        .{ .array_list_get = .append },
+                        .array_list_append,
                         .{ .write = data },
                     });
                 }
 
                 pub fn appendCursor(self: ArrayList(.read_write)) !Cursor(.read_write) {
                     return try self.cursor.writePath(void, &.{
-                        .{ .array_list_get = .append },
+                        .array_list_append,
                     });
                 }
 
                 pub fn appendContext(self: ArrayList(.read_write), data: WriteableData, ctx: anytype) !void {
                     const Ctx = @TypeOf(ctx);
                     _ = try self.cursor.writePath(Ctx, &.{
-                        .{ .array_list_get = .append },
+                        .array_list_append,
                         .{ .write = data },
                         .{ .ctx = ctx },
                     });
@@ -2372,39 +2380,39 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                 pub fn getCursor(self: LinkedArrayList(write_mode), index: i65) !?Cursor(.read_only) {
                     return try self.cursor.readPath(void, &.{
-                        .{ .linked_array_list_get = .{ .index = index } },
+                        .{ .linked_array_list_get = index },
                     });
                 }
 
                 pub fn getSlot(self: LinkedArrayList(write_mode), index: i65) !?Slot {
                     return try self.cursor.readPathSlot(void, &.{
-                        .{ .linked_array_list_get = .{ .index = index } },
+                        .{ .linked_array_list_get = index },
                     });
                 }
 
                 pub fn put(self: LinkedArrayList(.read_write), index: i65, data: WriteableData) !void {
                     _ = try self.cursor.writePath(void, &.{
-                        .{ .linked_array_list_get = .{ .index = index } },
+                        .{ .linked_array_list_get = index },
                         .{ .write = data },
                     });
                 }
 
                 pub fn putCursor(self: LinkedArrayList(.read_write), index: i65) !Cursor(.read_write) {
                     return try self.cursor.writePath(void, &.{
-                        .{ .linked_array_list_get = .{ .index = index } },
+                        .{ .linked_array_list_get = index },
                     });
                 }
 
                 pub fn append(self: LinkedArrayList(.read_write), data: WriteableData) !void {
                     _ = try self.cursor.writePath(void, &.{
-                        .{ .linked_array_list_get = .append },
+                        .linked_array_list_append,
                         .{ .write = data },
                     });
                 }
 
                 pub fn appendCursor(self: LinkedArrayList(.read_write)) !Cursor(.read_write) {
                     return try self.cursor.writePath(void, &.{
-                        .{ .linked_array_list_get = .append },
+                        .linked_array_list_append,
                     });
                 }
 
