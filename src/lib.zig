@@ -267,7 +267,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             size: u64,
         };
 
-        const KeyValuePairInt = u304;
+        const KeyValuePairInt = @typeInfo(KeyValuePair).Struct.backing_integer.?;
         const KeyValuePair = packed struct {
             value_slot: Slot,
             key_slot: Slot,
