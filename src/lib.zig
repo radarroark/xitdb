@@ -310,6 +310,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 array_list_init,
                 array_list_get: i65,
                 array_list_append,
+                array_list_slice: struct {
+                    size: u64,
+                },
                 linked_array_list_init,
                 linked_array_list_get: i65,
                 linked_array_list_append,
@@ -571,6 +574,25 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     const writer = self.core.writer();
                     try self.core.seekTo(next_array_list_start);
                     try writer.writeInt(ArrayListHeaderInt, @bitCast(append_result.header), .big);
+
+                    return final_slot_ptr;
+                },
+                .array_list_slice => {
+                    if (write_mode == .read_only) return error.WriteNotAllowed;
+
+                    if (slot_ptr.slot.tag != .array_list) {
+                        return error.UnexpectedTag;
+                    }
+
+                    const next_array_list_start = slot_ptr.slot.value;
+
+                    const slice_header = try self.readArrayListSlice(next_array_list_start, part.array_list_slice.size);
+                    const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], slot_ptr);
+
+                    // update header
+                    const writer = self.core.writer();
+                    try self.core.seekTo(next_array_list_start);
+                    try writer.writeInt(ArrayListHeaderInt, @bitCast(slice_header), .big);
 
                     return final_slot_ptr;
                 },
@@ -1089,6 +1111,43 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     return self.readArrayListSlot(next_ptr, key, shift - 1, internal_write_mode);
                 },
                 else => return error.UnexpectedTag,
+            }
+        }
+
+        fn readArrayListSlice(self: *Database(db_kind, Hash), index_start: u64, size: u64) !ArrayListHeader {
+            const core_reader = self.core.reader();
+
+            try self.core.seekTo(index_start);
+            const header: ArrayListHeader = @bitCast(try core_reader.readInt(ArrayListHeaderInt, .big));
+
+            if (size > header.size) {
+                return error.ArrayListSliceOutOfBounds;
+            }
+
+            const prev_shift: u6 = @intCast(if (header.size - 1 < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, header.size - 1));
+            const next_shift: u6 = @intCast(if (size - 1 < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, size - 1));
+
+            if (prev_shift == next_shift) {
+                // the root node doesn't need to change
+                return .{
+                    .ptr = header.ptr,
+                    .size = size,
+                };
+            } else {
+                // keep following the first slot until we are at the correct shift
+                var shift = prev_shift;
+                var index_pos = header.ptr;
+                while (shift > next_shift) {
+                    try self.core.seekTo(index_pos);
+                    const slot: Slot = @bitCast(try core_reader.readInt(SlotInt, .big));
+                    try slot.tag.validate();
+                    shift -= 1;
+                    index_pos = slot.value;
+                }
+                return .{
+                    .ptr = index_pos,
+                    .size = size,
+                };
             }
         }
 
@@ -2353,6 +2412,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         .array_list_append,
                         .{ .write = data },
                         .{ .ctx = ctx },
+                    });
+                }
+
+                pub fn slice(self: ArrayList(.read_write), size: u64) !void {
+                    _ = try self.cursor.writePath(void, &.{
+                        .{ .array_list_slice = .{ .size = size } },
                     });
                 }
             };

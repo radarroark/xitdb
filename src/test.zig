@@ -144,6 +144,7 @@ test "high level api" {
                 const fruits_cursor = try moment.putCursor(hashBuffer("fruits"));
                 const fruits = try DB.ArrayList(.read_write).init(fruits_cursor);
                 try fruits.put(0, .{ .bytes = "lemon" });
+                try fruits.slice(2);
 
                 const people_cursor = try moment.putCursor(hashBuffer("people"));
                 const people = try DB.ArrayList(.read_write).init(people_cursor);
@@ -170,6 +171,7 @@ test "high level api" {
 
         const fruits_cursor = (try moment.getCursor(hashBuffer("fruits"))).?;
         const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
+        try std.testing.expectEqual(2, try fruits.count());
 
         const lemon_cursor = (try fruits.getCursor(0)).?;
         const lemon_value = try lemon_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
@@ -1050,6 +1052,31 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             defer allocator.free(value2);
             try std.testing.expectEqualStrings(value, value2);
         }
+
+        // slice so it contains exactly SLOT_COUNT,
+        // so we have the old root again
+        _ = try root_cursor.writePath(void, &.{
+            .array_list_init,
+            .{ .array_list_slice = .{ .size = xitdb.SLOT_COUNT } },
+        });
+
+        // we can iterate over the remaining slots
+        for (0..xitdb.SLOT_COUNT) |i| {
+            const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
+            defer allocator.free(value);
+            const cursor = (try root_cursor.readPath(void, &.{
+                .{ .array_list_get = i },
+                .{ .hash_map_get = .{ .value = wat_key } },
+            })).?;
+            const value2 = try cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+            defer allocator.free(value2);
+            try std.testing.expectEqualStrings(value, value2);
+        }
+
+        // but we can't get the value that we sliced out of the array list
+        try std.testing.expectEqual(null, root_cursor.readPath(void, &.{
+            .{ .array_list_get = xitdb.SLOT_COUNT + 1 },
+        }));
     }
 
     // append to inner array_list many times, filling up the array_list until a root overflow occurs
@@ -1082,6 +1109,34 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             defer allocator.free(value2);
             try std.testing.expectEqualStrings(value, value2);
         }
+
+        // slice inner array list so it contains exactly SLOT_COUNT,
+        // so we have the old root again
+        _ = try root_cursor.writePath(void, &.{
+            .array_list_init,
+            .{ .array_list_get = -1 },
+            .array_list_init,
+            .{ .array_list_slice = .{ .size = xitdb.SLOT_COUNT } },
+        });
+
+        // we can iterate over the remaining slots
+        for (0..xitdb.SLOT_COUNT) |i| {
+            const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
+            defer allocator.free(value);
+            const cursor = (try root_cursor.readPath(void, &.{
+                .{ .array_list_get = -1 },
+                .{ .array_list_get = i },
+            })).?;
+            const value2 = try cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+            defer allocator.free(value2);
+            try std.testing.expectEqualStrings(value, value2);
+        }
+
+        // but we can't get the value that we sliced out of the array list
+        try std.testing.expectEqual(null, root_cursor.readPath(void, &.{
+            .{ .array_list_get = -1 },
+            .{ .array_list_get = xitdb.SLOT_COUNT + 1 },
+        }));
 
         // overwrite last value with hello
         _ = try root_cursor.writePath(void, &.{
