@@ -568,9 +568,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     const tag = if (slot_ptr.slot.value == DATABASE_START) self.header.tag else slot_ptr.slot.tag;
-                    if (tag != .array_list) {
-                        return error.UnexpectedTag;
-                    }
+                    if (tag != .array_list) return error.UnexpectedTag;
 
                     const next_array_list_start = slot_ptr.slot.value;
 
@@ -579,7 +577,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                     const writer = self.core.writer();
 
-                    // if top level (mutable) array list, put the file size in the tx end block
+                    // if top level array list, put the file size in the tx end block
                     if (is_top_level) {
                         const last_slot_pos = append_result.slot_ptr.position orelse return error.ExpectedSlotPosition;
                         const last_slot_i = (append_result.header.size - 1) % SLOT_COUNT;
@@ -600,9 +598,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 .array_list_slice => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
-                    if (slot_ptr.slot.tag != .array_list) {
-                        return error.UnexpectedTag;
-                    }
+                    if (slot_ptr.slot.tag != .array_list) return error.UnexpectedTag;
 
                     const next_array_list_start = slot_ptr.slot.value;
 
@@ -651,9 +647,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                         return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                     } else {
-                        if (slot_ptr.slot.tag != .linked_array_list) {
-                            return error.UnexpectedTag;
-                        }
+                        if (slot_ptr.slot.tag != .linked_array_list) return error.UnexpectedTag;
+
                         const reader = self.core.reader();
                         const writer = self.core.writer();
 
@@ -712,9 +707,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 .linked_array_list_append => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
-                    if (slot_ptr.slot.tag != .linked_array_list) {
-                        return error.UnexpectedTag;
-                    }
+                    if (slot_ptr.slot.tag != .linked_array_list) return error.UnexpectedTag;
 
                     const next_array_list_start = slot_ptr.slot.value;
 
@@ -731,9 +724,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 .linked_array_list_slice => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
-                    if (slot_ptr.slot.tag != .linked_array_list) {
-                        return error.UnexpectedTag;
-                    }
+                    if (slot_ptr.slot.tag != .linked_array_list) return error.UnexpectedTag;
 
                     const next_array_list_start = slot_ptr.slot.value;
 
@@ -750,12 +741,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 .linked_array_list_concat => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
-                    if (slot_ptr.slot.tag != .linked_array_list) {
-                        return error.UnexpectedTag;
-                    }
-                    if (part.linked_array_list_concat.list.tag != .linked_array_list) {
-                        return error.UnexpectedTag;
-                    }
+                    if (slot_ptr.slot.tag != .linked_array_list) return error.UnexpectedTag;
+
+                    if (part.linked_array_list_concat.list.tag != .linked_array_list) return error.UnexpectedTag;
 
                     const next_array_list_start = slot_ptr.slot.value;
 
@@ -789,9 +777,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                         return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                     } else {
-                        if (slot_ptr.slot.tag != .hash_map) {
-                            return error.UnexpectedTag;
-                        }
+                        if (slot_ptr.slot.tag != .hash_map) return error.UnexpectedTag;
+
                         const reader = self.core.reader();
                         const writer = self.core.writer();
 
@@ -1115,7 +1102,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             const next_index_pos = try self.core.getPos();
                             var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                             try writer.writeAll(&index_block);
-                            // for the top-level (mutable) array list, put a "tx end block"
+                            // for the top-level array list, put a "tx end block"
                             // after leaf nodes. this will hold the current size of
                             // the file. that way, we can completely delete the N most
                             // recent transactions from the file by calling `slice` on
