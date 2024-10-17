@@ -60,11 +60,14 @@ const DatabaseHeader = packed struct {
     // increment this number when the file format changes,
     // such as when a new Tag member is added.
     version: u16 = VERSION,
-    // currently the flag is just an extra bit for the version number.
-    // it might be repurposed in the future.
-    flag: u1 = 0,
     // the root tag, representing the type of the top-level data.
     tag: Tag = .none,
+    // when true, and the top-level tag is array list, leaf nodes
+    // will include a "tx end block" immediately after them, which
+    // will track the size of the file/buffer at the end of the
+    // transaction. then, when `slice` is used at the top level,
+    // the file/buffer can be truncated to recover space.
+    track_tx_end: bool = true,
     // a value that allows for a quick sanity check when determining
     // if the file is a valid database. it also provides a quick
     // visual indicator that this is a xitdb file to anyone looking
@@ -80,7 +83,7 @@ const DatabaseHeader = packed struct {
             return error.InvalidDatabase;
         }
         try self.tag.validate();
-        if (self.flag != 0 or self.version > VERSION) {
+        if (self.version > VERSION) {
             return error.InvalidVersion;
         }
     }
@@ -459,10 +462,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                                 .ptr = array_list_ptr,
                                 .size = 0,
                             }), .big);
-                            const index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                            try writer.writeAll(&index_block);
-                            var tx_end_block = [_]u8{0} ** TX_END_BLOCK_SIZE;
-                            try writer.writeAll(&tx_end_block);
+                            if (self.header.track_tx_end) {
+                                var index_block = [_]u8{0} ** (INDEX_BLOCK_SIZE + TX_END_BLOCK_SIZE);
+                                try writer.writeAll(&index_block);
+                            } else {
+                                const index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                                try writer.writeAll(&index_block);
+                            }
                         }
 
                         var next_slot_ptr = slot_ptr;
@@ -565,7 +571,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     const writer = self.core.writer();
 
                     // if top level array list, put the file size in the tx end block
-                    if (is_top_level) {
+                    if (is_top_level and self.header.track_tx_end) {
                         const last_slot_pos = append_result.slot_ptr.position orelse return error.ExpectedSlotPosition;
                         const last_slot_i = (append_result.header.size - 1) % SLOT_COUNT;
                         const last_index_block_pos = last_slot_pos - (last_slot_i * byteSizeOf(Slot));
@@ -598,7 +604,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     try writer.writeInt(ArrayListHeaderInt, @bitCast(slice_header), .big);
 
                     // if top level array list, truncate file/buffer to tx end
-                    if (is_top_level) {
+                    if (is_top_level and self.header.track_tx_end) {
                         const last_index = slice_header.size - 1;
                         const last_slot_ptr = try self.readSlotPointer(write_mode, void, &.{.{ .array_list_get = last_index }}, slot_ptr);
                         const last_slot_pos = last_slot_ptr.position orelse return error.ExpectedSlotPosition;
@@ -1097,13 +1103,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             const next_index_pos = try self.core.getPos();
                             var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                             try writer.writeAll(&index_block);
-                            // for the top-level array list, put a "tx end block"
-                            // after leaf nodes. this will hold the current size of
-                            // the file. that way, we can completely delete the N most
-                            // recent transactions from the file by calling `slice` on
-                            // the array list, which will truncate the file to the last
-                            // size in the tx end block.
-                            if (is_top_level and shift == 1) {
+                            // if top level array list, put a "tx end block" after leaf node
+                            if (is_top_level and self.header.track_tx_end and shift == 1) {
                                 var tx_end_block = [_]u8{0} ** TX_END_BLOCK_SIZE;
                                 try writer.writeAll(&tx_end_block);
                             }
