@@ -91,12 +91,6 @@ pub const WriteMode = enum {
     read_write,
 };
 
-const InternalWriteMode = enum {
-    read_only,
-    read_write,
-    read_write_immutable,
-};
-
 pub const DatabaseKind = enum {
     memory,
     file,
@@ -436,19 +430,16 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
         }
 
         fn readSlotPointer(self: *Database(db_kind, Hash), comptime write_mode: WriteMode, comptime Ctx: type, path: []const PathPart(Ctx), slot_ptr: SlotPointer) anyerror!SlotPointer {
-            const internal_write_mode: InternalWriteMode = switch (write_mode) {
-                .read_write => if (slot_ptr.slot.value == DATABASE_START) .read_write else .read_write_immutable,
-                .read_only => .read_only,
-            };
-
             const part = if (path.len > 0) path[0] else {
-                if (internal_write_mode == .read_only and slot_ptr.slot.tag == .none) {
+                if (write_mode == .read_only and slot_ptr.slot.tag == .none) {
                     return error.KeyNotFound;
                 }
                 return slot_ptr;
             };
 
-            const is_tx_start = internal_write_mode == .read_write and self.tx_start == null;
+            const is_top_level = slot_ptr.slot.value == DATABASE_START;
+
+            const is_tx_start = is_top_level and self.tx_start == null;
             if (is_tx_start) {
                 try self.core.seekFromEnd(0);
                 self.tx_start = try self.core.getPos();
@@ -569,7 +560,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         @intCast(index);
                     const last_key = header.size - 1;
                     const shift: u6 = @intCast(if (last_key < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, last_key));
-                    const final_slot_ptr = try self.readArrayListSlot(header.ptr, key, shift, internal_write_mode);
+                    const final_slot_ptr = try self.readArrayListSlot(header.ptr, key, shift, write_mode, is_top_level);
 
                     return try self.readSlotPointer(write_mode, Ctx, path[1..], final_slot_ptr);
                 },
@@ -583,13 +574,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                     const next_array_list_start = slot_ptr.slot.value;
 
-                    const append_result = try self.readArrayListSlotAppend(next_array_list_start, internal_write_mode);
+                    const append_result = try self.readArrayListSlotAppend(next_array_list_start, write_mode, is_top_level);
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], append_result.slot_ptr);
 
                     const writer = self.core.writer();
 
                     // if top level (mutable) array list, put the file size in the tx end block
-                    if (internal_write_mode == .read_write) {
+                    if (is_top_level) {
                         const last_slot_pos = append_result.slot_ptr.position orelse return error.ExpectedSlotPosition;
                         const last_slot_i = (append_result.header.size - 1) % SLOT_COUNT;
                         const last_index_block_pos = last_slot_pos - (last_slot_i * byteSizeOf(Slot));
@@ -624,7 +615,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     try writer.writeInt(ArrayListHeaderInt, @bitCast(slice_header), .big);
 
                     // truncate file/buffer to tx end
-                    if (internal_write_mode == .read_write) {
+                    if (is_top_level) {
                         const tx_end = try self.readTxEnd();
                         switch (db_kind) {
                             .memory => self.core.buffer.shrinkAndFree(tx_end),
@@ -714,7 +705,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         @intCast(header.size - @abs(index))
                     else
                         @intCast(index);
-                    const final_slot_ptr = try self.readLinkedArrayListSlot(header.ptr, key, header.shift, internal_write_mode);
+                    const final_slot_ptr = try self.readLinkedArrayListSlot(header.ptr, key, header.shift, write_mode, is_top_level);
 
                     return try self.readSlotPointer(write_mode, Ctx, path[1..], final_slot_ptr.slot_ptr);
                 },
@@ -727,7 +718,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                     const next_array_list_start = slot_ptr.slot.value;
 
-                    const append_result = try self.readLinkedArrayListSlotAppend(next_array_list_start, internal_write_mode);
+                    const append_result = try self.readLinkedArrayListSlotAppend(next_array_list_start, write_mode, is_top_level);
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], append_result.slot_ptr.slot_ptr);
 
                     // update header
@@ -835,9 +826,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     const next_map_start = slot_ptr.slot.value;
 
                     const next_slot_ptr = switch (part.hash_map_get) {
-                        .kv_pair => try self.readMapSlot(next_map_start, part.hash_map_get.kv_pair, 0, internal_write_mode, .kv_pair),
-                        .key => try self.readMapSlot(next_map_start, part.hash_map_get.key, 0, internal_write_mode, .key),
-                        .value => try self.readMapSlot(next_map_start, part.hash_map_get.value, 0, internal_write_mode, .value),
+                        .kv_pair => try self.readMapSlot(next_map_start, part.hash_map_get.kv_pair, 0, write_mode, is_top_level, .kv_pair),
+                        .key => try self.readMapSlot(next_map_start, part.hash_map_get.key, 0, write_mode, is_top_level, .key),
+                        .value => try self.readMapSlot(next_map_start, part.hash_map_get.value, 0, write_mode, is_top_level, .value),
                     };
                     return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                 },
@@ -853,7 +844,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     }
                     const next_map_start = slot_ptr.slot.value;
 
-                    const next_slot_ptr = self.readMapSlot(next_map_start, part.hash_map_remove, 0, .read_only, .kv_pair) catch |err| switch (err) {
+                    const next_slot_ptr = self.readMapSlot(next_map_start, part.hash_map_remove, 0, .read_only, is_top_level, .kv_pair) catch |err| switch (err) {
                         error.KeyNotFound => {
                             // if there was nothing to remove, return an empty
                             // slot pointer so caller can see nothing was removed
@@ -925,7 +916,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
         // hash_map
 
-        fn readMapSlot(self: *Database(db_kind, Hash), index_pos: u64, key_hash: Hash, key_offset: u8, internal_write_mode: InternalWriteMode, hash_map_return: HashMapSlotKind) !SlotPointer {
+        fn readMapSlot(self: *Database(db_kind, Hash), index_pos: u64, key_hash: Hash, key_offset: u8, comptime write_mode: WriteMode, is_top_level: bool, hash_map_return: HashMapSlotKind) !SlotPointer {
             if (key_offset >= (HASH_SIZE * 8) / BIT_COUNT) {
                 return error.KeyOffsetExceeded;
             }
@@ -943,37 +934,38 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
             switch (slot.tag) {
                 .none => {
-                    if (internal_write_mode != .read_only) {
-                        try self.core.seekFromEnd(0);
+                    switch (write_mode) {
+                        .read_only => return error.KeyNotFound,
+                        .read_write => {
+                            try self.core.seekFromEnd(0);
 
-                        // write hash and key/val slots
-                        const hash_pos = try self.core.getPos();
-                        const key_slot_pos = hash_pos + byteSizeOf(Hash);
-                        const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
-                        const kv_pair = KeyValuePair{
-                            .value_slot = @bitCast(@as(SlotInt, 0)),
-                            .key_slot = @bitCast(@as(SlotInt, 0)),
-                            .hash = key_hash,
-                        };
-                        try writer.writeInt(KeyValuePairInt, @bitCast(kv_pair), .big);
+                            // write hash and key/val slots
+                            const hash_pos = try self.core.getPos();
+                            const key_slot_pos = hash_pos + byteSizeOf(Hash);
+                            const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
+                            const kv_pair = KeyValuePair{
+                                .value_slot = @bitCast(@as(SlotInt, 0)),
+                                .key_slot = @bitCast(@as(SlotInt, 0)),
+                                .hash = key_hash,
+                            };
+                            try writer.writeInt(KeyValuePairInt, @bitCast(kv_pair), .big);
 
-                        // point slot to hash pos
-                        const next_slot = Slot{ .value = hash_pos, .tag = .kv_pair };
-                        try self.core.seekTo(slot_pos);
-                        try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
+                            // point slot to hash pos
+                            const next_slot = Slot{ .value = hash_pos, .tag = .kv_pair };
+                            try self.core.seekTo(slot_pos);
+                            try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
 
-                        return switch (hash_map_return) {
-                            .kv_pair => SlotPointer{ .position = slot_pos, .slot = next_slot },
-                            .key => SlotPointer{ .position = key_slot_pos, .slot = kv_pair.key_slot },
-                            .value => SlotPointer{ .position = value_slot_pos, .slot = kv_pair.value_slot },
-                        };
-                    } else {
-                        return error.KeyNotFound;
+                            return switch (hash_map_return) {
+                                .kv_pair => SlotPointer{ .position = slot_pos, .slot = next_slot },
+                                .key => SlotPointer{ .position = key_slot_pos, .slot = kv_pair.key_slot },
+                                .value => SlotPointer{ .position = value_slot_pos, .slot = kv_pair.value_slot },
+                            };
+                        },
                     }
                 },
                 .index => {
                     var next_ptr = ptr;
-                    if (internal_write_mode == .read_write_immutable) {
+                    if (write_mode == .read_write and !is_top_level) {
                         const tx_start = self.tx_start orelse return error.ExpectedTxStart;
                         if (next_ptr < tx_start) {
                             // read existing block
@@ -989,14 +981,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             try writer.writeInt(SlotInt, @bitCast(Slot{ .value = next_ptr, .tag = .index }), .big);
                         }
                     }
-                    return self.readMapSlot(next_ptr, key_hash, key_offset + 1, internal_write_mode, hash_map_return);
+                    return self.readMapSlot(next_ptr, key_hash, key_offset + 1, write_mode, is_top_level, hash_map_return);
                 },
                 .kv_pair => {
                     try self.core.seekTo(ptr);
                     const kv_pair: KeyValuePair = @bitCast(try reader.readInt(KeyValuePairInt, .big));
 
                     if (kv_pair.hash == key_hash) {
-                        if (internal_write_mode == .read_write_immutable) {
+                        if (write_mode == .read_write and !is_top_level) {
                             const tx_start = self.tx_start orelse return error.ExpectedTxStart;
                             if (ptr < tx_start) {
                                 try self.core.seekFromEnd(0);
@@ -1028,24 +1020,25 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             .value => SlotPointer{ .position = value_slot_pos, .slot = kv_pair.value_slot },
                         };
                     } else {
-                        if (internal_write_mode != .read_only) {
-                            // append new index block
-                            if (key_offset + 1 >= (HASH_SIZE * 8) / BIT_COUNT) {
-                                return error.KeyOffsetExceeded;
-                            }
-                            const next_i: u4 = @intCast((kv_pair.hash >> (key_offset + 1) * BIT_COUNT) & MASK);
-                            try self.core.seekFromEnd(0);
-                            const next_index_pos = try self.core.getPos();
-                            var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                            try writer.writeAll(&index_block);
-                            try self.core.seekTo(next_index_pos + (byteSizeOf(Slot) * next_i));
-                            try writer.writeInt(SlotInt, @bitCast(slot), .big);
-                            const next_slot_ptr = try self.readMapSlot(next_index_pos, key_hash, key_offset + 1, internal_write_mode, hash_map_return);
-                            try self.core.seekTo(slot_pos);
-                            try writer.writeInt(SlotInt, @bitCast(Slot{ .value = next_index_pos, .tag = .index }), .big);
-                            return next_slot_ptr;
-                        } else {
-                            return error.KeyNotFound;
+                        switch (write_mode) {
+                            .read_only => return error.KeyNotFound,
+                            .read_write => {
+                                // append new index block
+                                if (key_offset + 1 >= (HASH_SIZE * 8) / BIT_COUNT) {
+                                    return error.KeyOffsetExceeded;
+                                }
+                                const next_i: u4 = @intCast((kv_pair.hash >> (key_offset + 1) * BIT_COUNT) & MASK);
+                                try self.core.seekFromEnd(0);
+                                const next_index_pos = try self.core.getPos();
+                                var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                                try writer.writeAll(&index_block);
+                                try self.core.seekTo(next_index_pos + (byteSizeOf(Slot) * next_i));
+                                try writer.writeInt(SlotInt, @bitCast(slot), .big);
+                                const next_slot_ptr = try self.readMapSlot(next_index_pos, key_hash, key_offset + 1, write_mode, is_top_level, hash_map_return);
+                                try self.core.seekTo(slot_pos);
+                                try writer.writeInt(SlotInt, @bitCast(Slot{ .value = next_index_pos, .tag = .index }), .big);
+                                return next_slot_ptr;
+                            },
                         }
                     }
                 },
@@ -1062,7 +1055,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             slot_ptr: SlotPointer,
         };
 
-        fn readArrayListSlotAppend(self: *Database(db_kind, Hash), index_start: u64, internal_write_mode: InternalWriteMode) !ArrayListAppendResult {
+        fn readArrayListSlotAppend(self: *Database(db_kind, Hash), index_start: u64, comptime write_mode: WriteMode, is_top_level: bool) !ArrayListAppendResult {
             const reader = self.core.reader();
             const writer = self.core.writer();
 
@@ -1086,7 +1079,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 index_pos = next_index_pos;
             }
 
-            const slot_ptr = try self.readArrayListSlot(index_pos, key, next_shift, internal_write_mode);
+            const slot_ptr = try self.readArrayListSlot(index_pos, key, next_shift, write_mode, is_top_level);
 
             return .{
                 .header = .{
@@ -1097,7 +1090,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             };
         }
 
-        fn readArrayListSlot(self: *Database(db_kind, Hash), index_pos: u64, key: u64, shift: u6, internal_write_mode: InternalWriteMode) !SlotPointer {
+        fn readArrayListSlot(self: *Database(db_kind, Hash), index_pos: u64, key: u64, shift: u6, comptime write_mode: WriteMode, is_top_level: bool) !SlotPointer {
             const reader = self.core.reader();
 
             const i: u4 = @intCast(key >> (shift * BIT_COUNT) & MASK);
@@ -1114,32 +1107,33 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
             switch (slot.tag) {
                 .none => {
-                    if (internal_write_mode != .read_only) {
-                        const writer = self.core.writer();
-                        try self.core.seekFromEnd(0);
-                        const next_index_pos = try self.core.getPos();
-                        var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                        try writer.writeAll(&index_block);
-                        // for the top-level (mutable) array list, put a "tx end block"
-                        // after leaf nodes. this will hold the current size of
-                        // the file. that way, we can completely delete the N most
-                        // recent transactions from the file by calling `slice` on
-                        // the array list, which will truncate the file to the last
-                        // size in the tx end block.
-                        if (internal_write_mode == .read_write and shift == 1) {
-                            var tx_end_block = [_]u8{0} ** TX_END_BLOCK_SIZE;
-                            try writer.writeAll(&tx_end_block);
-                        }
-                        try self.core.seekTo(slot_pos);
-                        try writer.writeInt(SlotInt, @bitCast(Slot{ .value = next_index_pos, .tag = .index }), .big);
-                        return try self.readArrayListSlot(next_index_pos, key, shift - 1, internal_write_mode);
-                    } else {
-                        return error.KeyNotFound;
+                    switch (write_mode) {
+                        .read_only => return error.KeyNotFound,
+                        .read_write => {
+                            const writer = self.core.writer();
+                            try self.core.seekFromEnd(0);
+                            const next_index_pos = try self.core.getPos();
+                            var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                            try writer.writeAll(&index_block);
+                            // for the top-level (mutable) array list, put a "tx end block"
+                            // after leaf nodes. this will hold the current size of
+                            // the file. that way, we can completely delete the N most
+                            // recent transactions from the file by calling `slice` on
+                            // the array list, which will truncate the file to the last
+                            // size in the tx end block.
+                            if (is_top_level and shift == 1) {
+                                var tx_end_block = [_]u8{0} ** TX_END_BLOCK_SIZE;
+                                try writer.writeAll(&tx_end_block);
+                            }
+                            try self.core.seekTo(slot_pos);
+                            try writer.writeInt(SlotInt, @bitCast(Slot{ .value = next_index_pos, .tag = .index }), .big);
+                            return try self.readArrayListSlot(next_index_pos, key, shift - 1, write_mode, is_top_level);
+                        },
                     }
                 },
                 .index => {
                     var next_ptr = ptr;
-                    if (internal_write_mode == .read_write_immutable) {
+                    if (write_mode == .read_write and !is_top_level) {
                         const tx_start = self.tx_start orelse return error.ExpectedTxStart;
                         if (next_ptr < tx_start) {
                             // read existing block
@@ -1156,7 +1150,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             try writer.writeInt(SlotInt, @bitCast(Slot{ .value = next_ptr, .tag = .index }), .big);
                         }
                     }
-                    return self.readArrayListSlot(next_ptr, key, shift - 1, internal_write_mode);
+                    return self.readArrayListSlot(next_ptr, key, shift - 1, write_mode, is_top_level);
                 },
                 else => return error.UnexpectedTag,
             }
@@ -1206,7 +1200,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             slot_ptr: LinkedArrayListSlotPointer,
         };
 
-        fn readLinkedArrayListSlotAppend(self: *Database(db_kind, Hash), index_start: u64, internal_write_mode: InternalWriteMode) !LinkedArrayListAppendResult {
+        fn readLinkedArrayListSlotAppend(self: *Database(db_kind, Hash), index_start: u64, comptime write_mode: WriteMode, is_top_level: bool) !LinkedArrayListAppendResult {
             const reader = self.core.reader();
             const writer = self.core.writer();
 
@@ -1216,7 +1210,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             const key = header.size;
             var shift = header.shift;
 
-            var slot_ptr = self.readLinkedArrayListSlot(ptr, key, shift, internal_write_mode) catch |err| switch (err) {
+            var slot_ptr = self.readLinkedArrayListSlot(ptr, key, shift, write_mode, is_top_level) catch |err| switch (err) {
                 error.NoAvailableSlots => blk: {
                     // root overflow
                     try self.core.seekFromEnd(0);
@@ -1230,7 +1224,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     }), .big);
                     ptr = next_ptr;
                     shift += 1;
-                    break :blk try self.readLinkedArrayListSlot(ptr, key, shift, internal_write_mode);
+                    break :blk try self.readLinkedArrayListSlot(ptr, key, shift, write_mode, is_top_level);
                 },
                 else => return err,
             };
@@ -1317,7 +1311,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             return .{ .key = next_key, .index = i };
         }
 
-        fn readLinkedArrayListSlot(self: *Database(db_kind, Hash), index_pos: u64, key: u64, shift: u6, internal_write_mode: InternalWriteMode) !LinkedArrayListSlotPointer {
+        fn readLinkedArrayListSlot(self: *Database(db_kind, Hash), index_pos: u64, key: u64, shift: u6, comptime write_mode: WriteMode, is_top_level: bool) !LinkedArrayListSlotPointer {
             const reader = self.core.reader();
             const writer = self.core.writer();
 
@@ -1350,27 +1344,28 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
             switch (slot.slot.tag) {
                 .none => {
-                    if (internal_write_mode != .read_only) {
-                        try self.core.seekFromEnd(0);
-                        const next_index_pos = try self.core.getPos();
-                        var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
-                        try writer.writeAll(&index_block);
+                    switch (write_mode) {
+                        .read_only => return error.KeyNotFound,
+                        .read_write => {
+                            try self.core.seekFromEnd(0);
+                            const next_index_pos = try self.core.getPos();
+                            var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
+                            try writer.writeAll(&index_block);
 
-                        const next_slot_ptr = try self.readLinkedArrayListSlot(next_index_pos, next_key, shift - 1, internal_write_mode);
+                            const next_slot_ptr = try self.readLinkedArrayListSlot(next_index_pos, next_key, shift - 1, write_mode, is_top_level);
 
-                        slot_block[i].size = next_slot_ptr.leaf_count;
-                        const leaf_count = blockLeafCount(&slot_block, shift, i);
+                            slot_block[i].size = next_slot_ptr.leaf_count;
+                            const leaf_count = blockLeafCount(&slot_block, shift, i);
 
-                        try self.core.seekTo(slot_pos);
-                        try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{ .slot = .{ .value = next_index_pos, .tag = .index }, .size = next_slot_ptr.leaf_count }), .big);
-                        return .{ .slot_ptr = next_slot_ptr.slot_ptr, .leaf_count = leaf_count };
-                    } else {
-                        return error.KeyNotFound;
+                            try self.core.seekTo(slot_pos);
+                            try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{ .slot = .{ .value = next_index_pos, .tag = .index }, .size = next_slot_ptr.leaf_count }), .big);
+                            return .{ .slot_ptr = next_slot_ptr.slot_ptr, .leaf_count = leaf_count };
+                        },
                     }
                 },
                 .index => {
                     var next_ptr = ptr;
-                    if (internal_write_mode == .read_write_immutable) {
+                    if (write_mode == .read_write and !is_top_level) {
                         const tx_start = self.tx_start orelse return error.ExpectedTxStart;
                         if (next_ptr < tx_start) {
                             // read existing block
@@ -1384,12 +1379,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         }
                     }
 
-                    const next_slot_ptr = try self.readLinkedArrayListSlot(next_ptr, next_key, shift - 1, internal_write_mode);
+                    const next_slot_ptr = try self.readLinkedArrayListSlot(next_ptr, next_key, shift - 1, write_mode, is_top_level);
 
                     slot_block[i].size = next_slot_ptr.leaf_count;
                     const leaf_count = blockLeafCount(&slot_block, shift, i);
 
-                    if (internal_write_mode == .read_write_immutable) {
+                    if (write_mode == .read_write and !is_top_level) {
                         // make slot point to block
                         try self.core.seekTo(slot_pos);
                         try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{ .slot = .{ .value = next_ptr, .tag = .index }, .size = next_slot_ptr.leaf_count }), .big);
