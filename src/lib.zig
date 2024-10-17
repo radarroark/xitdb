@@ -41,6 +41,7 @@ pub const Tag = enum(u7) {
     hash_map,
     kv_pair,
     bytes,
+    short_bytes,
     uint,
     int,
     float,
@@ -865,14 +866,20 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         .int => .{ .value = @bitCast(part.write.int), .tag = .int },
                         .float => .{ .value = @bitCast(part.write.float), .tag = .float },
                         .bytes => blk: {
-                            var next_cursor = Cursor(.read_write){
-                                .slot_ptr = slot_ptr,
-                                .db = self,
-                            };
-                            var writer = try next_cursor.writer();
-                            try writer.writeAll(part.write.bytes);
-                            try writer.finish();
-                            break :blk writer.slot;
+                            if (part.write.bytes.len <= byteSizeOf(u64) and null == std.mem.indexOfScalar(u8, part.write.bytes, 0)) {
+                                var bytes = [_]u8{0} ** byteSizeOf(u64);
+                                @memcpy(bytes[0..part.write.bytes.len], part.write.bytes);
+                                break :blk .{ .value = std.mem.nativeTo(u64, std.mem.bytesToValue(u64, &bytes), .big), .tag = .short_bytes };
+                            } else {
+                                var next_cursor = Cursor(.read_write){
+                                    .slot_ptr = slot_ptr,
+                                    .db = self,
+                                };
+                                var writer = try next_cursor.writer();
+                                try writer.writeAll(part.write.bytes);
+                                try writer.finish();
+                                break :blk writer.slot;
+                            }
                         },
                     };
 
@@ -1979,22 +1986,35 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                     switch (self.slot_ptr.slot.tag) {
                         .none => return try allocator.alloc(u8, 0),
-                        .bytes => {},
+                        .bytes => {
+                            try self.db.core.seekTo(self.slot_ptr.slot.value);
+                            const value_size = try core_reader.readInt(u64, .big);
+
+                            if (value_size > max_size) {
+                                return error.MaxSizeExceeded;
+                            }
+
+                            const value = try allocator.alloc(u8, value_size);
+                            errdefer allocator.free(value);
+
+                            try core_reader.readNoEof(value);
+                            return value;
+                        },
+                        .short_bytes => {
+                            const bytes = std.mem.toBytes(std.mem.nativeTo(u64, self.slot_ptr.slot.value, .big));
+                            const value_size = std.mem.indexOfScalar(u8, &bytes, 0) orelse byteSizeOf(u64);
+
+                            if (value_size > max_size) {
+                                return error.MaxSizeExceeded;
+                            }
+
+                            const value = try allocator.alloc(u8, value_size);
+                            errdefer allocator.free(value);
+                            @memcpy(value, bytes[0..value_size]);
+                            return value;
+                        },
                         else => return error.UnexpectedTag,
                     }
-
-                    try self.db.core.seekTo(self.slot_ptr.slot.value);
-                    const value_size = try core_reader.readInt(u64, .big);
-
-                    if (value_size > max_size) {
-                        return error.MaxSizeExceeded;
-                    }
-
-                    const value = try allocator.alloc(u8, value_size);
-                    errdefer allocator.free(value);
-
-                    try core_reader.readNoEof(value);
-                    return value;
                 }
 
                 pub fn readBytes(self: Cursor(write_mode), buffer: []u8) ![]u8 {
@@ -2002,16 +2022,23 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                     switch (self.slot_ptr.slot.tag) {
                         .none => return if (buffer.len == 0) buffer else error.EndOfStream,
-                        .bytes => {},
+                        .bytes => {
+                            try self.db.core.seekTo(self.slot_ptr.slot.value);
+                            const value_size = try core_reader.readInt(u64, .big);
+                            const size = @min(buffer.len, value_size);
+
+                            try core_reader.readNoEof(buffer[0..size]);
+                            return buffer[0..size];
+                        },
+                        .short_bytes => {
+                            const bytes = std.mem.toBytes(std.mem.nativeTo(u64, self.slot_ptr.slot.value, .big));
+                            const value_size = std.mem.indexOfScalar(u8, &bytes, 0) orelse byteSizeOf(u64);
+                            const size = @min(buffer.len, value_size);
+                            @memcpy(buffer[0..size], bytes[0..size]);
+                            return buffer[0..size];
+                        },
                         else => return error.UnexpectedTag,
                     }
-
-                    try self.db.core.seekTo(self.slot_ptr.slot.value);
-                    const value_size = try core_reader.readInt(u64, .big);
-                    const size = @min(buffer.len, value_size);
-
-                    try core_reader.readNoEof(buffer[0..size]);
-                    return buffer[0..size];
                 }
 
                 pub const KeyValuePairCursor = struct {
@@ -2056,36 +2083,42 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                 pub fn reader(self: *Cursor(write_mode)) !Reader {
                     const core_reader = self.db.core.reader();
-                    const cursor_slot = self.slot_ptr.slot;
 
-                    if (cursor_slot.tag != .bytes) {
-                        return error.UnexpectedTag;
+                    switch (self.slot_ptr.slot.tag) {
+                        .bytes => {
+                            try self.db.core.seekTo(self.slot_ptr.slot.value);
+                            const size: u64 = @intCast(try core_reader.readInt(u64, .big));
+                            const start_position = try self.db.core.getPos();
+                            return .{
+                                .parent = self,
+                                .size = size,
+                                .start_position = start_position,
+                                .relative_position = 0,
+                            };
+                        },
+                        .short_bytes => {
+                            const bytes = std.mem.toBytes(std.mem.nativeTo(u64, self.slot_ptr.slot.value, .big));
+                            const value_size = std.mem.indexOfScalar(u8, &bytes, 0) orelse byteSizeOf(u64);
+                            return .{
+                                .parent = self,
+                                .size = value_size,
+                                // add one to get past the tag byte
+                                .start_position = (self.slot_ptr.position orelse return error.ExpectedSlotPosition) + 1,
+                                .relative_position = 0,
+                            };
+                        },
+                        else => return error.UnexpectedTag,
                     }
-
-                    try self.db.core.seekTo(cursor_slot.value);
-                    const size: u64 = @intCast(try core_reader.readInt(u64, .big));
-                    const start_position = try self.db.core.getPos();
-
-                    return Reader{
-                        .parent = self,
-                        .size = size,
-                        .start_position = start_position,
-                        .relative_position = 0,
-                    };
                 }
 
                 pub fn writer(self: *Cursor(.read_write)) !Writer {
-                    if (self.slot_ptr.slot.tag != .none and self.slot_ptr.slot.tag != .bytes) {
-                        return error.UnexpectedTag;
-                    }
-
                     const core_writer = self.db.core.writer();
                     try self.db.core.seekFromEnd(0);
                     const ptr_pos = try self.db.core.getPos();
                     try core_writer.writeInt(u64, 0, .big);
                     const start_position = try self.db.core.getPos();
 
-                    return Writer{
+                    return .{
                         .parent = self,
                         .size = 0,
                         .slot = .{ .value = ptr_pos, .tag = .bytes },

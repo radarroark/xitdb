@@ -149,7 +149,7 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         defer allocator.free(foo_value);
         try std.testing.expectEqualStrings("foo", foo_value);
 
-        try std.testing.expectEqual(.bytes, (try moment.getSlot(hashBuffer("foo"))).?.tag);
+        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashBuffer("foo"))).?.tag);
         try std.testing.expectEqual(null, try moment.getCursor(hashBuffer("bar")));
 
         // to get the "fruits" list, we get the cursor to it and
@@ -272,7 +272,7 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         defer allocator.free(foo_value);
         try std.testing.expectEqualStrings("foo", foo_value);
 
-        try std.testing.expectEqual(.bytes, (try moment.getSlot(hashBuffer("foo"))).?.tag);
+        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashBuffer("foo"))).?.tag);
         try std.testing.expectEqual(null, try moment.getCursor(hashBuffer("bar")));
 
         const fruits_cursor = (try moment.getCursor(hashBuffer("fruits"))).?;
@@ -327,7 +327,7 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         defer allocator.free(foo_value);
         try std.testing.expectEqualStrings("foo", foo_value);
 
-        try std.testing.expectEqual(.bytes, (try moment.getSlot(hashBuffer("foo"))).?.tag);
+        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashBuffer("foo"))).?.tag);
         try std.testing.expectEqual(null, try moment.getCursor(hashBuffer("bar")));
 
         const fruits_cursor = (try moment.getCursor(hashBuffer("fruits"))).?;
@@ -770,7 +770,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             });
         }
 
-        // write bar -> foo
+        // write bar -> longstring
         const bar_key = hashBuffer("bar");
         {
             var bar_cursor = try root_cursor.writePath(void, &.{
@@ -780,7 +780,11 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .hash_map_init,
                 .{ .hash_map_get = .{ .value = bar_key } },
             });
-            try bar_cursor.writeIfEmpty(.{ .bytes = "foo" });
+            try bar_cursor.write(.{ .bytes = "longstring" });
+
+            // the slot tag is .bytes because the byte array is > 8 bytes long
+            try std.testing.expectEqual(.bytes, bar_cursor.slot().tag);
+
             // writing again returns the same slot
             {
                 var next_bar_cursor = try root_cursor.writePath(void, &.{
@@ -790,9 +794,10 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                     .hash_map_init,
                     .{ .hash_map_get = .{ .value = bar_key } },
                 });
-                try next_bar_cursor.writeIfEmpty(.{ .bytes = "foo" });
+                try next_bar_cursor.writeIfEmpty(.{ .bytes = "longstring" });
                 try std.testing.expectEqual(bar_cursor.slot_ptr.slot, next_bar_cursor.slot_ptr.slot);
             }
+
             // writing with write returns a new slot
             {
                 var next_bar_cursor = try root_cursor.writePath(void, &.{
@@ -802,7 +807,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                     .hash_map_init,
                     .{ .hash_map_get = .{ .value = bar_key } },
                 });
-                try next_bar_cursor.write(.{ .bytes = "foo" });
+                try next_bar_cursor.write(.{ .bytes = "longstring" });
                 try std.testing.expect(!bar_cursor.slot_ptr.slot.eql(next_bar_cursor.slot_ptr.slot));
             }
         }
@@ -815,7 +820,28 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             })).?;
             const foo_value = try foo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
             defer allocator.free(foo_value);
-            try std.testing.expectEqualStrings("foo", foo_value);
+            try std.testing.expectEqualStrings("longstring", foo_value);
+        }
+
+        // write bar -> shortstr
+        {
+            var bar_cursor = try root_cursor.writePath(void, &.{
+                .array_list_init,
+                .array_list_append,
+                .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+                .hash_map_init,
+                .{ .hash_map_get = .{ .value = bar_key } },
+            });
+            try bar_cursor.write(.{ .bytes = "shortstr" });
+
+            // the slot tag is .short_bytes because the byte array is <= 8 bytes long
+            try std.testing.expectEqual(.short_bytes, bar_cursor.slot().tag);
+
+            // make sure .short_bytes can be read with a reader
+            var bar_reader = try bar_cursor.reader();
+            const bar_value = try bar_reader.readAllAlloc(allocator, MAX_READ_BYTES);
+            defer allocator.free(bar_value);
+            try std.testing.expectEqualStrings("shortstr", bar_value);
         }
 
         // if error in ctx, db doesn't change
