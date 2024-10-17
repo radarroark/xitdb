@@ -416,19 +416,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             return header;
         }
 
-        fn readTxEnd(self: *Database(db_kind, Hash)) !u64 {
-            const root_cursor = self.rootCursor();
-            const index = try root_cursor.count() - 1;
-            const cursor = (try root_cursor.readPath(void, &.{.{ .array_list_get = index }})) orelse return error.KeyNotFound;
-            const last_slot_pos = cursor.slot_ptr.position orelse return error.ExpectedSlotPosition;
-            const last_slot_i = index % SLOT_COUNT;
-            const last_index_block_pos = last_slot_pos - (last_slot_i * byteSizeOf(Slot));
-            const last_tx_end_slot_pos = last_index_block_pos + INDEX_BLOCK_SIZE + (last_slot_i * byteSizeOf(u64));
-            const core_reader = self.core.reader();
-            try self.core.seekTo(last_tx_end_slot_pos);
-            return try core_reader.readInt(u64, .big);
-        }
-
         fn readSlotPointer(self: *Database(db_kind, Hash), comptime write_mode: WriteMode, comptime Ctx: type, path: []const PathPart(Ctx), slot_ptr: SlotPointer) anyerror!SlotPointer {
             const part = if (path.len > 0) path[0] else {
                 if (write_mode == .read_only and slot_ptr.slot.tag == .none) {
@@ -610,9 +597,17 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     try self.core.seekTo(next_array_list_start);
                     try writer.writeInt(ArrayListHeaderInt, @bitCast(slice_header), .big);
 
-                    // truncate file/buffer to tx end
+                    // if top level array list, truncate file/buffer to tx end
                     if (is_top_level) {
-                        const tx_end = try self.readTxEnd();
+                        const last_index = slice_header.size - 1;
+                        const last_slot_ptr = try self.readSlotPointer(write_mode, void, &.{.{ .array_list_get = last_index }}, slot_ptr);
+                        const last_slot_pos = last_slot_ptr.position orelse return error.ExpectedSlotPosition;
+                        const last_slot_i = last_index % SLOT_COUNT;
+                        const last_index_block_pos = last_slot_pos - (last_slot_i * byteSizeOf(Slot));
+                        const last_tx_end_slot_pos = last_index_block_pos + INDEX_BLOCK_SIZE + (last_slot_i * byteSizeOf(u64));
+                        const core_reader = self.core.reader();
+                        try self.core.seekTo(last_tx_end_slot_pos);
+                        const tx_end = try core_reader.readInt(u64, .big);
                         switch (db_kind) {
                             .memory => self.core.buffer.shrinkAndFree(tx_end),
                             .file => try self.core.file.setEndPos(tx_end),
