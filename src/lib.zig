@@ -61,6 +61,8 @@ const DatabaseHeader = packed struct {
     // such as when a new Tag member is added.
     version: u16 = VERSION,
     // the root tag, representing the type of the top-level data.
+    // it starts as .none but will be changed to .array_list
+    // once `array_list_init` is called for the first time.
     tag: Tag = .none,
     // when true, and the top-level tag is array list, leaf nodes
     // will include a "tx end block" immediately after them, which
@@ -447,28 +449,28 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     if (is_top_level) {
                         const writer = self.core.writer();
 
-                        // update header if necessary
+                        // if the top level array list hasn't been initialized
                         if (self.header.tag == .none) {
-                            try self.core.seekTo(0);
-                            self.header.tag = .array_list;
-                            try writer.writeInt(DatabaseHeaderInt, @bitCast(self.header), .big);
-                        }
-
-                        // if db has nothing after header, initialize the array list
-                        try self.core.seekFromEnd(0);
-                        if (try self.core.getPos() == DATABASE_START) {
-                            const array_list_ptr = try self.core.getPos() + byteSizeOf(ArrayListHeader);
+                            // write the array list header
+                            try self.core.seekTo(DATABASE_START);
+                            const array_list_ptr = DATABASE_START + byteSizeOf(ArrayListHeader);
                             try writer.writeInt(ArrayListHeaderInt, @bitCast(ArrayListHeader{
                                 .ptr = array_list_ptr,
                                 .size = 0,
                             }), .big);
+
+                            // write the first block
+                            const index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                            try writer.writeAll(&index_block);
                             if (self.header.track_tx_end) {
-                                var index_block = [_]u8{0} ** (INDEX_BLOCK_SIZE + TX_END_BLOCK_SIZE);
-                                try writer.writeAll(&index_block);
-                            } else {
-                                const index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                try writer.writeAll(&index_block);
+                                const tx_end_block = [_]u8{0} ** TX_END_BLOCK_SIZE;
+                                try writer.writeAll(&tx_end_block);
                             }
+
+                            // update db header
+                            try self.core.seekTo(0);
+                            self.header.tag = .array_list;
+                            try writer.writeInt(DatabaseHeaderInt, @bitCast(self.header), .big);
                         }
 
                         var next_slot_ptr = slot_ptr;
