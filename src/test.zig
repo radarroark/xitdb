@@ -17,7 +17,7 @@ test "high level api" {
 
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
-    try testHighLevelApi(allocator, .memory, .{ .buffer = &buffer, .max_size = 50000 });
+    try testHighLevelApi(allocator, .memory, .{ .buffer = &buffer, .max_size = 50000, .track_tx_end = true });
 
     if (std.fs.cwd().openFile("main.db", .{})) |file| {
         file.close();

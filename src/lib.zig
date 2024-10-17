@@ -69,7 +69,7 @@ const DatabaseHeader = packed struct {
     // will track the size of the file/buffer at the end of the
     // transaction. then, when `slice` is used at the top level,
     // the file/buffer can be truncated to recover space.
-    track_tx_end: bool = true,
+    track_tx_end: bool,
     // a value that allows for a quick sanity check when determining
     // if the file is a valid database. it also provides a quick
     // visual indicator that this is a xitdb file to anyone looking
@@ -341,9 +341,11 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             .memory => struct {
                 buffer: *std.ArrayList(u8),
                 max_size: ?u64 = null,
+                track_tx_end: bool = false,
             },
             .file => struct {
                 file: std.fs.File,
+                track_tx_end: bool = true,
             },
         };
 
@@ -363,7 +365,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                     try self.core.seekTo(0);
                     if (self.core.buffer.items.len == 0) {
-                        self.header = try self.writeHeader();
+                        self.header = try self.writeHeader(opts.track_tx_end);
                     } else {
                         const reader = self.core.reader();
                         self.header = try DatabaseHeader.read(reader);
@@ -388,7 +390,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                     try self.core.seekTo(0);
                     if (size == 0) {
-                        self.header = try self.writeHeader();
+                        self.header = try self.writeHeader(opts.track_tx_end);
                     } else {
                         const reader = self.core.reader();
                         self.header = try DatabaseHeader.read(reader);
@@ -412,10 +414,11 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
         // private
 
-        fn writeHeader(self: *Database(db_kind, Hash)) !DatabaseHeader {
+        fn writeHeader(self: *Database(db_kind, Hash), track_tx_end: bool) !DatabaseHeader {
             const writer = self.core.writer();
             const header = DatabaseHeader{
                 .hash_size = byteSizeOf(Hash),
+                .track_tx_end = track_tx_end,
             };
             try writer.writeInt(DatabaseHeaderInt, @bitCast(header), .big);
             return header;
