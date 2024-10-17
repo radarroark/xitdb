@@ -441,7 +441,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 .array_list_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
-                    if (slot_ptr.slot.value == DATABASE_START) {
+                    if (is_top_level) {
                         const writer = self.core.writer();
 
                         // update header if necessary
@@ -524,7 +524,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     }
                 },
                 .array_list_get => {
-                    const tag = if (slot_ptr.slot.value == DATABASE_START) self.header.tag else slot_ptr.slot.tag;
+                    const tag = if (is_top_level) self.header.tag else slot_ptr.slot.tag;
                     if (tag == .none) {
                         return error.KeyNotFound;
                     } else if (tag != .array_list) {
@@ -554,7 +554,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 .array_list_append => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
-                    const tag = if (slot_ptr.slot.value == DATABASE_START) self.header.tag else slot_ptr.slot.tag;
+                    const tag = if (is_top_level) self.header.tag else slot_ptr.slot.tag;
                     if (tag != .array_list) return error.UnexpectedTag;
 
                     const next_array_list_start = slot_ptr.slot.value;
@@ -619,7 +619,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 .linked_array_list_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
-                    if (slot_ptr.slot.value == DATABASE_START) return error.RootTypeMustBeArrayList;
+                    if (is_top_level) return error.RootTypeMustBeArrayList;
 
                     const position = slot_ptr.position orelse return error.CursorNotWriteable;
 
@@ -755,7 +755,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 .hash_map_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
-                    if (slot_ptr.slot.value == DATABASE_START) return error.RootTypeMustBeArrayList;
+                    if (is_top_level) return error.RootTypeMustBeArrayList;
 
                     const position = slot_ptr.position orelse return error.CursorNotWriteable;
 
