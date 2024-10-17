@@ -252,6 +252,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
         const HASH_SIZE = byteSizeOf(Hash);
         const INDEX_BLOCK_SIZE = byteSizeOf(Slot) * SLOT_COUNT;
         const LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE = byteSizeOf(LinkedArrayListSlot) * SLOT_COUNT;
+        const TX_END_BLOCK_SIZE = byteSizeOf(u64) * SLOT_COUNT;
 
         const ArrayListHeaderInt = u128;
         const ArrayListHeader = packed struct {
@@ -421,6 +422,19 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             return header;
         }
 
+        fn readTxEnd(self: *Database(db_kind, Hash)) !u64 {
+            const root_cursor = self.rootCursor();
+            const index = try root_cursor.count() - 1;
+            const cursor = (try root_cursor.readPath(void, &.{.{ .array_list_get = index }})) orelse return error.KeyNotFound;
+            const last_slot_pos = cursor.slot_ptr.position orelse return error.ExpectedSlotPosition;
+            const last_slot_i = index % SLOT_COUNT;
+            const last_index_block_pos = last_slot_pos - (last_slot_i * byteSizeOf(Slot));
+            const last_tx_end_slot_pos = last_index_block_pos + INDEX_BLOCK_SIZE + (last_slot_i * byteSizeOf(u64));
+            const core_reader = self.core.reader();
+            try self.core.seekTo(last_tx_end_slot_pos);
+            return try core_reader.readInt(u64, .big);
+        }
+
         fn readSlotPointer(self: *Database(db_kind, Hash), comptime write_mode: WriteMode, comptime Ctx: type, path: []const PathPart(Ctx), slot_ptr: SlotPointer) anyerror!SlotPointer {
             const internal_write_mode: InternalWriteMode = switch (write_mode) {
                 .read_write => if (slot_ptr.slot.value == DATABASE_START) .read_write else .read_write_immutable,
@@ -462,13 +476,15 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         // if db has nothing after header, initialize the array list
                         try self.core.seekFromEnd(0);
                         if (try self.core.getPos() == DATABASE_START) {
-                            const index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                             const array_list_ptr = try self.core.getPos() + byteSizeOf(ArrayListHeader);
                             try writer.writeInt(ArrayListHeaderInt, @bitCast(ArrayListHeader{
                                 .ptr = array_list_ptr,
                                 .size = 0,
                             }), .big);
+                            const index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                             try writer.writeAll(&index_block);
+                            var tx_end_block = [_]u8{0} ** TX_END_BLOCK_SIZE;
+                            try writer.writeAll(&tx_end_block);
                         }
 
                         var next_slot_ptr = slot_ptr;
@@ -570,8 +586,21 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     const append_result = try self.readArrayListSlotAppend(next_array_list_start, internal_write_mode);
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], append_result.slot_ptr);
 
-                    // update header
                     const writer = self.core.writer();
+
+                    // if top level (mutable) array list, put the file size in the tx end block
+                    if (internal_write_mode == .read_write) {
+                        const last_slot_pos = append_result.slot_ptr.position orelse return error.ExpectedSlotPosition;
+                        const last_slot_i = (append_result.header.size - 1) % SLOT_COUNT;
+                        const last_index_block_pos = last_slot_pos - (last_slot_i * byteSizeOf(Slot));
+                        const last_tx_end_slot_pos = last_index_block_pos + INDEX_BLOCK_SIZE + (last_slot_i * byteSizeOf(u64));
+                        try self.core.seekFromEnd(0);
+                        const file_size = try self.core.getPos();
+                        try self.core.seekTo(last_tx_end_slot_pos);
+                        try writer.writeInt(u64, file_size, .big);
+                    }
+
+                    // update header
                     try self.core.seekTo(next_array_list_start);
                     try writer.writeInt(ArrayListHeaderInt, @bitCast(append_result.header), .big);
 
@@ -593,6 +622,15 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     const writer = self.core.writer();
                     try self.core.seekTo(next_array_list_start);
                     try writer.writeInt(ArrayListHeaderInt, @bitCast(slice_header), .big);
+
+                    // truncate file/buffer to tx end
+                    if (internal_write_mode == .read_write) {
+                        const tx_end = try self.readTxEnd();
+                        switch (db_kind) {
+                            .memory => self.core.buffer.shrinkAndFree(tx_end),
+                            .file => try self.core.file.setEndPos(tx_end),
+                        }
+                    }
 
                     return final_slot_ptr;
                 },
@@ -1082,6 +1120,16 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         const next_index_pos = try self.core.getPos();
                         var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                         try writer.writeAll(&index_block);
+                        // for the top-level (mutable) array list, put a "tx end block"
+                        // after leaf nodes. this will hold the current size of
+                        // the file. that way, we can completely delete the N most
+                        // recent transactions from the file by calling `slice` on
+                        // the array list, which will truncate the file to the last
+                        // size in the tx end block.
+                        if (internal_write_mode == .read_write and shift == 1) {
+                            var tx_end_block = [_]u8{0} ** TX_END_BLOCK_SIZE;
+                            try writer.writeAll(&tx_end_block);
+                        }
                         try self.core.seekTo(slot_pos);
                         try writer.writeInt(SlotInt, @bitCast(Slot{ .value = next_index_pos, .tag = .index }), .big);
                         return try self.readArrayListSlot(next_index_pos, key, shift - 1, internal_write_mode);

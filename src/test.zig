@@ -15,16 +15,81 @@ fn hashBuffer(buffer: []const u8) Hash {
 test "high level api" {
     const allocator = std.testing.allocator;
 
-    // create db file
+    var buffer = std.ArrayList(u8).init(allocator);
+    defer buffer.deinit();
+    try testHighLevelApi(allocator, .memory, .{ .buffer = &buffer, .max_size = 50000 });
+
+    if (std.fs.cwd().openFile("main.db", .{})) |file| {
+        file.close();
+        try std.fs.cwd().deleteFile("main.db");
+    } else |_| {}
+
     const file = try std.fs.cwd().createFile("main.db", .{ .exclusive = true, .lock = .exclusive, .read = true });
     defer {
         file.close();
         std.fs.cwd().deleteFile("main.db") catch {};
     }
+    try testHighLevelApi(allocator, .file, .{ .file = file });
+}
 
+test "low level api" {
+    const allocator = std.testing.allocator;
+
+    var buffer = std.ArrayList(u8).init(allocator);
+    defer buffer.deinit();
+    try testLowLevelApi(allocator, .memory, .{ .buffer = &buffer, .max_size = 50000 });
+
+    if (std.fs.cwd().openFile("main.db", .{})) |file| {
+        file.close();
+        try std.fs.cwd().deleteFile("main.db");
+    } else |_| {}
+
+    const file = try std.fs.cwd().createFile("main.db", .{ .exclusive = true, .lock = .exclusive, .read = true });
+    defer {
+        file.close();
+        std.fs.cwd().deleteFile("main.db") catch {};
+    }
+    try testLowLevelApi(allocator, .file, .{ .file = file });
+}
+
+test "low level memory operations" {
+    const allocator = std.testing.allocator;
+
+    var buffer = std.ArrayList(u8).init(allocator);
+    defer buffer.deinit();
+    var db = try xitdb.Database(.memory, Hash).init(allocator, .{ .buffer = &buffer, .max_size = 10000 });
+
+    var writer = db.core.writer();
+    try db.core.seekTo(0);
+    try writer.writeAll("Hello");
+    try std.testing.expectEqualStrings("Hello", db.core.buffer.items[0..5]);
+    try writer.writeInt(u64, 42, .little);
+    const hello = try std.fmt.allocPrint(allocator, "Hello{s}", .{std.mem.asBytes(&std.mem.nativeTo(u64, 42, .little))});
+    defer allocator.free(hello);
+    try std.testing.expectEqualStrings(hello, db.core.buffer.items[0..13]);
+
+    var reader = db.core.reader();
+    try db.core.seekTo(0);
+    var block = [_]u8{0} ** 5;
+    try reader.readNoEof(&block);
+    try std.testing.expectEqualStrings("Hello", &block);
+    try std.testing.expectEqual(42, reader.readInt(u64, .little));
+}
+
+test "validate tag" {
+    const Slot = packed struct {
+        value: u64,
+        tag: u7,
+        flag: u1,
+    };
+    const invalid: xitdb.Slot = @bitCast(Slot{ .value = 0, .tag = 127, .flag = 0 });
+    try std.testing.expectEqual(error.InvalidEnumTag, invalid.tag.validate());
+}
+
+fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, Hash).InitOpts) !void {
     // init the db
-    const DB = xitdb.Database(.file, Hash);
-    var db = try DB.init(allocator, .{ .file = file });
+    const DB = xitdb.Database(db_kind, Hash);
+    var db = try DB.init(allocator, init_opts);
 
     // the top-level data structure *must* be an ArrayList,
     // because each transaction is stored as an item in this list
@@ -200,6 +265,61 @@ test "high level api" {
     // make sure the old data hasn't changed
     {
         const moment_cursor = (try history.getCursor(0)).?;
+        const moment = try DB.HashMap(.read_only).init(moment_cursor);
+
+        const foo_cursor = (try moment.getCursor(hashBuffer("foo"))).?;
+        const foo_value = try foo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+        defer allocator.free(foo_value);
+        try std.testing.expectEqualStrings("foo", foo_value);
+
+        try std.testing.expectEqual(.bytes, (try moment.getSlot(hashBuffer("foo"))).?.tag);
+        try std.testing.expectEqual(null, try moment.getCursor(hashBuffer("bar")));
+
+        const fruits_cursor = (try moment.getCursor(hashBuffer("fruits"))).?;
+        const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
+        try std.testing.expectEqual(3, try fruits.count());
+
+        const apple_cursor = (try fruits.getCursor(0)).?;
+        const apple_value = try apple_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+        defer allocator.free(apple_value);
+        try std.testing.expectEqualStrings("apple", apple_value);
+
+        const people_cursor = (try moment.getCursor(hashBuffer("people"))).?;
+        const people = try DB.ArrayList(.read_only).init(people_cursor);
+        try std.testing.expectEqual(2, try people.count());
+
+        const alice_cursor = (try people.getCursor(0)).?;
+        const alice = try DB.HashMap(.read_only).init(alice_cursor);
+        const alice_age_cursor = (try alice.getCursor(hashBuffer("age"))).?;
+        try std.testing.expectEqual(25, try alice_age_cursor.readUint());
+
+        const todos_cursor = (try moment.getCursor(hashBuffer("todos"))).?;
+        const todos = try DB.LinkedArrayList(.read_only).init(todos_cursor);
+        try std.testing.expectEqual(2, try todos.count());
+
+        const todo_cursor = (try todos.getCursor(0)).?;
+        const todo_value = try todo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+        defer allocator.free(todo_value);
+        try std.testing.expectEqualStrings("Pay the bills", todo_value);
+    }
+
+    try db.core.seekFromEnd(0);
+    const size_before = try db.core.getPos();
+
+    // truncate the last transaction
+    try history.slice(1);
+
+    try db.core.seekFromEnd(0);
+    const size_after = try db.core.getPos();
+
+    // the size of the file/buffer has shrunk
+    // because slicing the top-level array list
+    // causes the file/buffer to be truncated
+    try std.testing.expect(size_after < size_before);
+
+    // make sure the last transaction is now the first one
+    {
+        const moment_cursor = (try history.getCursor(-1)).?;
         const moment = try DB.HashMap(.read_only).init(moment_cursor);
 
         const foo_cursor = (try moment.getCursor(hashBuffer("foo"))).?;
@@ -475,7 +595,7 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
     }
 }
 
-fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, Hash).InitOpts) !void {
+fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, Hash).InitOpts) !void {
     // open and re-open empty database
     {
         // make empty database
@@ -1485,58 +1605,4 @@ fn testMain(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, 
             });
         }
     }
-}
-
-test "low level api" {
-    const allocator = std.testing.allocator;
-
-    var buffer = std.ArrayList(u8).init(allocator);
-    defer buffer.deinit();
-    try testMain(allocator, .memory, .{ .buffer = &buffer, .max_size = 50000 });
-
-    if (std.fs.cwd().openFile("main.db", .{})) |file| {
-        file.close();
-        try std.fs.cwd().deleteFile("main.db");
-    } else |_| {}
-
-    const file = try std.fs.cwd().createFile("main.db", .{ .exclusive = true, .lock = .exclusive, .read = true });
-    defer {
-        file.close();
-        std.fs.cwd().deleteFile("main.db") catch {};
-    }
-    try testMain(allocator, .file, .{ .file = file });
-}
-
-test "low level memory operations" {
-    const allocator = std.testing.allocator;
-
-    var buffer = std.ArrayList(u8).init(allocator);
-    defer buffer.deinit();
-    var db = try xitdb.Database(.memory, Hash).init(allocator, .{ .buffer = &buffer, .max_size = 10000 });
-
-    var writer = db.core.writer();
-    try db.core.seekTo(0);
-    try writer.writeAll("Hello");
-    try std.testing.expectEqualStrings("Hello", db.core.buffer.items[0..5]);
-    try writer.writeInt(u64, 42, .little);
-    const hello = try std.fmt.allocPrint(allocator, "Hello{s}", .{std.mem.asBytes(&std.mem.nativeTo(u64, 42, .little))});
-    defer allocator.free(hello);
-    try std.testing.expectEqualStrings(hello, db.core.buffer.items[0..13]);
-
-    var reader = db.core.reader();
-    try db.core.seekTo(0);
-    var block = [_]u8{0} ** 5;
-    try reader.readNoEof(&block);
-    try std.testing.expectEqualStrings("Hello", &block);
-    try std.testing.expectEqual(42, reader.readInt(u64, .little));
-}
-
-test "validate tag" {
-    const Slot = packed struct {
-        value: u64,
-        tag: u7,
-        flag: u1,
-    };
-    const invalid: xitdb.Slot = @bitCast(Slot{ .value = 0, .tag = 127, .flag = 0 });
-    try std.testing.expectEqual(error.InvalidEnumTag, invalid.tag.validate());
 }
