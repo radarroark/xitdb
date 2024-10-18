@@ -380,6 +380,13 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         const writer = db.core.writer();
         try writer.writeAll("this is junk data that will be deleted during init");
 
+        // no error is thrown if db file is opened in read-only mode
+        if (db_kind == .file) {
+            const file = try std.fs.cwd().openFile("main.db", .{ .mode = .read_only });
+            defer file.close();
+            _ = try DB.init(allocator, .{ .file = file });
+        }
+
         db = try DB.init(allocator, init_opts);
 
         try db.core.seekFromEnd(0);
