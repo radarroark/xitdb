@@ -867,7 +867,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     }
                     const next_map_start = slot_ptr.slot.value;
 
-                    _ = self.readMapSlot(next_map_start, part.hash_map_remove, 0, .read_only, is_top_level, .kv_pair) catch |err| switch (err) {
+                    _ = self.removeMapSlot(next_map_start, part.hash_map_remove, 0, is_top_level) catch |err| switch (err) {
                         error.KeyNotFound => {
                             // if there was nothing to remove, return an empty
                             // slot pointer so caller can see nothing was removed
@@ -876,12 +876,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         else => return err,
                     };
 
-                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_remove, 0, .read_write, is_top_level, .kv_pair);
-                    const writer = self.core.writer();
-                    const position = next_slot_ptr.position orelse return error.CursorNotWriteable;
-                    try self.core.seekTo(position);
-                    try writer.writeInt(SlotInt, 0, .big);
-                    return next_slot_ptr;
+                    return slot_ptr;
                 },
                 .write => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
@@ -1077,9 +1072,104 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         }
                     }
                 },
-                else => {
-                    return error.UnexpectedTag;
+                else => return error.UnexpectedTag,
+            }
+        }
+
+        fn removeMapSlot(self: *Database(db_kind, Hash), index_pos: u64, key_hash: Hash, key_offset: u8, is_top_level: bool) !Slot {
+            if (key_offset >= (HASH_SIZE * 8) / BIT_COUNT) {
+                return error.KeyOffsetExceeded;
+            }
+
+            const reader = self.core.reader();
+            const writer = self.core.writer();
+
+            // read block
+            var slot_block = [_]Slot{.{}} ** SLOT_COUNT;
+            try self.core.seekTo(index_pos);
+            var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+            try reader.readNoEof(&index_block);
+            var stream = std.io.fixedBufferStream(&index_block);
+            var block_reader = stream.reader();
+            for (&slot_block) |*block_slot| {
+                block_slot.* = @bitCast(try block_reader.readInt(SlotInt, .big));
+                try block_slot.tag.validate();
+            }
+
+            // get the current slot
+            const i: u4 = @intCast((key_hash >> key_offset * BIT_COUNT) & MASK);
+            const slot_pos = index_pos + (byteSizeOf(Slot) * i);
+            const slot = slot_block[i];
+
+            // get the slot that will replace the current slot
+            const next_slot: Slot = switch (slot.tag) {
+                .none => return error.KeyNotFound,
+                .index => try self.removeMapSlot(slot.value, key_hash, key_offset + 1, is_top_level),
+                .kv_pair => blk: {
+                    try self.core.seekTo(slot.value);
+                    const kv_pair: KeyValuePair = @bitCast(try reader.readInt(KeyValuePairInt, .big));
+                    if (kv_pair.hash == key_hash) {
+                        break :blk .{ .tag = .none };
+                    } else {
+                        return error.KeyNotFound;
+                    }
                 },
+                else => return error.UnexpectedTag,
+            };
+
+            // if we're the root node, just write the new slot and finish
+            if (key_offset == 0) {
+                try self.core.seekTo(slot_pos);
+                try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
+                return .{ .value = index_pos, .tag = .index };
+            }
+
+            // get slot to return if there is only one used slot
+            // in this index block
+            var slot_to_return_maybe: ?Slot = .{ .tag = .none };
+            slot_block[i] = next_slot;
+            for (slot_block) |block_slot| {
+                if (block_slot.tag == .none) continue;
+
+                // if there is already a slot to return, that
+                // means there is more than one used slot in this
+                // index block, so we can't return just a single slot
+                if (slot_to_return_maybe) |slot_to_return| {
+                    if (slot_to_return.tag != .none) {
+                        slot_to_return_maybe = null;
+                        break;
+                    }
+                }
+
+                slot_to_return_maybe = block_slot;
+            }
+
+            if (slot_to_return_maybe) |slot_to_return| {
+                // there was either 0 or 1 used slot, so this index
+                // block doesn't need to exist anymore
+                return slot_to_return;
+            } else {
+                // there was more than one used slot, so we must keep
+                // this index block
+
+                if (!is_top_level) {
+                    const tx_start = self.tx_start orelse return error.ExpectedTxStart;
+                    if (index_pos < tx_start) {
+                        // copy index block to the end
+                        try self.core.seekFromEnd(0);
+                        const next_index_pos = try self.core.getPos();
+                        try writer.writeAll(&index_block);
+                        // update the slot
+                        const next_slot_pos = next_index_pos + (byteSizeOf(Slot) * i);
+                        try self.core.seekTo(next_slot_pos);
+                        try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
+                        return .{ .value = next_index_pos, .tag = .index };
+                    }
+                }
+
+                try self.core.seekTo(slot_pos);
+                try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
+                return .{ .value = index_pos, .tag = .index };
             }
         }
 

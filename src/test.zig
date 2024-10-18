@@ -980,9 +980,9 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .{ .hash_map_get = .{ .value = not_found_key } },
         }));
 
-        // write key that conflicts with foo
-        var conflict_key = hashBuffer("conflict");
-        conflict_key = (conflict_key & ~xitdb.MASK) | (foo_key & xitdb.MASK);
+        // write key that partially conflicts with foo
+        const conflict_mask: u64 = 0b1111_1111_1111_1111;
+        const conflict_key = (hashBuffer("conflict") & ~conflict_mask) | (foo_key & conflict_mask);
         _ = try root_cursor.writePath(void, &.{
             .array_list_init,
             .array_list_append,
@@ -1078,7 +1078,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .{ .hash_map_get = .{ .value = conflict_key } },
             }));
 
-            // foo's slot is still an .index slot because we don't have branch shortening yet
+            // foo's slot is now a .kv_pair slot, because the branch was shortened
             {
                 const map_cursor = (try root_cursor.readPath(void, &.{
                     .{ .array_list_get = -1 },
@@ -1094,7 +1094,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 try db.core.seekTo(slot_pos);
                 const slot: xitdb.Slot = @bitCast(try reader.readInt(u72, .big));
 
-                try std.testing.expectEqual(.index, slot.tag);
+                try std.testing.expectEqual(.kv_pair, slot.tag);
             }
         }
 
@@ -1175,7 +1175,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         });
         try std.testing.expect(empty_cursor.slot_ptr.position == null);
 
-        // read foo
+        // make sure foo doesn't exist anymore
         try std.testing.expectEqual(null, try root_cursor.readPath(void, &.{
             .{ .array_list_get = -1 },
             .{ .hash_map_get = .{ .value = foo_key } },
