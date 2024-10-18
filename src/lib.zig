@@ -374,6 +374,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         if (self.header.hash_size != byteSizeOf(Hash)) {
                             return error.InvalidHashSize;
                         }
+                        try self.shrinkToTxEnd();
                     }
 
                     return self;
@@ -399,6 +400,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         if (self.header.hash_size != byteSizeOf(Hash)) {
                             return error.InvalidHashSize;
                         }
+                        try self.shrinkToTxEnd();
                     }
 
                     return self;
@@ -423,6 +425,38 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             };
             try writer.writeInt(DatabaseHeaderInt, @bitCast(header), .big);
             return header;
+        }
+
+        fn shrinkToTxEnd(self: *Database(db_kind, Hash)) !void {
+            if (self.header.tag != .array_list or !self.header.track_tx_end) return;
+
+            const root_cursor = self.rootCursor();
+            const list_size = try root_cursor.count();
+
+            if (list_size == 0) return;
+
+            try self.core.seekFromEnd(0);
+            const file_size = try self.core.getPos();
+
+            const last_index = list_size - 1;
+            const last_slot_ptr = try self.readSlotPointer(.read_only, void, &.{.{ .array_list_get = last_index }}, root_cursor.slot_ptr);
+            const last_slot_pos = last_slot_ptr.position orelse return error.ExpectedSlotPosition;
+            const last_slot_i = last_index % SLOT_COUNT;
+            const last_index_block_pos = last_slot_pos - (last_slot_i * byteSizeOf(Slot));
+            const last_tx_end_slot_pos = last_index_block_pos + INDEX_BLOCK_SIZE + (last_slot_i * byteSizeOf(u64));
+            const core_reader = self.core.reader();
+            try self.core.seekTo(last_tx_end_slot_pos);
+            const tx_end = try core_reader.readInt(u64, .big);
+
+            if (file_size == tx_end) return;
+
+            switch (db_kind) {
+                .memory => self.core.buffer.shrinkAndFree(tx_end),
+                .file => self.core.file.setEndPos(tx_end) catch |err| switch (err) {
+                    error.AccessDenied => {},
+                    else => return err,
+                },
+            }
         }
 
         fn readSlotPointer(self: *Database(db_kind, Hash), comptime write_mode: WriteMode, comptime Ctx: type, path: []const PathPart(Ctx), slot_ptr: SlotPointer) anyerror!SlotPointer {
@@ -610,20 +644,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     try writer.writeInt(ArrayListHeaderInt, @bitCast(slice_header), .big);
 
                     // if top level array list, truncate file/buffer to tx end
-                    if (is_top_level and self.header.track_tx_end) {
-                        const last_index = slice_header.size - 1;
-                        const last_slot_ptr = try self.readSlotPointer(write_mode, void, &.{.{ .array_list_get = last_index }}, slot_ptr);
-                        const last_slot_pos = last_slot_ptr.position orelse return error.ExpectedSlotPosition;
-                        const last_slot_i = last_index % SLOT_COUNT;
-                        const last_index_block_pos = last_slot_pos - (last_slot_i * byteSizeOf(Slot));
-                        const last_tx_end_slot_pos = last_index_block_pos + INDEX_BLOCK_SIZE + (last_slot_i * byteSizeOf(u64));
-                        const core_reader = self.core.reader();
-                        try self.core.seekTo(last_tx_end_slot_pos);
-                        const tx_end = try core_reader.readInt(u64, .big);
-                        switch (db_kind) {
-                            .memory => self.core.buffer.shrinkAndFree(tx_end),
-                            .file => try self.core.file.setEndPos(tx_end),
-                        }
+                    if (is_top_level) {
+                        try self.shrinkToTxEnd();
                     }
 
                     return final_slot_ptr;
@@ -907,7 +929,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             .slot_ptr = slot_ptr,
                             .db = self,
                         };
-                        try part.ctx.run(&next_cursor);
+                        part.ctx.run(&next_cursor) catch |err| {
+                            // since an error occurred, there may be inaccessible
+                            // junk at the end of the db, so delete it if possible
+                            self.shrinkToTxEnd() catch {};
+                            return err;
+                        };
                         return next_cursor.slot_ptr;
                     }
                 },

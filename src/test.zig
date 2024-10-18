@@ -846,6 +846,9 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
 
         // if error in ctx, db doesn't change
         {
+            try db.core.seekFromEnd(0);
+            const size_before = try db.core.getPos();
+
             const Ctx = struct {
                 allocator: std.mem.Allocator,
 
@@ -853,7 +856,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                     var writer = try cursor.writer();
                     try writer.writeAll("this value won't be visible");
                     try writer.finish();
-                    return error.NotImplemented;
+                    return error.CancelTransaction;
                 }
             };
             _ = root_cursor.writePath(Ctx, &.{
@@ -863,7 +866,10 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .hash_map_init,
                 .{ .hash_map_get = .{ .value = hashBuffer("foo") } },
                 .{ .ctx = Ctx{ .allocator = allocator } },
-            }) catch {};
+            }) catch |err| switch (err) {
+                error.CancelTransaction => {},
+                else => return err,
+            };
 
             // read foo
             const value_cursor = (try root_cursor.readPath(void, &.{
@@ -873,6 +879,14 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             const value = try value_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
             defer allocator.free(value);
             try std.testing.expectEqualStrings("baz", value);
+
+            // if tx end is being tracked, verify that the db is
+            // properly truncated back to its original size after error
+            if (init_opts.track_tx_end) {
+                try db.core.seekFromEnd(0);
+                const size_after = try db.core.getPos();
+                try std.testing.expectEqual(size_before, size_after);
+            }
         }
 
         // read foo into stack-allocated buffer
