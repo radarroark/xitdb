@@ -91,11 +91,11 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
     const DB = xitdb.Database(db_kind, Hash);
     var db = try DB.init(allocator, init_opts);
 
-    // the top-level data structure *must* be an ArrayList,
-    // because each transaction is stored as an item in this list
-    const history = try DB.ArrayList(.read_write).init(db.rootCursor());
-
     {
+        // the top-level data structure *must* be an ArrayList,
+        // because each transaction is stored as an item in this list
+        const history = try DB.ArrayList(.read_write).init(db.rootCursor());
+
         // this is how a transaction is executed. we call history.appendContext,
         // providing it with the most recent copy of the db and a context
         // object. the context object has a method that will run before the
@@ -196,6 +196,8 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
 
     // make a new transaction and change the data
     {
+        const history = try DB.ArrayList(.read_write).init(db.rootCursor());
+
         const Ctx = struct {
             pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
                 const moment = try DB.HashMap(.read_write).init(cursor.*);
@@ -262,8 +264,10 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         try std.testing.expectEqualStrings("Get an oil change", todo_value);
     }
 
-    // make sure the old data hasn't changed
+    // the old data hasn't changed
     {
+        const history = try DB.ArrayList(.read_write).init(db.rootCursor());
+
         const moment_cursor = (try history.getCursor(0)).?;
         const moment = try DB.HashMap(.read_only).init(moment_cursor);
 
@@ -303,22 +307,29 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         try std.testing.expectEqualStrings("Pay the bills", todo_value);
     }
 
-    try db.core.seekFromEnd(0);
-    const size_before = try db.core.getPos();
-
-    // truncate the last transaction
-    try history.slice(1);
-
-    try db.core.seekFromEnd(0);
-    const size_after = try db.core.getPos();
-
-    // the size of the file/buffer has shrunk
-    // because slicing the top-level array list
-    // causes the file/buffer to be truncated
-    try std.testing.expect(size_after < size_before);
-
-    // make sure the last transaction is now the first one
+    // the db size is reduced after slicing the top level arraylist
     {
+        const history = try DB.ArrayList(.read_write).init(db.rootCursor());
+
+        try db.core.seekFromEnd(0);
+        const size_before = try db.core.getPos();
+
+        // truncate the last transaction
+        try history.slice(1);
+
+        try db.core.seekFromEnd(0);
+        const size_after = try db.core.getPos();
+
+        // the size of the file/buffer has shrunk
+        // because slicing the top-level array list
+        // causes the file/buffer to be truncated
+        try std.testing.expect(size_after < size_before);
+    }
+
+    // the last transaction is now the first one
+    {
+        const history = try DB.ArrayList(.read_write).init(db.rootCursor());
+
         const moment_cursor = (try history.getCursor(-1)).?;
         const moment = try DB.HashMap(.read_only).init(moment_cursor);
 
@@ -356,6 +367,25 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         const todo_value = try todo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(todo_value);
         try std.testing.expectEqualStrings("Pay the bills", todo_value);
+    }
+
+    // the db size remains the same after writing junk data
+    // and then reinitializing the db. this is useful because
+    // there could be data from a transaction that never
+    // completed due to an unclean shutdown.
+    {
+        try db.core.seekFromEnd(0);
+        const size_before = try db.core.getPos();
+
+        const writer = db.core.writer();
+        try writer.writeAll("this is junk data that will be deleted during init");
+
+        db = try DB.init(allocator, init_opts);
+
+        try db.core.seekFromEnd(0);
+        const size_after = try db.core.getPos();
+
+        try std.testing.expectEqual(size_before, size_after);
     }
 }
 
