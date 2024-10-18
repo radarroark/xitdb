@@ -867,7 +867,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     }
                     const next_map_start = slot_ptr.slot.value;
 
-                    const next_slot_ptr = self.readMapSlot(next_map_start, part.hash_map_remove, 0, .read_only, is_top_level, .kv_pair) catch |err| switch (err) {
+                    _ = self.readMapSlot(next_map_start, part.hash_map_remove, 0, .read_only, is_top_level, .kv_pair) catch |err| switch (err) {
                         error.KeyNotFound => {
                             // if there was nothing to remove, return an empty
                             // slot pointer so caller can see nothing was removed
@@ -876,6 +876,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         else => return err,
                     };
 
+                    const next_slot_ptr = try self.readMapSlot(next_map_start, part.hash_map_remove, 0, .read_write, is_top_level, .kv_pair);
                     const writer = self.core.writer();
                     const position = next_slot_ptr.position orelse return error.CursorNotWriteable;
                     try self.core.seekTo(position);
