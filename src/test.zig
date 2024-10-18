@@ -4,14 +4,6 @@ const xitdb = @import("./lib.zig");
 const Hash = u160;
 const MAX_READ_BYTES = 1024;
 
-fn hashBuffer(buffer: []const u8) Hash {
-    var hash = [_]u8{0} ** (@bitSizeOf(Hash) / 8);
-    var h = std.crypto.hash.Sha1.init(.{});
-    h.update(buffer);
-    h.final(&hash);
-    return std.mem.bytesToValue(Hash, &hash);
-}
-
 test "high level api" {
     const allocator = std.testing.allocator;
 
@@ -84,6 +76,14 @@ test "validate tag" {
     };
     const invalid: xitdb.Slot = @bitCast(Slot{ .value = 0, .tag = 127, .flag = 0 });
     try std.testing.expectEqual(error.InvalidEnumTag, invalid.tag.validate());
+}
+
+fn hashBuffer(buffer: []const u8) Hash {
+    var hash = [_]u8{0} ** (@bitSizeOf(Hash) / 8);
+    var h = std.crypto.hash.Sha1.init(.{});
+    h.update(buffer);
+    h.final(&hash);
+    return std.mem.bytesToValue(Hash, &hash);
 }
 
 fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, Hash).InitOpts) !void {
@@ -1035,6 +1035,68 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         const hello_value2 = try hello_cursor2.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(hello_value2);
         try std.testing.expectEqualStrings("hello", hello_value2);
+
+        // remove conflicting key
+        {
+            // foo's slot is an .index slot due to the conflict
+            {
+                const map_cursor = (try root_cursor.readPath(void, &.{
+                    .{ .array_list_get = -1 },
+                })).?;
+                const index_pos = map_cursor.slot().value;
+                try std.testing.expectEqual(.hash_map, map_cursor.slot().tag);
+
+                const reader = db.core.reader();
+                const slot_size: u64 = @bitSizeOf(xitdb.Slot) / 8;
+
+                const i: u4 = @intCast(foo_key & xitdb.MASK);
+                const slot_pos = index_pos + (slot_size * i);
+                try db.core.seekTo(slot_pos);
+                const slot: xitdb.Slot = @bitCast(try reader.readInt(u72, .big));
+
+                try std.testing.expectEqual(.index, slot.tag);
+            }
+
+            // remove the conflict key
+            _ = try root_cursor.writePath(void, &.{
+                .array_list_init,
+                .array_list_append,
+                .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+                .hash_map_init,
+                .{ .hash_map_remove = conflict_key },
+            });
+
+            // the conflict key still exists in history
+            try std.testing.expect(null != try root_cursor.readPath(void, &.{
+                .{ .array_list_get = -2 },
+                .{ .hash_map_get = .{ .value = conflict_key } },
+            }));
+
+            // the conflict key doesn't exist in the latest moment
+            try std.testing.expectEqual(null, try root_cursor.readPath(void, &.{
+                .{ .array_list_get = -1 },
+                .{ .hash_map_get = .{ .value = conflict_key } },
+            }));
+
+            // foo's slot is still an .index slot because we don't have branch shortening yet
+            {
+                const map_cursor = (try root_cursor.readPath(void, &.{
+                    .{ .array_list_get = -1 },
+                })).?;
+                const index_pos = map_cursor.slot().value;
+                try std.testing.expectEqual(.hash_map, map_cursor.slot().tag);
+
+                const reader = db.core.reader();
+                const slot_size: u64 = @bitSizeOf(xitdb.Slot) / 8;
+
+                const i: u4 = @intCast(foo_key & xitdb.MASK);
+                const slot_pos = index_pos + (slot_size * i);
+                try db.core.seekTo(slot_pos);
+                const slot: xitdb.Slot = @bitCast(try reader.readInt(u72, .big));
+
+                try std.testing.expectEqual(.index, slot.tag);
+            }
+        }
 
         {
             // overwrite foo with a uint
