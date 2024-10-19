@@ -9,7 +9,7 @@ test "high level api" {
 
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
-    try testHighLevelApi(allocator, .memory, .{ .buffer = &buffer, .max_size = 50000, .track_tx_end = true });
+    try testHighLevelApi(allocator, .memory, .{ .buffer = &buffer, .max_size = 50000, .allow_truncation = true });
 
     if (std.fs.cwd().openFile("main.db", .{})) |file| {
         file.close();
@@ -917,9 +917,9 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             defer allocator.free(value);
             try std.testing.expectEqualStrings("baz", value);
 
-            // if tx end is being tracked, verify that the db is
+            // if truncation is allowed, verify that the db is
             // properly truncated back to its original size after error
-            if (init_opts.track_tx_end) {
+            if (init_opts.allow_truncation) {
                 try db.core.seekFromEnd(0);
                 const size_after = try db.core.getPos();
                 try std.testing.expectEqual(size_before, size_after);

@@ -68,9 +68,10 @@ const DatabaseHeader = packed struct {
     // when true, and the top-level tag is array list, leaf nodes
     // will include a "tx end block" immediately after them, which
     // will track the size of the file/buffer at the end of the
-    // transaction. then, when `slice` is used at the top level,
-    // the file/buffer can be truncated to recover space.
-    track_tx_end: bool,
+    // transaction. this allows it to be truncated when junk data
+    // is left over at the end of a failed transaction,
+    // or when `slice` is used on the top-level arraylist.
+    allow_truncation: bool,
     // a value that allows for a quick sanity check when determining
     // if the file is a valid database. it also provides a quick
     // visual indicator that this is a xitdb file to anyone looking
@@ -342,11 +343,11 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             .memory => struct {
                 buffer: *std.ArrayList(u8),
                 max_size: ?u64 = null,
-                track_tx_end: bool = false,
+                allow_truncation: bool = false,
             },
             .file => struct {
                 file: std.fs.File,
-                track_tx_end: bool = true,
+                allow_truncation: bool = true,
             },
         };
 
@@ -366,7 +367,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                     try self.core.seekTo(0);
                     if (self.core.buffer.items.len == 0) {
-                        self.header = try self.writeHeader(opts.track_tx_end);
+                        self.header = try self.writeHeader(opts.allow_truncation);
                     } else {
                         const reader = self.core.reader();
                         self.header = try DatabaseHeader.read(reader);
@@ -374,7 +375,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         if (self.header.hash_size != byteSizeOf(Hash)) {
                             return error.InvalidHashSize;
                         }
-                        try self.shrinkToTxEnd();
+                        try self.truncateToTxEnd();
                     }
 
                     return self;
@@ -392,7 +393,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                     try self.core.seekTo(0);
                     if (size == 0) {
-                        self.header = try self.writeHeader(opts.track_tx_end);
+                        self.header = try self.writeHeader(opts.allow_truncation);
                     } else {
                         const reader = self.core.reader();
                         self.header = try DatabaseHeader.read(reader);
@@ -400,7 +401,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         if (self.header.hash_size != byteSizeOf(Hash)) {
                             return error.InvalidHashSize;
                         }
-                        try self.shrinkToTxEnd();
+                        try self.truncateToTxEnd();
                     }
 
                     return self;
@@ -417,18 +418,18 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
         // private
 
-        fn writeHeader(self: *Database(db_kind, Hash), track_tx_end: bool) !DatabaseHeader {
+        fn writeHeader(self: *Database(db_kind, Hash), allow_truncation: bool) !DatabaseHeader {
             const writer = self.core.writer();
             const header = DatabaseHeader{
                 .hash_size = byteSizeOf(Hash),
-                .track_tx_end = track_tx_end,
+                .allow_truncation = allow_truncation,
             };
             try writer.writeInt(DatabaseHeaderInt, @bitCast(header), .big);
             return header;
         }
 
-        fn shrinkToTxEnd(self: *Database(db_kind, Hash)) !void {
-            if (self.header.tag != .array_list or !self.header.track_tx_end) return;
+        fn truncateToTxEnd(self: *Database(db_kind, Hash)) !void {
+            if (self.header.tag != .array_list or !self.header.allow_truncation) return;
 
             const root_cursor = self.rootCursor();
             const list_size = try root_cursor.count();
@@ -507,7 +508,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             // write the first block
                             const index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                             try writer.writeAll(&index_block);
-                            if (self.header.track_tx_end) {
+                            if (self.header.allow_truncation) {
                                 const tx_end_block = [_]u8{0} ** TX_END_BLOCK_SIZE;
                                 try writer.writeAll(&tx_end_block);
                             }
@@ -618,7 +619,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     const writer = self.core.writer();
 
                     // if top level array list, put the file size in the tx end block
-                    if (is_top_level and self.header.track_tx_end) {
+                    if (is_top_level and self.header.allow_truncation) {
                         const last_slot_pos = append_result.slot_ptr.position orelse return error.ExpectedSlotPosition;
                         const last_slot_i = (append_result.header.size - 1) % SLOT_COUNT;
                         const last_index_block_pos = last_slot_pos - (last_slot_i * byteSizeOf(Slot));
@@ -652,7 +653,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                     // if top level array list, truncate file/buffer to tx end
                     if (is_top_level) {
-                        try self.shrinkToTxEnd();
+                        try self.truncateToTxEnd();
                     }
 
                     return final_slot_ptr;
@@ -933,7 +934,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         part.ctx.run(&next_cursor) catch |err| {
                             // since an error occurred, there may be inaccessible
                             // junk at the end of the db, so delete it if possible
-                            self.shrinkToTxEnd() catch {};
+                            self.truncateToTxEnd() catch {};
                             return err;
                         };
                         return next_cursor.slot_ptr;
@@ -1239,7 +1240,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                             try writer.writeAll(&index_block);
                             // if top level array list, put a "tx end block" after leaf node
-                            if (is_top_level and self.header.track_tx_end and shift == 1) {
+                            if (is_top_level and self.header.allow_truncation and shift == 1) {
                                 var tx_end_block = [_]u8{0} ** TX_END_BLOCK_SIZE;
                                 try writer.writeAll(&tx_end_block);
                             }
