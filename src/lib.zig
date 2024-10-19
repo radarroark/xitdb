@@ -858,22 +858,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 .hash_map_remove => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
-                    if (path.len > 1) return error.PathPartMustBeAtEnd;
-
                     switch (slot_ptr.slot.tag) {
                         .none => return error.KeyNotFound,
                         .hash_map => {},
                         else => return error.UnexpectedTag,
                     }
 
-                    _ = self.removeMapSlot(slot_ptr.slot.value, part.hash_map_remove, 0, is_top_level) catch |err| switch (err) {
-                        error.KeyNotFound => {
-                            // if there was nothing to remove, return an empty
-                            // slot pointer so caller can see nothing was removed
-                            return .{ .position = null, .slot = .{} };
-                        },
-                        else => return err,
-                    };
+                    _ = try self.removeMapSlot(slot_ptr.slot.value, part.hash_map_remove, 0, is_top_level);
 
                     return slot_ptr;
                 },
@@ -2522,10 +2513,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     });
                 }
 
-                pub fn remove(self: HashMap(.read_write), hash: Hash) !void {
-                    _ = try self.cursor.writePath(void, &.{
+                pub fn remove(self: HashMap(.read_write), hash: Hash) !bool {
+                    _ = self.cursor.writePath(void, &.{
                         .{ .hash_map_remove = hash },
-                    });
+                    }) catch |err| switch (err) {
+                        error.KeyNotFound => return false,
+                        else => return err,
+                    };
+                    return true;
                 }
             };
         }

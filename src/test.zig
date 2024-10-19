@@ -108,7 +108,8 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
 
                 try moment.put(hashBuffer("foo"), .{ .bytes = "foo" });
                 try moment.put(hashBuffer("bar"), .{ .bytes = "bar" });
-                try moment.remove(hashBuffer("bar"));
+                try std.testing.expect(try moment.remove(hashBuffer("bar")));
+                try std.testing.expect(!try moment.remove(hashBuffer("doesn't exist")));
 
                 const fruits_cursor = try moment.putCursor(hashBuffer("fruits"));
                 const fruits = try DB.ArrayList(.read_write).init(fruits_cursor);
@@ -1156,24 +1157,22 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         }
 
         // remove foo
-        const foo_cursor = try root_cursor.writePath(void, &.{
+        _ = try root_cursor.writePath(void, &.{
             .array_list_init,
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
             .hash_map_init,
             .{ .hash_map_remove = foo_key },
         });
-        try std.testing.expect(foo_cursor.slot_ptr.position != null);
 
         // remove key that does not exist
-        const empty_cursor = try root_cursor.writePath(void, &.{
+        try std.testing.expectError(error.KeyNotFound, root_cursor.writePath(void, &.{
             .array_list_init,
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
             .hash_map_init,
             .{ .hash_map_remove = hashBuffer("doesn't exist") },
-        });
-        try std.testing.expect(empty_cursor.slot_ptr.position == null);
+        }));
 
         // make sure foo doesn't exist anymore
         try std.testing.expectEqual(null, try root_cursor.readPath(void, &.{
