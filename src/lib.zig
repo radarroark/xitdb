@@ -1134,33 +1134,36 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 slot_to_return_maybe = block_slot;
             }
 
+            // if there were either no used slots, or a single .kv_pair
+            // slot, this index block doesn't need to exist anymore
             if (slot_to_return_maybe) |slot_to_return| {
-                // there was either 0 or 1 used slot, so this index
-                // block doesn't need to exist anymore
-                return slot_to_return;
-            } else {
-                // there was more than one used slot, so we must keep
-                // this index block
-
-                if (!is_top_level) {
-                    const tx_start = self.tx_start orelse return error.ExpectedTxStart;
-                    if (index_pos < tx_start) {
-                        // copy index block to the end
-                        try self.core.seekFromEnd(0);
-                        const next_index_pos = try self.core.getPos();
-                        try writer.writeAll(&index_block);
-                        // update the slot
-                        const next_slot_pos = next_index_pos + (byteSizeOf(Slot) * i);
-                        try self.core.seekTo(next_slot_pos);
-                        try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
-                        return .{ .value = next_index_pos, .tag = .index };
-                    }
+                switch (slot_to_return.tag) {
+                    .none, .kv_pair => return slot_to_return,
+                    else => {},
                 }
-
-                try self.core.seekTo(slot_pos);
-                try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
-                return .{ .value = index_pos, .tag = .index };
             }
+
+            // there was more than one used slot, or a single .index slot,
+            // so we must keep this index block
+
+            if (!is_top_level) {
+                const tx_start = self.tx_start orelse return error.ExpectedTxStart;
+                if (index_pos < tx_start) {
+                    // copy index block to the end
+                    try self.core.seekFromEnd(0);
+                    const next_index_pos = try self.core.getPos();
+                    try writer.writeAll(&index_block);
+                    // update the slot
+                    const next_slot_pos = next_index_pos + (byteSizeOf(Slot) * i);
+                    try self.core.seekTo(next_slot_pos);
+                    try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
+                    return .{ .value = next_index_pos, .tag = .index };
+                }
+            }
+
+            try self.core.seekTo(slot_pos);
+            try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
+            return .{ .value = index_pos, .tag = .index };
         }
 
         // array_list

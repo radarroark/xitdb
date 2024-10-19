@@ -981,7 +981,19 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .{ .hash_map_get = .{ .value = not_found_key } },
         }));
 
-        // write key that partially conflicts with foo
+        // write key that conflicts with foo the first two bytes
+        const small_conflict_mask: u64 = 0b1111_1111;
+        const small_conflict_key = (hashBuffer("small conflict") & ~small_conflict_mask) | (foo_key & small_conflict_mask);
+        _ = try root_cursor.writePath(void, &.{
+            .array_list_init,
+            .array_list_append,
+            .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+            .hash_map_init,
+            .{ .hash_map_get = .{ .value = small_conflict_key } },
+            .{ .write = .{ .bytes = "small" } },
+        });
+
+        // write key that conflicts with foo the first four bytes
         const conflict_mask: u64 = 0b1111_1111_1111_1111;
         const conflict_key = (hashBuffer("conflict") & ~conflict_mask) | (foo_key & conflict_mask);
         _ = try root_cursor.writePath(void, &.{
@@ -1037,9 +1049,55 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         defer allocator.free(hello_value2);
         try std.testing.expectEqualStrings("hello", hello_value2);
 
-        // remove conflicting key
+        // remove the conflicting keys
         {
             // foo's slot is an .index slot due to the conflict
+            {
+                const map_cursor = (try root_cursor.readPath(void, &.{
+                    .{ .array_list_get = -1 },
+                })).?;
+                const index_pos = map_cursor.slot().value;
+                try std.testing.expectEqual(.hash_map, map_cursor.slot().tag);
+
+                const reader = db.core.reader();
+                const slot_size: u64 = @bitSizeOf(xitdb.Slot) / 8;
+
+                const i: u4 = @intCast(foo_key & xitdb.MASK);
+                const slot_pos = index_pos + (slot_size * i);
+                try db.core.seekTo(slot_pos);
+                const slot: xitdb.Slot = @bitCast(try reader.readInt(u72, .big));
+
+                try std.testing.expectEqual(.index, slot.tag);
+            }
+
+            // remove the small conflict key
+            _ = try root_cursor.writePath(void, &.{
+                .array_list_init,
+                .array_list_append,
+                .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+                .hash_map_init,
+                .{ .hash_map_remove = small_conflict_key },
+            });
+
+            // the conflict key still exists in history
+            try std.testing.expect(null != try root_cursor.readPath(void, &.{
+                .{ .array_list_get = -2 },
+                .{ .hash_map_get = .{ .value = small_conflict_key } },
+            }));
+
+            // the conflict key doesn't exist in the latest moment
+            try std.testing.expectEqual(null, try root_cursor.readPath(void, &.{
+                .{ .array_list_get = -1 },
+                .{ .hash_map_get = .{ .value = small_conflict_key } },
+            }));
+
+            // the other conflict key still exists
+            try std.testing.expect(null != try root_cursor.readPath(void, &.{
+                .{ .array_list_get = -1 },
+                .{ .hash_map_get = .{ .value = conflict_key } },
+            }));
+
+            // foo's slot is still an .index slot due to the other conflicting key
             {
                 const map_cursor = (try root_cursor.readPath(void, &.{
                     .{ .array_list_get = -1 },
@@ -1067,13 +1125,11 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .{ .hash_map_remove = conflict_key },
             });
 
-            // the conflict key still exists in history
-            try std.testing.expect(null != try root_cursor.readPath(void, &.{
-                .{ .array_list_get = -2 },
-                .{ .hash_map_get = .{ .value = conflict_key } },
+            // the conflict keys don't exist in the latest moment
+            try std.testing.expectEqual(null, try root_cursor.readPath(void, &.{
+                .{ .array_list_get = -1 },
+                .{ .hash_map_get = .{ .value = small_conflict_key } },
             }));
-
-            // the conflict key doesn't exist in the latest moment
             try std.testing.expectEqual(null, try root_cursor.readPath(void, &.{
                 .{ .array_list_get = -1 },
                 .{ .hash_map_get = .{ .value = conflict_key } },
