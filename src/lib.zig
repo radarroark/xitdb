@@ -578,10 +578,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 },
                 .array_list_get => {
                     const tag = if (is_top_level) self.header.tag else slot_ptr.slot.tag;
-                    if (tag == .none) {
-                        return error.KeyNotFound;
-                    } else if (tag != .array_list) {
-                        return error.UnexpectedTag;
+                    switch (tag) {
+                        .none => return error.KeyNotFound,
+                        .array_list => {},
+                        else => return error.UnexpectedTag,
                     }
 
                     const next_array_list_start = slot_ptr.slot.value;
@@ -716,16 +716,15 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     }
                 },
                 .linked_array_list_get => {
-                    if (slot_ptr.slot.tag == .none) {
-                        return error.KeyNotFound;
-                    } else if (slot_ptr.slot.tag != .linked_array_list) {
-                        return error.UnexpectedTag;
+                    switch (slot_ptr.slot.tag) {
+                        .none => return error.KeyNotFound,
+                        .linked_array_list => {},
+                        else => return error.UnexpectedTag,
                     }
 
-                    const next_array_list_start = slot_ptr.slot.value;
                     const index = part.linked_array_list_get;
 
-                    try self.core.seekTo(next_array_list_start);
+                    try self.core.seekTo(slot_ptr.slot.value);
                     const reader = self.core.reader();
                     const header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
                     if (index >= header.size or index < -@as(i65, header.size)) {
@@ -841,18 +840,18 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     }
                 },
                 .hash_map_get => {
-                    if (slot_ptr.slot.tag == .none) {
-                        return error.KeyNotFound;
-                    } else if (slot_ptr.slot.tag != .hash_map) {
-                        return error.UnexpectedTag;
+                    switch (slot_ptr.slot.tag) {
+                        .none => return error.KeyNotFound,
+                        .hash_map => {},
+                        else => return error.UnexpectedTag,
                     }
-                    const next_map_start = slot_ptr.slot.value;
 
                     const next_slot_ptr = switch (part.hash_map_get) {
-                        .kv_pair => try self.readMapSlot(next_map_start, part.hash_map_get.kv_pair, 0, write_mode, is_top_level, .kv_pair),
-                        .key => try self.readMapSlot(next_map_start, part.hash_map_get.key, 0, write_mode, is_top_level, .key),
-                        .value => try self.readMapSlot(next_map_start, part.hash_map_get.value, 0, write_mode, is_top_level, .value),
+                        .kv_pair => try self.readMapSlot(slot_ptr.slot.value, part.hash_map_get.kv_pair, 0, write_mode, is_top_level, .kv_pair),
+                        .key => try self.readMapSlot(slot_ptr.slot.value, part.hash_map_get.key, 0, write_mode, is_top_level, .key),
+                        .value => try self.readMapSlot(slot_ptr.slot.value, part.hash_map_get.value, 0, write_mode, is_top_level, .value),
                     };
+
                     return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                 },
                 .hash_map_remove => {
@@ -860,14 +859,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                     if (path.len > 1) return error.PathPartMustBeAtEnd;
 
-                    if (slot_ptr.slot.tag == .none) {
-                        return error.KeyNotFound;
-                    } else if (slot_ptr.slot.tag != .hash_map) {
-                        return error.UnexpectedTag;
+                    switch (slot_ptr.slot.tag) {
+                        .none => return error.KeyNotFound,
+                        .hash_map => {},
+                        else => return error.UnexpectedTag,
                     }
-                    const next_map_start = slot_ptr.slot.value;
 
-                    _ = self.removeMapSlot(next_map_start, part.hash_map_remove, 0, is_top_level) catch |err| switch (err) {
+                    _ = self.removeMapSlot(slot_ptr.slot.value, part.hash_map_remove, 0, is_top_level) catch |err| switch (err) {
                         error.KeyNotFound => {
                             // if there was nothing to remove, return an empty
                             // slot pointer so caller can see nothing was removed
