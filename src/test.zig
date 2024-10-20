@@ -108,8 +108,6 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
 
                 try moment.put(hashBuffer("foo"), .{ .bytes = "foo" });
                 try moment.put(hashBuffer("bar"), .{ .bytes = "bar" });
-                try std.testing.expect(try moment.remove(hashBuffer("bar")));
-                try std.testing.expect(!try moment.remove(hashBuffer("doesn't exist")));
 
                 const fruits_cursor = try moment.putCursor(hashBuffer("fruits"));
                 const fruits = try DB.ArrayList(.read_write).init(fruits_cursor);
@@ -151,7 +149,7 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         try std.testing.expectEqualStrings("foo", foo_value);
 
         try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashBuffer("foo"))).?.tag);
-        try std.testing.expectEqual(null, try moment.getCursor(hashBuffer("bar")));
+        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashBuffer("bar"))).?.tag);
 
         // to get the "fruits" list, we get the cursor to it and
         // then pass it to the ArrayList.init method
@@ -203,6 +201,9 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
             pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
                 const moment = try DB.HashMap(.read_write).init(cursor.*);
 
+                try std.testing.expect(try moment.remove(hashBuffer("bar")));
+                try std.testing.expect(!try moment.remove(hashBuffer("doesn't exist")));
+
                 // this associates the hash of "fruits" with the actual string.
                 // hash maps use hashes directly as keys so they are not able
                 // to get the original bytes of the key unless we store it
@@ -231,6 +232,8 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
 
         const moment_cursor = (try history.getCursor(-1)).?;
         const moment = try DB.HashMap(.read_only).init(moment_cursor);
+
+        try std.testing.expectEqual(null, try moment.getCursor(hashBuffer("bar")));
 
         const fruits_key_cursor = (try moment.getKeyCursor(hashBuffer("fruits"))).?;
         const fruits_key_value = try fruits_key_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
@@ -278,7 +281,7 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         try std.testing.expectEqualStrings("foo", foo_value);
 
         try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashBuffer("foo"))).?.tag);
-        try std.testing.expectEqual(null, try moment.getCursor(hashBuffer("bar")));
+        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashBuffer("bar"))).?.tag);
 
         const fruits_cursor = (try moment.getCursor(hashBuffer("fruits"))).?;
         const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
@@ -340,7 +343,7 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         try std.testing.expectEqualStrings("foo", foo_value);
 
         try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashBuffer("foo"))).?.tag);
-        try std.testing.expectEqual(null, try moment.getCursor(hashBuffer("bar")));
+        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashBuffer("bar"))).?.tag);
 
         const fruits_cursor = (try moment.getCursor(hashBuffer("fruits"))).?;
         const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
