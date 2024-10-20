@@ -2109,7 +2109,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             const value_size = try core_reader.readInt(u64, .big);
 
                             if (value_size > max_size) {
-                                return error.MaxSizeExceeded;
+                                return error.StreamTooLong;
                             }
 
                             const value = try allocator.alloc(u8, value_size);
@@ -2123,7 +2123,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             const value_size = std.mem.indexOfScalar(u8, &bytes, 0) orelse byteSizeOf(u64);
 
                             if (value_size > max_size) {
-                                return error.MaxSizeExceeded;
+                                return error.StreamTooLong;
                             }
 
                             const value = try allocator.alloc(u8, value_size);
@@ -2143,17 +2143,24 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         .bytes => {
                             try self.db.core.seekTo(self.slot_ptr.slot.value);
                             const value_size = try core_reader.readInt(u64, .big);
-                            const size = @min(buffer.len, value_size);
 
-                            try core_reader.readNoEof(buffer[0..size]);
-                            return buffer[0..size];
+                            if (value_size > buffer.len) {
+                                return error.StreamTooLong;
+                            }
+
+                            try core_reader.readNoEof(buffer[0..value_size]);
+                            return buffer[0..value_size];
                         },
                         .short_bytes => {
                             const bytes = std.mem.toBytes(std.mem.nativeTo(u64, self.slot_ptr.slot.value, .big));
                             const value_size = std.mem.indexOfScalar(u8, &bytes, 0) orelse byteSizeOf(u64);
-                            const size = @min(buffer.len, value_size);
-                            @memcpy(buffer[0..size], bytes[0..size]);
-                            return buffer[0..size];
+
+                            if (value_size > buffer.len) {
+                                return error.StreamTooLong;
+                            }
+
+                            @memcpy(buffer[0..value_size], bytes[0..value_size]);
+                            return buffer[0..value_size];
                         },
                         else => return error.UnexpectedTag,
                     }
