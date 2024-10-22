@@ -2469,6 +2469,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     };
                 }
 
+                pub fn readOnly(self: HashMap(.read_write)) HashMap(.read_only) {
+                    return .{ .cursor = self.cursor.readOnly() };
+                }
+
                 pub fn iterator(self: HashMap(write_mode)) !Cursor(write_mode).Iter {
                     return try self.cursor.iterator();
                 }
@@ -2553,6 +2557,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     };
                 }
 
+                pub fn readOnly(self: ArrayList(.read_write)) ArrayList(.read_only) {
+                    return .{ .cursor = self.cursor.readOnly() };
+                }
+
                 pub fn count(self: ArrayList(write_mode)) !u64 {
                     return try self.cursor.count();
                 }
@@ -2632,6 +2640,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                             .cursor = try cursor.writePath(void, &.{.linked_array_list_init}),
                         },
                     };
+                }
+
+                pub fn readOnly(self: LinkedArrayList(.read_write)) LinkedArrayList(.read_only) {
+                    return .{ .cursor = self.cursor.readOnly() };
                 }
 
                 pub fn count(self: LinkedArrayList(write_mode)) !u64 {
