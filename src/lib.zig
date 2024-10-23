@@ -2462,11 +2462,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                 pub fn init(cursor: Database(db_kind, Hash).Cursor(write_mode)) !HashMap(write_mode) {
                     return switch (write_mode) {
-                        .read_only => .{
-                            .cursor = .{
-                                .slot_ptr = cursor.slot_ptr,
-                                .db = cursor.db,
-                            },
+                        .read_only => switch (cursor.slot_ptr.slot.tag) {
+                            .none, .hash_map => .{ .cursor = cursor },
+                            else => error.UnexpectedTag,
                         },
                         .read_write => .{
                             .cursor = try cursor.writePath(void, &.{.hash_map_init}),
@@ -2550,11 +2548,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                 pub fn init(cursor: Database(db_kind, Hash).Cursor(write_mode)) !ArrayList(write_mode) {
                     return switch (write_mode) {
-                        .read_only => .{
-                            .cursor = .{
-                                .slot_ptr = cursor.slot_ptr,
-                                .db = cursor.db,
-                            },
+                        .read_only => switch (cursor.slot_ptr.slot.tag) {
+                            .none, .array_list => .{ .cursor = cursor },
+                            else => error.UnexpectedTag,
                         },
                         .read_write => .{
                             .cursor = try cursor.writePath(void, &.{.array_list_init}),
@@ -2635,11 +2631,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
 
                 pub fn init(cursor: Database(db_kind, Hash).Cursor(write_mode)) !LinkedArrayList(write_mode) {
                     return switch (write_mode) {
-                        .read_only => .{
-                            .cursor = .{
-                                .slot_ptr = cursor.slot_ptr,
-                                .db = cursor.db,
-                            },
+                        .read_only => switch (cursor.slot_ptr.slot.tag) {
+                            .none, .linked_array_list => .{ .cursor = cursor },
+                            else => error.UnexpectedTag,
                         },
                         .read_write => .{
                             .cursor = try cursor.writePath(void, &.{.linked_array_list_init}),
