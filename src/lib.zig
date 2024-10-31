@@ -5,6 +5,7 @@
 //! gonna leeroy jenkins our way through this.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 fn byteSizeOf(T: type) u16 {
     return @bitSizeOf(T) / 8;
@@ -454,15 +455,22 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
             switch (db_kind) {
                 .memory => self.core.buffer.shrinkAndFree(tx_end),
                 .file => {
-                    // try writing a single byte at the end of the file to test
-                    // if the file is open for writing. we have to do this because
-                    // setEndPos panics if the file isn't open for writing...
-                    try self.core.seekFromEnd(0);
-                    self.core.file.writer().writeByte(0) catch |err| switch (err) {
-                        error.NotOpenForWriting => return,
+                    if (.windows != builtin.os.tag) {
+                        // for some reason, calling `setEndPos` on a read-only file
+                        // panics on non-windows systems, so we have to first try
+                        // writing a single byte at the end of the file to test
+                        // if the file is open for writing.
+                        try self.core.seekFromEnd(0);
+                        self.core.file.writer().writeByte(0) catch |err| switch (err) {
+                            error.NotOpenForWriting => return,
+                            else => return err,
+                        };
+                    }
+
+                    self.core.file.setEndPos(tx_end) catch |err| switch (err) {
+                        error.AccessDenied => return,
                         else => return err,
                     };
-                    try self.core.file.setEndPos(tx_end);
                 },
             }
         }
