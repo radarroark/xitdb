@@ -9,7 +9,7 @@ What is this for? I don't know, really. Help me figure that out. In theory it ca
 
 ```zig
 // create db file
-const file = try std.fs.cwd().createFile("main.db", .{ .exclusive = true, .lock = .exclusive, .read = true });
+const file = try std.fs.cwd().createFile("main.db", .{ .read = true });
 defer file.close();
 
 // init the db

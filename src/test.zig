@@ -16,7 +16,7 @@ test "high level api" {
         try std.fs.cwd().deleteFile("main.db");
     } else |_| {}
 
-    const file = try std.fs.cwd().createFile("main.db", .{ .exclusive = true, .lock = .exclusive, .read = true });
+    const file = try std.fs.cwd().createFile("main.db", .{ .read = true });
     defer {
         file.close();
         std.fs.cwd().deleteFile("main.db") catch {};
@@ -36,7 +36,7 @@ test "low level api" {
         try std.fs.cwd().deleteFile("main.db");
     } else |_| {}
 
-    const file = try std.fs.cwd().createFile("main.db", .{ .exclusive = true, .lock = .exclusive, .read = true });
+    const file = try std.fs.cwd().createFile("main.db", .{ .read = true });
     defer {
         file.close();
         std.fs.cwd().deleteFile("main.db") catch {};
