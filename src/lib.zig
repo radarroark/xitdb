@@ -670,7 +670,34 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 .linked_array_list_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
-                    if (is_top_level) return error.RootTypeMustBeArrayList;
+                    if (is_top_level) {
+                        const writer = self.core.writer();
+
+                        // if the top level linked array list hasn't been initialized
+                        if (self.header.tag == .none) {
+                            // write the array list header
+                            try self.core.seekTo(DATABASE_START);
+                            const array_list_ptr = DATABASE_START + byteSizeOf(LinkedArrayListHeader);
+                            try writer.writeInt(LinkedArrayListHeaderInt, @bitCast(LinkedArrayListHeader{
+                                .shift = 0,
+                                .ptr = array_list_ptr,
+                                .size = 0,
+                            }), .big);
+
+                            // write the first block
+                            const array_list_index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
+                            try writer.writeAll(&array_list_index_block);
+
+                            // update db header
+                            try self.core.seekTo(0);
+                            self.header.tag = .linked_array_list;
+                            try writer.writeInt(DatabaseHeaderInt, @bitCast(self.header), .big);
+                        }
+
+                        var next_slot_ptr = slot_ptr;
+                        next_slot_ptr.slot.tag = .linked_array_list;
+                        return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
+                    }
 
                     const position = slot_ptr.position orelse return error.CursorNotWriteable;
 
@@ -807,7 +834,25 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                 .hash_map_init => {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
-                    if (is_top_level) return error.RootTypeMustBeArrayList;
+                    if (is_top_level) {
+                        const writer = self.core.writer();
+
+                        // if the top level hash map hasn't been initialized
+                        if (self.header.tag == .none) {
+                            // write the first block
+                            const map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
+                            try writer.writeAll(&map_index_block);
+
+                            // update db header
+                            try self.core.seekTo(0);
+                            self.header.tag = .hash_map;
+                            try writer.writeInt(DatabaseHeaderInt, @bitCast(self.header), .big);
+                        }
+
+                        var next_slot_ptr = slot_ptr;
+                        next_slot_ptr.slot.tag = .hash_map;
+                        return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
+                    }
 
                     const position = slot_ptr.position orelse return error.CursorNotWriteable;
 

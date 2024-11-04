@@ -16,8 +16,8 @@ defer file.close();
 const DB = xitdb.Database(.file, Hash);
 var db = try DB.init(allocator, .{ .file = file });
 
-// the top-level data structure *must* be an ArrayList,
-// because each transaction is stored as an item in this list
+// to get the benefits of immutability, the top-level data structure
+// must be an ArrayList, so each transaction is stored as an item in it
 const history = try DB.ArrayList(.read_write).init(db.rootCursor());
 
 // this is how a transaction is executed. we call history.appendContext,

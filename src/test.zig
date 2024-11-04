@@ -44,6 +44,43 @@ test "low level api" {
     try testLowLevelApi(allocator, .file, .{ .file = file });
 }
 
+test "not using arraylist at the top level" {
+    // normally an arraylist makes the most sense at the top level,
+    // but this test just ensures we can use other data structures
+    // at the top level. in theory a top-level hash map might make
+    // sense if we're using xitdb as a format to send data over a
+    // network. in that case, immutability isn't important because
+    // the data is just created and immediately sent over the wire.
+
+    const allocator = std.testing.allocator;
+
+    // hash map
+    {
+        var buffer = std.ArrayList(u8).init(allocator);
+        defer buffer.deinit();
+
+        const DB = xitdb.Database(.memory, Hash);
+        var db = try DB.init(allocator, .{ .buffer = &buffer, .max_size = 50000 });
+
+        const map = try DB.HashMap(.read_write).init(db.rootCursor());
+        try map.put(hashBuffer("foo"), .{ .bytes = "foo" });
+        try map.put(hashBuffer("bar"), .{ .bytes = "bar" });
+    }
+
+    // linked array list
+    {
+        var buffer = std.ArrayList(u8).init(allocator);
+        defer buffer.deinit();
+
+        const DB = xitdb.Database(.memory, Hash);
+        var db = try DB.init(allocator, .{ .buffer = &buffer, .max_size = 50000 });
+
+        const list = try DB.LinkedArrayList(.read_write).init(db.rootCursor());
+        try list.append(.{ .bytes = "foo" });
+        try list.append(.{ .bytes = "bar" });
+    }
+}
+
 test "low level memory operations" {
     const allocator = std.testing.allocator;
 
@@ -92,8 +129,8 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
     var db = try DB.init(allocator, init_opts);
 
     {
-        // the top-level data structure *must* be an ArrayList,
-        // because each transaction is stored as an item in this list
+        // to get the benefits of immutability, the top-level data structure
+        // must be an ArrayList, so each transaction is stored as an item in it
         const history = try DB.ArrayList(.read_write).init(db.rootCursor());
 
         // this is how a transaction is executed. we call history.appendContext,
