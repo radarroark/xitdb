@@ -946,7 +946,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .{ .ctx = Ctx{ .allocator = allocator } },
             }) catch |err| switch (err) {
                 error.CancelTransaction => {},
-                else => return err,
+                else => |e| return e,
             };
 
             // read foo

@@ -463,13 +463,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         try self.core.seekFromEnd(0);
                         self.core.file.writer().writeByte(0) catch |err| switch (err) {
                             error.NotOpenForWriting => return,
-                            else => return err,
+                            else => |e| return e,
                         };
                     }
 
                     self.core.file.setEndPos(tx_end) catch |err| switch (err) {
                         error.AccessDenied => return,
-                        else => return err,
+                        else => |e| return e,
                     };
                 },
             }
@@ -1397,7 +1397,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     shift += 1;
                     break :blk try self.readLinkedArrayListSlot(ptr, key, shift, write_mode, is_top_level);
                 },
-                else => return err,
+                else => |e| return e,
             };
 
             // newly-appended slots must have full set to true
@@ -1974,7 +1974,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         const core_reader = self.parent.db.core.reader();
                         const buf_slice = core_reader.readUntilDelimiter(buf[0..@min(buf.len, self.size - self.relative_position)], delimiter) catch |err| switch (err) {
                             error.StreamTooLong => return error.EndOfStream,
-                            else => return err,
+                            else => |e| return e,
                         };
                         self.relative_position += buf_slice.len;
                         self.relative_position += 1; // for the delimiter
@@ -1987,7 +1987,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         const core_reader = self.parent.db.core.reader();
                         const buf_slice = core_reader.readUntilDelimiterAlloc(allocator, delimiter, @min(max_size, self.size - self.relative_position)) catch |err| switch (err) {
                             error.StreamTooLong => return error.EndOfStream,
-                            else => return err,
+                            else => |e| return e,
                         };
                         self.relative_position += buf_slice.len;
                         self.relative_position += 1; // for the delimiter
@@ -2105,7 +2105,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     const slot_ptr = self.db.readSlotPointer(.read_only, Ctx, path, self.slot_ptr) catch |err| {
                         switch (err) {
                             error.KeyNotFound => return null,
-                            else => return err,
+                            else => |e| return e,
                         }
                     };
                     return .{
@@ -2118,7 +2118,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                     const slot_ptr = self.db.readSlotPointer(.read_only, Ctx, path, self.slot_ptr) catch |err| {
                         switch (err) {
                             error.KeyNotFound => return null,
-                            else => return err,
+                            else => |e| return e,
                         }
                     };
                     if (slot_ptr.slot.tag != .none or slot_ptr.slot.full) {
@@ -2588,7 +2588,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime Hash: type) type {
                         .{ .hash_map_remove = hash },
                     }) catch |err| switch (err) {
                         error.KeyNotFound => return false,
-                        else => return err,
+                        else => |e| return e,
                     };
                     return true;
                 }
