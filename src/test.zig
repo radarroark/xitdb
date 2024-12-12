@@ -63,8 +63,8 @@ test "not using arraylist at the top level" {
         var db = try DB.init(allocator, .{ .buffer = &buffer, .max_size = 50000 });
 
         const map = try DB.HashMap(.read_write).init(db.rootCursor());
-        try map.put(hashBuffer("foo"), .{ .bytes = "foo" });
-        try map.put(hashBuffer("bar"), .{ .bytes = "bar" });
+        try map.put(hashInt("foo"), .{ .bytes = "foo" });
+        try map.put(hashInt("bar"), .{ .bytes = "bar" });
     }
 
     // linked array list
@@ -115,7 +115,7 @@ test "validate tag" {
     try std.testing.expectEqual(error.InvalidEnumTag, invalid.tag.validate());
 }
 
-fn hashBuffer(buffer: []const u8) HashInt {
+fn hashInt(buffer: []const u8) HashInt {
     var hash = [_]u8{0} ** (@bitSizeOf(HashInt) / 8);
     var h = std.crypto.hash.Sha1.init(.{});
     h.update(buffer);
@@ -143,29 +143,29 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
             pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
                 const moment = try DB.HashMap(.read_write).init(cursor.*);
 
-                try moment.put(hashBuffer("foo"), .{ .bytes = "foo" });
-                try moment.put(hashBuffer("bar"), .{ .bytes = "bar" });
+                try moment.put(hashInt("foo"), .{ .bytes = "foo" });
+                try moment.put(hashInt("bar"), .{ .bytes = "bar" });
 
-                const fruits_cursor = try moment.putCursor(hashBuffer("fruits"));
+                const fruits_cursor = try moment.putCursor(hashInt("fruits"));
                 const fruits = try DB.ArrayList(.read_write).init(fruits_cursor);
                 try fruits.append(.{ .bytes = "apple" });
                 try fruits.append(.{ .bytes = "pear" });
                 try fruits.append(.{ .bytes = "grape" });
 
-                const people_cursor = try moment.putCursor(hashBuffer("people"));
+                const people_cursor = try moment.putCursor(hashInt("people"));
                 const people = try DB.ArrayList(.read_write).init(people_cursor);
 
                 const alice_cursor = try people.appendCursor();
                 const alice = try DB.HashMap(.read_write).init(alice_cursor);
-                try alice.put(hashBuffer("name"), .{ .bytes = "Alice" });
-                try alice.put(hashBuffer("age"), .{ .uint = 25 });
+                try alice.put(hashInt("name"), .{ .bytes = "Alice" });
+                try alice.put(hashInt("age"), .{ .uint = 25 });
 
                 const bob_cursor = try people.appendCursor();
                 const bob = try DB.HashMap(.read_write).init(bob_cursor);
-                try bob.put(hashBuffer("name"), .{ .bytes = "Bob" });
-                try bob.put(hashBuffer("age"), .{ .uint = 42 });
+                try bob.put(hashInt("name"), .{ .bytes = "Bob" });
+                try bob.put(hashInt("age"), .{ .uint = 42 });
 
-                const todos_cursor = try moment.putCursor(hashBuffer("todos"));
+                const todos_cursor = try moment.putCursor(hashInt("todos"));
                 const todos = try DB.LinkedArrayList(.read_write).init(todos_cursor);
                 try todos.append(.{ .bytes = "Pay the bills" });
                 try todos.append(.{ .bytes = "Get an oil change" });
@@ -180,17 +180,17 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
 
         // we can read the value of "foo" from the map by getting
         // the cursor to "foo" and then calling readBytesAlloc on it
-        const foo_cursor = (try moment.getCursor(hashBuffer("foo"))).?;
+        const foo_cursor = (try moment.getCursor(hashInt("foo"))).?;
         const foo_value = try foo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(foo_value);
         try std.testing.expectEqualStrings("foo", foo_value);
 
-        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashBuffer("foo"))).?.tag);
-        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashBuffer("bar"))).?.tag);
+        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashInt("foo"))).?.tag);
+        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashInt("bar"))).?.tag);
 
         // to get the "fruits" list, we get the cursor to it and
         // then pass it to the ArrayList.init method
-        const fruits_cursor = (try moment.getCursor(hashBuffer("fruits"))).?;
+        const fruits_cursor = (try moment.getCursor(hashInt("fruits"))).?;
         const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
         try std.testing.expectEqual(3, try fruits.count());
 
@@ -200,16 +200,16 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         defer allocator.free(apple_value);
         try std.testing.expectEqualStrings("apple", apple_value);
 
-        const people_cursor = (try moment.getCursor(hashBuffer("people"))).?;
+        const people_cursor = (try moment.getCursor(hashInt("people"))).?;
         const people = try DB.ArrayList(.read_only).init(people_cursor);
         try std.testing.expectEqual(2, try people.count());
 
         const alice_cursor = (try people.getCursor(0)).?;
         const alice = try DB.HashMap(.read_only).init(alice_cursor);
-        const alice_age_cursor = (try alice.getCursor(hashBuffer("age"))).?;
+        const alice_age_cursor = (try alice.getCursor(hashInt("age"))).?;
         try std.testing.expectEqual(25, try alice_age_cursor.readUint());
 
-        const todos_cursor = (try moment.getCursor(hashBuffer("todos"))).?;
+        const todos_cursor = (try moment.getCursor(hashInt("todos"))).?;
         const todos = try DB.LinkedArrayList(.read_only).init(todos_cursor);
         try std.testing.expectEqual(2, try todos.count());
 
@@ -238,28 +238,28 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
             pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
                 const moment = try DB.HashMap(.read_write).init(cursor.*);
 
-                try std.testing.expect(try moment.remove(hashBuffer("bar")));
-                try std.testing.expect(!try moment.remove(hashBuffer("doesn't exist")));
+                try std.testing.expect(try moment.remove(hashInt("bar")));
+                try std.testing.expect(!try moment.remove(hashInt("doesn't exist")));
 
                 // this associates the hash of "fruits" with the actual string.
                 // hash maps use hashes directly as keys so they are not able
                 // to get the original bytes of the key unless we store it
                 // explicitly this way.
-                try moment.putKey(hashBuffer("fruits"), .{ .bytes = "fruits" });
+                try moment.putKey(hashInt("fruits"), .{ .bytes = "fruits" });
 
-                const fruits_cursor = try moment.putCursor(hashBuffer("fruits"));
+                const fruits_cursor = try moment.putCursor(hashInt("fruits"));
                 const fruits = try DB.ArrayList(.read_write).init(fruits_cursor);
                 try fruits.put(0, .{ .bytes = "lemon" });
                 try fruits.slice(2);
 
-                const people_cursor = try moment.putCursor(hashBuffer("people"));
+                const people_cursor = try moment.putCursor(hashInt("people"));
                 const people = try DB.ArrayList(.read_write).init(people_cursor);
 
                 const alice_cursor = try people.putCursor(0);
                 const alice = try DB.HashMap(.read_write).init(alice_cursor);
-                try alice.put(hashBuffer("age"), .{ .uint = 26 });
+                try alice.put(hashInt("age"), .{ .uint = 26 });
 
-                const todos_cursor = try moment.putCursor(hashBuffer("todos"));
+                const todos_cursor = try moment.putCursor(hashInt("todos"));
                 const todos = try DB.LinkedArrayList(.read_write).init(todos_cursor);
                 try todos.concat(todos_cursor.slot());
                 try todos.slice(1, 1);
@@ -270,14 +270,14 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         const moment_cursor = (try history.getCursor(-1)).?;
         const moment = try DB.HashMap(.read_only).init(moment_cursor);
 
-        try std.testing.expectEqual(null, try moment.getCursor(hashBuffer("bar")));
+        try std.testing.expectEqual(null, try moment.getCursor(hashInt("bar")));
 
-        const fruits_key_cursor = (try moment.getKeyCursor(hashBuffer("fruits"))).?;
+        const fruits_key_cursor = (try moment.getKeyCursor(hashInt("fruits"))).?;
         const fruits_key_value = try fruits_key_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(fruits_key_value);
         try std.testing.expectEqualStrings("fruits", fruits_key_value);
 
-        const fruits_cursor = (try moment.getCursor(hashBuffer("fruits"))).?;
+        const fruits_cursor = (try moment.getCursor(hashInt("fruits"))).?;
         const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
         try std.testing.expectEqual(2, try fruits.count());
 
@@ -286,16 +286,16 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         defer allocator.free(lemon_value);
         try std.testing.expectEqualStrings("lemon", lemon_value);
 
-        const people_cursor = (try moment.getCursor(hashBuffer("people"))).?;
+        const people_cursor = (try moment.getCursor(hashInt("people"))).?;
         const people = try DB.ArrayList(.read_only).init(people_cursor);
         try std.testing.expectEqual(2, try people.count());
 
         const alice_cursor = (try people.getCursor(0)).?;
         const alice = try DB.HashMap(.read_only).init(alice_cursor);
-        const alice_age_cursor = (try alice.getCursor(hashBuffer("age"))).?;
+        const alice_age_cursor = (try alice.getCursor(hashInt("age"))).?;
         try std.testing.expectEqual(26, try alice_age_cursor.readUint());
 
-        const todos_cursor = (try moment.getCursor(hashBuffer("todos"))).?;
+        const todos_cursor = (try moment.getCursor(hashInt("todos"))).?;
         const todos = try DB.LinkedArrayList(.read_only).init(todos_cursor);
         try std.testing.expectEqual(1, try todos.count());
 
@@ -312,15 +312,15 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         const moment_cursor = (try history.getCursor(0)).?;
         const moment = try DB.HashMap(.read_only).init(moment_cursor);
 
-        const foo_cursor = (try moment.getCursor(hashBuffer("foo"))).?;
+        const foo_cursor = (try moment.getCursor(hashInt("foo"))).?;
         const foo_value = try foo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(foo_value);
         try std.testing.expectEqualStrings("foo", foo_value);
 
-        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashBuffer("foo"))).?.tag);
-        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashBuffer("bar"))).?.tag);
+        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashInt("foo"))).?.tag);
+        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashInt("bar"))).?.tag);
 
-        const fruits_cursor = (try moment.getCursor(hashBuffer("fruits"))).?;
+        const fruits_cursor = (try moment.getCursor(hashInt("fruits"))).?;
         const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
         try std.testing.expectEqual(3, try fruits.count());
 
@@ -329,16 +329,16 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         defer allocator.free(apple_value);
         try std.testing.expectEqualStrings("apple", apple_value);
 
-        const people_cursor = (try moment.getCursor(hashBuffer("people"))).?;
+        const people_cursor = (try moment.getCursor(hashInt("people"))).?;
         const people = try DB.ArrayList(.read_only).init(people_cursor);
         try std.testing.expectEqual(2, try people.count());
 
         const alice_cursor = (try people.getCursor(0)).?;
         const alice = try DB.HashMap(.read_only).init(alice_cursor);
-        const alice_age_cursor = (try alice.getCursor(hashBuffer("age"))).?;
+        const alice_age_cursor = (try alice.getCursor(hashInt("age"))).?;
         try std.testing.expectEqual(25, try alice_age_cursor.readUint());
 
-        const todos_cursor = (try moment.getCursor(hashBuffer("todos"))).?;
+        const todos_cursor = (try moment.getCursor(hashInt("todos"))).?;
         const todos = try DB.LinkedArrayList(.read_only).init(todos_cursor);
         try std.testing.expectEqual(2, try todos.count());
 
@@ -374,15 +374,15 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         const moment_cursor = (try history.getCursor(-1)).?;
         const moment = try DB.HashMap(.read_only).init(moment_cursor);
 
-        const foo_cursor = (try moment.getCursor(hashBuffer("foo"))).?;
+        const foo_cursor = (try moment.getCursor(hashInt("foo"))).?;
         const foo_value = try foo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(foo_value);
         try std.testing.expectEqualStrings("foo", foo_value);
 
-        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashBuffer("foo"))).?.tag);
-        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashBuffer("bar"))).?.tag);
+        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashInt("foo"))).?.tag);
+        try std.testing.expectEqual(.short_bytes, (try moment.getSlot(hashInt("bar"))).?.tag);
 
-        const fruits_cursor = (try moment.getCursor(hashBuffer("fruits"))).?;
+        const fruits_cursor = (try moment.getCursor(hashInt("fruits"))).?;
         const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
         try std.testing.expectEqual(3, try fruits.count());
 
@@ -391,16 +391,16 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         defer allocator.free(apple_value);
         try std.testing.expectEqualStrings("apple", apple_value);
 
-        const people_cursor = (try moment.getCursor(hashBuffer("people"))).?;
+        const people_cursor = (try moment.getCursor(hashInt("people"))).?;
         const people = try DB.ArrayList(.read_only).init(people_cursor);
         try std.testing.expectEqual(2, try people.count());
 
         const alice_cursor = (try people.getCursor(0)).?;
         const alice = try DB.HashMap(.read_only).init(alice_cursor);
-        const alice_age_cursor = (try alice.getCursor(hashBuffer("age"))).?;
+        const alice_age_cursor = (try alice.getCursor(hashInt("age"))).?;
         try std.testing.expectEqual(25, try alice_age_cursor.readUint());
 
-        const todos_cursor = (try moment.getCursor(hashBuffer("todos"))).?;
+        const todos_cursor = (try moment.getCursor(hashInt("todos"))).?;
         const todos = try DB.LinkedArrayList(.read_only).init(todos_cursor);
         try std.testing.expectEqual(2, try todos.count());
 
@@ -465,7 +465,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
                 const n = i * 2;
                 try values.append(n);
                 _ = try cursor.writePath(void, &.{
-                    .{ .hash_map_get = .{ .value = hashBuffer("even") } },
+                    .{ .hash_map_get = .{ .value = hashInt("even") } },
                     .linked_array_list_init,
                     .linked_array_list_append,
                     .{ .write = .{ .uint = n } },
@@ -474,10 +474,10 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
 
             // slice list
             const even_list_cursor = (try cursor.readPath(void, &.{
-                .{ .hash_map_get = .{ .value = hashBuffer("even") } },
+                .{ .hash_map_get = .{ .value = hashInt("even") } },
             })).?;
             var even_list_slice_cursor = try cursor.writePath(void, &.{
-                .{ .hash_map_get = .{ .value = hashBuffer("even-slice") } },
+                .{ .hash_map_get = .{ .value = hashInt("even-slice") } },
                 .{ .write = .{ .slot = even_list_cursor.slot_ptr.slot } },
                 .linked_array_list_init,
                 .{ .linked_array_list_slice = .{ .offset = slice_offset, .size = slice_size } },
@@ -486,7 +486,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
             // check all values in the new slice
             for (values.items[slice_offset .. slice_offset + slice_size], 0..) |val, i| {
                 const n = (try cursor.readPath(void, &.{
-                    .{ .hash_map_get = .{ .value = hashBuffer("even-slice") } },
+                    .{ .hash_map_get = .{ .value = hashInt("even-slice") } },
                     .{ .linked_array_list_get = i },
                 })).?.slot_ptr.slot.value;
                 try std.testing.expectEqual(val, n);
@@ -506,13 +506,13 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
 
             // there are no extra items
             try std.testing.expectEqual(null, try cursor.readPath(void, &.{
-                .{ .hash_map_get = .{ .value = hashBuffer("even-slice") } },
+                .{ .hash_map_get = .{ .value = hashInt("even-slice") } },
                 .{ .linked_array_list_get = slice_size },
             }));
 
             // concat the slice with itself
             _ = try cursor.writePath(void, &.{
-                .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
+                .{ .hash_map_get = .{ .value = hashInt("combo") } },
                 .{ .write = .{ .slot = even_list_slice_cursor.slot_ptr.slot } },
                 .linked_array_list_init,
                 .{ .linked_array_list_concat = .{ .list = even_list_slice_cursor.slot_ptr.slot } },
@@ -525,7 +525,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
             try combo_values.appendSlice(values.items[slice_offset .. slice_offset + slice_size]);
             for (combo_values.items, 0..) |val, i| {
                 const n = (try cursor.readPath(void, &.{
-                    .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
+                    .{ .hash_map_get = .{ .value = hashInt("combo") } },
                     .{ .linked_array_list_get = i },
                 })).?.slot_ptr.slot.value;
                 try std.testing.expectEqual(val, n);
@@ -533,7 +533,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
 
             // append to the slice
             _ = try cursor.writePath(void, &.{
-                .{ .hash_map_get = .{ .value = hashBuffer("even-slice") } },
+                .{ .hash_map_get = .{ .value = hashInt("even-slice") } },
                 .linked_array_list_init,
                 .linked_array_list_append,
                 .{ .write = .{ .uint = 3 } },
@@ -541,7 +541,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
 
             // read the new value from the slice
             try std.testing.expectEqual(3, (try cursor.readPath(void, &.{
-                .{ .hash_map_get = .{ .value = hashBuffer("even-slice") } },
+                .{ .hash_map_get = .{ .value = hashInt("even-slice") } },
                 .{ .linked_array_list_get = -1 },
             })).?.slot_ptr.slot.value);
         }
@@ -571,14 +571,14 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
             pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, HashInt).Cursor(.read_write)) !void {
                 // create even list
                 _ = try cursor.writePath(void, &.{
-                    .{ .hash_map_get = .{ .value = hashBuffer("even") } },
+                    .{ .hash_map_get = .{ .value = hashInt("even") } },
                     .linked_array_list_init,
                 });
                 for (0..list_a_size) |i| {
                     const n = i * 2;
                     try self.values.append(n);
                     _ = try cursor.writePath(void, &.{
-                        .{ .hash_map_get = .{ .value = hashBuffer("even") } },
+                        .{ .hash_map_get = .{ .value = hashInt("even") } },
                         .linked_array_list_init,
                         .linked_array_list_append,
                         .{ .write = .{ .uint = n } },
@@ -587,14 +587,14 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
 
                 // create odd list
                 _ = try cursor.writePath(void, &.{
-                    .{ .hash_map_get = .{ .value = hashBuffer("odd") } },
+                    .{ .hash_map_get = .{ .value = hashInt("odd") } },
                     .linked_array_list_init,
                 });
                 for (0..list_b_size) |i| {
                     const n = (i * 2) + 1;
                     try self.values.append(n);
                     _ = try cursor.writePath(void, &.{
-                        .{ .hash_map_get = .{ .value = hashBuffer("odd") } },
+                        .{ .hash_map_get = .{ .value = hashInt("odd") } },
                         .linked_array_list_init,
                         .linked_array_list_append,
                         .{ .write = .{ .uint = n } },
@@ -619,17 +619,17 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
             pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, HashInt).Cursor(.read_write)) !void {
                 // get even list
                 const even_list_cursor = (try cursor.readPath(void, &.{
-                    .{ .hash_map_get = .{ .value = hashBuffer("even") } },
+                    .{ .hash_map_get = .{ .value = hashInt("even") } },
                 })).?;
 
                 // get odd list
                 const odd_list_cursor = (try cursor.readPath(void, &.{
-                    .{ .hash_map_get = .{ .value = hashBuffer("odd") } },
+                    .{ .hash_map_get = .{ .value = hashInt("odd") } },
                 })).?;
 
                 // concat the lists
                 const combo_list_cursor = try cursor.writePath(void, &.{
-                    .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
+                    .{ .hash_map_get = .{ .value = hashInt("combo") } },
                     .{ .write = .{ .slot = even_list_cursor.slot_ptr.slot } },
                     .linked_array_list_init,
                     .{ .linked_array_list_concat = .{ .list = odd_list_cursor.slot_ptr.slot } },
@@ -638,7 +638,7 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
                 // check all values in the new list
                 for (self.values.items, 0..) |val, i| {
                     const n = (try cursor.readPath(void, &.{
-                        .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
+                        .{ .hash_map_get = .{ .value = hashInt("combo") } },
                         .{ .linked_array_list_get = i },
                     })).?.slot_ptr.slot.value;
                     try std.testing.expectEqual(val, n);
@@ -658,7 +658,7 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
 
                 // there are no extra items
                 try std.testing.expectEqual(null, try cursor.readPath(void, &.{
-                    .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
+                    .{ .hash_map_get = .{ .value = hashInt("combo") } },
                     .{ .linked_array_list_get = self.values.items.len },
                 }));
             }
@@ -722,7 +722,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         var root_cursor = db.rootCursor();
 
         // write foo -> bar with a writer
-        const foo_key = hashBuffer("foo");
+        const foo_key = hashInt("foo");
         {
             const Ctx = struct {
                 pub fn run(_: @This(), cursor: *xitdb.Database(db_kind, HashInt).Cursor(.read_write)) !void {
@@ -849,7 +849,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         }
 
         // write bar -> longstring
-        const bar_key = hashBuffer("bar");
+        const bar_key = hashInt("bar");
         {
             var bar_cursor = try root_cursor.writePath(void, &.{
                 .array_list_init,
@@ -942,7 +942,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
                 .hash_map_init,
-                .{ .hash_map_get = .{ .value = hashBuffer("foo") } },
+                .{ .hash_map_get = .{ .value = hashInt("foo") } },
                 .{ .ctx = Ctx{ .allocator = allocator } },
             }) catch |err| switch (err) {
                 error.CancelTransaction => {},
@@ -984,7 +984,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
             .hash_map_init,
-            .{ .hash_map_get = .{ .value = hashBuffer("bar") } },
+            .{ .hash_map_get = .{ .value = hashInt("bar") } },
             .{ .write = .{ .bytes = "bar" } },
         })).slot_ptr.slot;
 
@@ -1015,7 +1015,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         try std.testing.expectEqualStrings("baz", baz_value2);
 
         // key not found
-        const not_found_key = hashBuffer("this doesn't exist");
+        const not_found_key = hashInt("this doesn't exist");
         try std.testing.expectEqual(null, try root_cursor.readPath(void, &.{
             .{ .array_list_get = -1 },
             .{ .hash_map_get = .{ .value = not_found_key } },
@@ -1023,7 +1023,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
 
         // write key that conflicts with foo the first two bytes
         const small_conflict_mask: u64 = 0b1111_1111;
-        const small_conflict_key = (hashBuffer("small conflict") & ~small_conflict_mask) | (foo_key & small_conflict_mask);
+        const small_conflict_key = (hashInt("small conflict") & ~small_conflict_mask) | (foo_key & small_conflict_mask);
         _ = try root_cursor.writePath(void, &.{
             .array_list_init,
             .array_list_append,
@@ -1035,7 +1035,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
 
         // write key that conflicts with foo the first four bytes
         const conflict_mask: u64 = 0b1111_1111_1111_1111;
-        const conflict_key = (hashBuffer("conflict") & ~conflict_mask) | (foo_key & conflict_mask);
+        const conflict_key = (hashInt("conflict") & ~conflict_mask) | (foo_key & conflict_mask);
         _ = try root_cursor.writePath(void, &.{
             .array_list_init,
             .array_list_append,
@@ -1267,7 +1267,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
             .hash_map_init,
-            .{ .hash_map_remove = hashBuffer("doesn't exist") },
+            .{ .hash_map_remove = hashInt("doesn't exist") },
         }));
 
         // make sure foo doesn't exist anymore
@@ -1284,7 +1284,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
                 .hash_map_init,
-                .{ .hash_map_get = .{ .value = hashBuffer("fruits") } },
+                .{ .hash_map_get = .{ .value = hashInt("fruits") } },
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .bytes = "apple" } },
@@ -1293,7 +1293,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             // read apple
             const apple_cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = -1 },
-                .{ .hash_map_get = .{ .value = hashBuffer("fruits") } },
+                .{ .hash_map_get = .{ .value = hashInt("fruits") } },
                 .{ .array_list_get = -1 },
             })).?;
             const apple_value = try apple_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
@@ -1306,7 +1306,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
                 .hash_map_init,
-                .{ .hash_map_get = .{ .value = hashBuffer("fruits") } },
+                .{ .hash_map_get = .{ .value = hashInt("fruits") } },
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .bytes = "banana" } },
@@ -1315,7 +1315,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             // read banana
             const banana_cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = -1 },
-                .{ .hash_map_get = .{ .value = hashBuffer("fruits") } },
+                .{ .hash_map_get = .{ .value = hashInt("fruits") } },
                 .{ .array_list_get = -1 },
             })).?;
             const banana_value = try banana_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
@@ -1325,7 +1325,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             // can't read banana in older array_list
             try std.testing.expectEqual(null, try root_cursor.readPath(void, &.{
                 .{ .array_list_get = -2 },
-                .{ .hash_map_get = .{ .value = hashBuffer("fruits") } },
+                .{ .hash_map_get = .{ .value = hashInt("fruits") } },
                 .{ .array_list_get = 1 },
             }));
 
@@ -1335,7 +1335,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
                 .hash_map_init,
-                .{ .hash_map_get = .{ .value = hashBuffer("fruits") } },
+                .{ .hash_map_get = .{ .value = hashInt("fruits") } },
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .bytes = "pear" } },
@@ -1347,7 +1347,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
                 .hash_map_init,
-                .{ .hash_map_get = .{ .value = hashBuffer("fruits") } },
+                .{ .hash_map_get = .{ .value = hashInt("fruits") } },
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .bytes = "grape" } },
@@ -1356,7 +1356,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             // read pear
             const pear_cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = -1 },
-                .{ .hash_map_get = .{ .value = hashBuffer("fruits") } },
+                .{ .hash_map_get = .{ .value = hashInt("fruits") } },
                 .{ .array_list_get = -2 },
             })).?;
             const pear_value = try pear_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
@@ -1366,7 +1366,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             // read grape
             const grape_cursor = (try root_cursor.readPath(void, &.{
                 .{ .array_list_get = -1 },
-                .{ .hash_map_get = .{ .value = hashBuffer("fruits") } },
+                .{ .hash_map_get = .{ .value = hashInt("fruits") } },
                 .{ .array_list_get = -1 },
             })).?;
             const grape_value = try grape_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
@@ -1381,7 +1381,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         var db = try xitdb.Database(db_kind, HashInt).init(allocator, init_opts);
         var root_cursor = db.rootCursor();
 
-        const wat_key = hashBuffer("wat");
+        const wat_key = hashInt("wat");
         for (0..xitdb.SLOT_COUNT + 1) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
@@ -1631,7 +1631,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         for (0..10) |i| {
             const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
             defer allocator.free(value);
-            const wat_key = hashBuffer(value);
+            const wat_key = hashInt(value);
             _ = try root_cursor.writePath(void, &.{
                 .array_list_init,
                 .array_list_append,
@@ -1651,7 +1651,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         }
 
         // add foo
-        const foo_key = hashBuffer("foo");
+        const foo_key = hashInt("foo");
         _ = try root_cursor.writePath(void, &.{
             .array_list_init,
             .array_list_append,
@@ -1675,7 +1675,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
             .hash_map_init,
-            .{ .hash_map_remove = hashBuffer("wat0") },
+            .{ .hash_map_remove = hashInt("wat0") },
         });
 
         // iterate over hash_map
@@ -1695,7 +1695,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             } else {
                 const value = try kv_pair.value_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
                 defer allocator.free(value);
-                try std.testing.expectEqual(kv_pair.hash, hashBuffer(value));
+                try std.testing.expectEqual(kv_pair.hash, hashInt(value));
             }
             i += 1;
         }
@@ -1738,7 +1738,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                     const n = i * 2;
                     try values.append(n);
                     _ = try cursor.writePath(void, &.{
-                        .{ .hash_map_get = .{ .value = hashBuffer("even") } },
+                        .{ .hash_map_get = .{ .value = hashInt("even") } },
                         .linked_array_list_init,
                         .linked_array_list_append,
                         .{ .write = .{ .uint = n } },
@@ -1747,13 +1747,13 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
 
                 // get list slot
                 const even_list_cursor = (try cursor.readPath(void, &.{
-                    .{ .hash_map_get = .{ .value = hashBuffer("even") } },
+                    .{ .hash_map_get = .{ .value = hashInt("even") } },
                 })).?;
                 try std.testing.expectEqual(xitdb.SLOT_COUNT + 1, even_list_cursor.count());
 
                 // iterate over list
                 var inner_cursor = (try cursor.readPath(void, &.{
-                    .{ .hash_map_get = .{ .value = hashBuffer("even") } },
+                    .{ .hash_map_get = .{ .value = hashInt("even") } },
                 })).?;
                 var iter = try inner_cursor.iterator();
                 defer iter.deinit();
@@ -1768,7 +1768,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 // will create a gap, causing a root overflow
                 // before a normal array list would've.
                 var combo_list_cursor = try cursor.writePath(void, &.{
-                    .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
+                    .{ .hash_map_get = .{ .value = hashInt("combo") } },
                     .{ .write = .{ .slot = even_list_cursor.slot_ptr.slot } },
                     .linked_array_list_init,
                 });
@@ -1780,21 +1780,21 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
 
                 // append to the new list
                 _ = try cursor.writePath(void, &.{
-                    .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
+                    .{ .hash_map_get = .{ .value = hashInt("combo") } },
                     .linked_array_list_append,
                     .{ .write = .{ .uint = 3 } },
                 });
 
                 // read the new value from the list
                 try std.testing.expectEqual(3, (try cursor.readPath(void, &.{
-                    .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
+                    .{ .hash_map_get = .{ .value = hashInt("combo") } },
                     .{ .linked_array_list_get = -1 },
                 })).?.slot_ptr.slot.value);
 
                 // append more to the new list
                 for (0..500) |_| {
                     _ = try cursor.writePath(void, &.{
-                        .{ .hash_map_get = .{ .value = hashBuffer("combo") } },
+                        .{ .hash_map_get = .{ .value = hashInt("combo") } },
                         .linked_array_list_append,
                         .{ .write = .{ .uint = 1 } },
                     });

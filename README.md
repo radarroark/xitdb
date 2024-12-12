@@ -41,27 +41,27 @@ const Ctx = struct {
     pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
         const moment = try DB.HashMap(.read_write).init(cursor.*);
 
-        try moment.put(hashBuffer("foo"), .{ .bytes = "foo" });
-        try moment.put(hashBuffer("bar"), .{ .bytes = "bar" });
+        try moment.put(hashInt("foo"), .{ .bytes = "foo" });
+        try moment.put(hashInt("bar"), .{ .bytes = "bar" });
 
-        const fruits_cursor = try moment.putCursor(hashBuffer("fruits"));
+        const fruits_cursor = try moment.putCursor(hashInt("fruits"));
         const fruits = try DB.ArrayList(.read_write).init(fruits_cursor);
         try fruits.append(.{ .bytes = "apple" });
         try fruits.append(.{ .bytes = "pear" });
         try fruits.append(.{ .bytes = "grape" });
 
-        const people_cursor = try moment.putCursor(hashBuffer("people"));
+        const people_cursor = try moment.putCursor(hashInt("people"));
         const people = try DB.ArrayList(.read_write).init(people_cursor);
 
         const alice_cursor = try people.appendCursor();
         const alice = try DB.HashMap(.read_write).init(alice_cursor);
-        try alice.put(hashBuffer("name"), .{ .bytes = "Alice" });
-        try alice.put(hashBuffer("age"), .{ .uint = 25 });
+        try alice.put(hashInt("name"), .{ .bytes = "Alice" });
+        try alice.put(hashInt("age"), .{ .uint = 25 });
 
         const bob_cursor = try people.appendCursor();
         const bob = try DB.HashMap(.read_write).init(bob_cursor);
-        try bob.put(hashBuffer("name"), .{ .bytes = "Bob" });
-        try bob.put(hashBuffer("age"), .{ .uint = 42 });
+        try bob.put(hashInt("name"), .{ .bytes = "Bob" });
+        try bob.put(hashInt("age"), .{ .uint = 42 });
     }
 };
 try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
@@ -73,14 +73,14 @@ const moment = try DB.HashMap(.read_only).init(moment_cursor);
 
 // we can read the value of "foo" from the map by getting
 // the cursor to "foo" and then calling readBytesAlloc on it
-const foo_cursor = (try moment.getCursor(hashBuffer("foo"))).?;
+const foo_cursor = (try moment.getCursor(hashInt("foo"))).?;
 const foo_value = try foo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
 defer allocator.free(foo_value);
 try std.testing.expectEqualStrings("foo", foo_value);
 
 // to get the "fruits" list, we get the cursor to it and
 // then pass it to the ArrayList init method
-const fruits_cursor = (try moment.getCursor(hashBuffer("fruits"))).?;
+const fruits_cursor = (try moment.getCursor(hashInt("fruits"))).?;
 const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
 
 // now we can get the first item from the fruits list and read it
