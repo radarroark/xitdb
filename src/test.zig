@@ -715,6 +715,19 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         }
     }
 
+    // save hash id in header
+    {
+        var init_opts_with_hash_id = init_opts;
+        init_opts_with_hash_id.hash_id = xitdb.HashId.fromBytes("sha1");
+
+        // make empty database
+        try clearStorage(db_kind, init_opts);
+        const db = try xitdb.Database(db_kind, HashInt).init(allocator, init_opts_with_hash_id);
+
+        try std.testing.expectEqual(xitdb.HashId.fromBytes("sha1").id, db.header.hash_id.id);
+        try std.testing.expectEqualStrings("sha1", &db.header.hash_id.toBytes());
+    }
+
     // array_list of hash_maps
     {
         try clearStorage(db_kind, init_opts);

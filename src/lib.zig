@@ -55,8 +55,13 @@ pub const Tag = enum(u7) {
 const DATABASE_START = byteSizeOf(DatabaseHeader);
 const MAGIC_NUMBER: u24 = std.mem.nativeTo(u24, std.mem.bytesToValue(u24, "xit"), .big);
 pub const VERSION: u16 = 0;
-const DatabaseHeaderInt = u64;
-const DatabaseHeader = packed struct {
+const DatabaseHeaderInt = u96;
+pub const DatabaseHeader = packed struct {
+    // id of the hash algorithm being used. xitdb never looks at
+    // this, because it never hashes anything directly, so it
+    // doesn't need to know the hash algorithm. it is only here
+    // for the sake of readers of the db.
+    hash_id: HashId = .{ .id = 0 },
     // the size in bytes of all hashes used by the database.
     hash_size: u16,
     // increment this number when the file format changes,
@@ -91,6 +96,17 @@ const DatabaseHeader = packed struct {
         if (self.version > VERSION) {
             return error.InvalidVersion;
         }
+    }
+};
+pub const HashId = packed struct(u32) {
+    id: u32,
+
+    pub fn fromBytes(hash_name: *const [4]u8) HashId {
+        return .{ .id = std.mem.nativeTo(u32, std.mem.bytesToValue(u32, hash_name), .big) };
+    }
+
+    pub fn toBytes(self: HashId) [4]u8 {
+        return std.mem.toBytes(std.mem.nativeTo(u32, self.id, .big));
     }
 };
 
@@ -345,10 +361,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 buffer: *std.ArrayList(u8),
                 max_size: ?u64 = null,
                 allow_truncation: bool = false,
+                hash_id: HashId = .{ .id = 0 },
             },
             .file => struct {
                 file: std.fs.File,
                 allow_truncation: bool = true,
+                hash_id: HashId = .{ .id = 0 },
             },
         };
 
@@ -368,7 +386,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     try self.core.seekTo(0);
                     if (self.core.buffer.items.len == 0) {
-                        self.header = try self.writeHeader(opts.allow_truncation);
+                        self.header = try self.writeHeader(opts.allow_truncation, opts.hash_id);
                     } else {
                         const reader = self.core.reader();
                         self.header = try DatabaseHeader.read(reader);
@@ -394,7 +412,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     try self.core.seekTo(0);
                     if (size == 0) {
-                        self.header = try self.writeHeader(opts.allow_truncation);
+                        self.header = try self.writeHeader(opts.allow_truncation, opts.hash_id);
                     } else {
                         const reader = self.core.reader();
                         self.header = try DatabaseHeader.read(reader);
@@ -419,9 +437,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
         // private
 
-        fn writeHeader(self: *Database(db_kind, HashInt), allow_truncation: bool) !DatabaseHeader {
+        fn writeHeader(self: *Database(db_kind, HashInt), allow_truncation: bool, hash_id: HashId) !DatabaseHeader {
             const writer = self.core.writer();
             const header = DatabaseHeader{
+                .hash_id = hash_id,
                 .hash_size = byteSizeOf(HashInt),
                 .allow_truncation = allow_truncation,
             };
