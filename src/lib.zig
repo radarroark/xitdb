@@ -2687,6 +2687,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         .{ .write = data },
                         .{ .ctx = ctx },
                     });
+                    // flush all writes from the transaction to disk
+                    if (db_kind == .file) {
+                        try self.cursor.db.core.file.sync();
+                    }
                 }
 
                 pub fn slice(self: ArrayList(.read_write), size: u64) !void {
