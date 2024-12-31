@@ -65,6 +65,20 @@ test "not using arraylist at the top level" {
         const map = try DB.HashMap(.read_write).init(db.rootCursor());
         try map.put(hashInt("foo"), .{ .bytes = "foo" });
         try map.put(hashInt("bar"), .{ .bytes = "bar" });
+
+        // init inner map
+        {
+            const inner_map_cursor = try map.putCursor(hashInt("inner-map"));
+            _ = try DB.HashMap(.read_write).init(inner_map_cursor);
+        }
+
+        // re-init inner map
+        // since the top-level type isn't an arraylist, there is no concept of
+        // a transaction, so this does not perform a copy of the root node
+        {
+            const inner_map_cursor = try map.putCursor(hashInt("inner-map"));
+            _ = try DB.HashMap(.read_write).init(inner_map_cursor);
+        }
     }
 
     // linked array list
