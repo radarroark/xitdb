@@ -81,7 +81,7 @@ test "not using arraylist at the top level" {
         }
     }
 
-    // linked array list
+    // linked array list is not currently allowed at the top level
     {
         var buffer = std.ArrayList(u8).init(allocator);
         defer buffer.deinit();
@@ -89,9 +89,7 @@ test "not using arraylist at the top level" {
         const DB = xitdb.Database(.memory, HashInt);
         var db = try DB.init(allocator, .{ .buffer = &buffer, .max_size = 50000 });
 
-        const list = try DB.LinkedArrayList(.read_write).init(db.rootCursor());
-        try list.append(.{ .bytes = "foo" });
-        try list.append(.{ .bytes = "bar" });
+        try std.testing.expectError(error.InvalidTopLevelType, DB.LinkedArrayList(.read_write).init(db.rootCursor()));
     }
 }
 
