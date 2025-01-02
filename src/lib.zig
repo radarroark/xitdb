@@ -1945,6 +1945,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
         // Cursor
 
+        pub fn KeyValuePairCursor(comptime write_mode: WriteMode) type {
+            return struct {
+                value_cursor: Cursor(write_mode),
+                key_cursor: Cursor(write_mode),
+                hash: HashInt,
+            };
+        }
+
         pub fn Cursor(comptime write_mode: WriteMode) type {
             return struct {
                 slot_ptr: SlotPointer,
@@ -2240,13 +2248,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     }
                 }
 
-                pub const KeyValuePairCursor = struct {
-                    value_cursor: Cursor(write_mode),
-                    key_cursor: Cursor(write_mode),
-                    hash: HashInt,
-                };
-
-                pub fn readKeyValuePair(self: Cursor(write_mode)) !KeyValuePairCursor {
+                pub fn readKeyValuePair(self: Cursor(write_mode)) !KeyValuePairCursor(write_mode) {
                     const core_reader = self.db.core.reader();
 
                     if (self.slot_ptr.slot.tag != .kv_pair) {
@@ -2571,6 +2573,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     return try self.cursor.readPathSlot(void, &.{
                         .{ .hash_map_get = .{ .key = hash } },
                     });
+                }
+
+                pub fn getKeyValuePair(self: HashMap(write_mode), hash: HashInt) !?KeyValuePairCursor(.read_only) {
+                    var cursor = (try self.cursor.readPath(void, &.{
+                        .{ .hash_map_get = .{ .kv_pair = hash } },
+                    })) orelse return null;
+                    return try cursor.readKeyValuePair();
                 }
 
                 pub fn put(self: HashMap(.read_write), hash: HashInt, data: WriteableData) !void {

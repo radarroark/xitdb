@@ -293,6 +293,11 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
         try std.testing.expectEqual(2, try fruits.count());
 
+        // you can get both the key and value cursor this way
+        const fruits_kv_cursor = (try moment.getKeyValuePair(hashInt("fruits"))).?;
+        try std.testing.expectEqual(.short_bytes, fruits_kv_cursor.key_cursor.slot_ptr.slot.tag);
+        try std.testing.expectEqual(.array_list, fruits_kv_cursor.value_cursor.slot_ptr.slot.tag);
+
         const lemon_cursor = (try fruits.getCursor(0)).?;
         const lemon_value = try lemon_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(lemon_value);
