@@ -1,5 +1,5 @@
 .{
-    .name = "xitdb",
+    .name = .xitdb,
     .version = "0.0.0",
     .dependencies = .{},
     .paths = .{
@@ -8,4 +8,5 @@
         "src",
         "LICENSE",
     },
+    .fingerprint = 0xb87b8ac1c6644110,
 }
