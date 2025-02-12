@@ -1437,6 +1437,56 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             try std.testing.expectEqualStrings(value, value2);
         }
 
+        // add more slots to cause a new index block to be created.
+        // a new index block will be created when i == 32 (the 33rd append).
+        // during that transaction, return an error so the transaction is
+        // cancelled, causing truncation to happen. this test ensures that
+        // the new index block is NOT truncated. this is prevented by updating
+        // the tx end slot from the last transaction with the file's current
+        // size. see `readArrayListSlot` for more.
+        if (db_kind == .file) {
+            std.debug.assert(init_opts.allow_truncation);
+
+            for (xitdb.SLOT_COUNT + 1..xitdb.SLOT_COUNT * 2 + 1) |i| {
+                const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
+                defer allocator.free(value);
+
+                const Ctx = struct {
+                    i: usize,
+                    pub fn run(self: @This(), _: *xitdb.Database(db_kind, HashInt).Cursor(.read_write)) !void {
+                        if (self.i == 32) {
+                            return error.Fail;
+                        }
+                    }
+                };
+                _ = root_cursor.writePath(Ctx, &.{
+                    .array_list_init,
+                    .array_list_append,
+                    .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+                    .hash_map_init,
+                    .{ .hash_map_get = .{ .value = wat_key } },
+                    .{ .write = .{ .bytes = value } },
+                    .{ .ctx = .{ .i = i } },
+                }) catch |err| switch (err) {
+                    error.Fail => break,
+                    else => |e| return e,
+                };
+            } else {
+                return error.ExpectedFail;
+            }
+
+            // try another append to make sure we still can.
+            // if truncation destroyed the index block, this would fail.
+            _ = try root_cursor.writePath(void, &.{
+                .array_list_init,
+                .array_list_append,
+                .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+                .hash_map_init,
+                .{ .hash_map_get = .{ .value = wat_key } },
+                .{ .write = .{ .bytes = "wat32" } },
+            });
+        }
+
         // slice so it contains exactly SLOT_COUNT,
         // so we have the old root again
         _ = try root_cursor.writePath(void, &.{

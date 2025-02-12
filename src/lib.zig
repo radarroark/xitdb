@@ -1306,6 +1306,21 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 var tx_end_block = [_]u8{0} ** TX_END_BLOCK_SIZE;
                                 try writer.writeAll(&tx_end_block);
                             }
+                            // if top level array list, update the last tx end slot with the
+                            // file's current size, to prevent any future truncation from deleting
+                            // the new index node we just created.
+                            if (is_top_level and self.header.allow_truncation) {
+                                const last_index = key - 1;
+                                const last_slot_ptr = try self.readSlotPointer(.read_only, void, &.{.{ .array_list_get = last_index }}, self.rootCursor().slot_ptr);
+                                const last_slot_pos = last_slot_ptr.position orelse return error.ExpectedSlotPosition;
+                                const last_slot_i = last_index % SLOT_COUNT;
+                                const last_index_block_pos = last_slot_pos - (last_slot_i * byteSizeOf(Slot));
+                                const last_tx_end_slot_pos = last_index_block_pos + INDEX_BLOCK_SIZE + (last_slot_i * byteSizeOf(u64));
+                                try self.core.seekFromEnd(0);
+                                const file_size = try self.core.getPos();
+                                try self.core.seekTo(last_tx_end_slot_pos);
+                                try writer.writeInt(u64, file_size, .big);
+                            }
                             try self.core.seekTo(slot_pos);
                             try writer.writeInt(SlotInt, @bitCast(Slot{ .value = next_index_pos, .tag = .index }), .big);
                             return try self.readArrayListSlot(next_index_pos, key, shift - 1, write_mode, is_top_level);
