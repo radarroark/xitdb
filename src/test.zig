@@ -1424,7 +1424,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         // the new index block is NOT truncated. this is prevented by updating
         // the file size in the header immediately after making a new index block.
         // see `readArrayListSlot` for more.
-        if (db_kind == .file) {
+        {
             for (xitdb.SLOT_COUNT + 1..xitdb.SLOT_COUNT * 2 + 1) |i| {
                 const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
                 defer allocator.free(value);

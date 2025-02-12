@@ -453,17 +453,17 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
             if (list_size == 0) return;
 
+            try self.core.seekTo(DATABASE_START + byteSizeOf(ArrayListHeader));
+            const core_reader = self.core.reader();
+            const header_file_size = try core_reader.readInt(u64, .big);
+
             try self.core.seekFromEnd(0);
             const file_size = try self.core.getPos();
 
-            try self.core.seekTo(DATABASE_START);
-            const core_reader = self.core.reader();
-            const header: TopLevelArrayListHeader = @bitCast(try core_reader.readInt(TopLevelArrayListHeaderInt, .big));
-
-            if (file_size == header.file_size) return;
+            if (file_size == header_file_size) return;
 
             switch (db_kind) {
-                .memory => self.core.buffer.shrinkAndFree(header.file_size),
+                .memory => self.core.buffer.shrinkAndFree(header_file_size),
                 .file => {
                     if (.windows != builtin.os.tag) {
                         // for some reason, calling `setEndPos` on a read-only file
@@ -477,7 +477,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         };
                     }
 
-                    self.core.file.setEndPos(header.file_size) catch |err| switch (err) {
+                    self.core.file.setEndPos(header_file_size) catch |err| switch (err) {
                         error.AccessDenied => return,
                         else => |e| return e,
                     };
