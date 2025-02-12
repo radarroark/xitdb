@@ -71,13 +71,8 @@ pub const DatabaseHeader = packed struct {
     // it starts as .none but will be changed to .array_list
     // once `array_list_init` is called for the first time.
     tag: Tag = .none,
-    // when true, and the top-level tag is array list, leaf nodes
-    // will include a "tx end block" immediately after them, which
-    // will track the size of the file/buffer at the end of the
-    // transaction. this allows it to be truncated when junk data
-    // is left over at the end of a failed transaction,
-    // or when `slice` is used on the top-level arraylist.
-    allow_truncation: bool,
+    // currently unused
+    padding: u1 = 0,
     // a value that allows for a quick sanity check when determining
     // if the file is a valid database. it also provides a quick
     // visual indicator that this is a xitdb file to anyone looking
@@ -365,12 +360,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             .memory => struct {
                 buffer: *std.ArrayList(u8),
                 max_size: ?u64 = null,
-                allow_truncation: bool = false,
                 hash_id: HashId = .{ .id = 0 },
             },
             .file => struct {
                 file: std.fs.File,
-                allow_truncation: bool = true,
                 hash_id: HashId = .{ .id = 0 },
             },
         };
@@ -391,7 +384,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     try self.core.seekTo(0);
                     if (self.core.buffer.items.len == 0) {
-                        self.header = try self.writeHeader(opts.allow_truncation, opts.hash_id);
+                        self.header = try self.writeHeader(opts.hash_id);
                     } else {
                         const reader = self.core.reader();
                         self.header = try DatabaseHeader.read(reader);
@@ -399,7 +392,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         if (self.header.hash_size != byteSizeOf(HashInt)) {
                             return error.InvalidHashSize;
                         }
-                        try self.truncateToTxEnd();
+                        try self.truncate();
                     }
 
                     return self;
@@ -417,7 +410,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     try self.core.seekTo(0);
                     if (size == 0) {
-                        self.header = try self.writeHeader(opts.allow_truncation, opts.hash_id);
+                        self.header = try self.writeHeader(opts.hash_id);
                     } else {
                         const reader = self.core.reader();
                         self.header = try DatabaseHeader.read(reader);
@@ -425,7 +418,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         if (self.header.hash_size != byteSizeOf(HashInt)) {
                             return error.InvalidHashSize;
                         }
-                        try self.truncateToTxEnd();
+                        try self.truncate();
                     }
 
                     return self;
@@ -442,19 +435,18 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
         // private
 
-        fn writeHeader(self: *Database(db_kind, HashInt), allow_truncation: bool, hash_id: HashId) !DatabaseHeader {
+        fn writeHeader(self: *Database(db_kind, HashInt), hash_id: HashId) !DatabaseHeader {
             const writer = self.core.writer();
             const header = DatabaseHeader{
                 .hash_id = hash_id,
                 .hash_size = byteSizeOf(HashInt),
-                .allow_truncation = allow_truncation,
             };
             try writer.writeInt(DatabaseHeaderInt, @bitCast(header), .big);
             return header;
         }
 
-        fn truncateToTxEnd(self: *Database(db_kind, HashInt)) !void {
-            if (self.header.tag != .array_list or !self.header.allow_truncation) return;
+        fn truncate(self: *Database(db_kind, HashInt)) !void {
+            if (self.header.tag != .array_list) return;
 
             const root_cursor = self.rootCursor();
             const list_size = try root_cursor.count();
@@ -647,8 +639,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     const writer = self.core.writer();
 
-                    if (is_top_level and self.header.allow_truncation) {
-                        // if top level array list, put the file size in the header
+                    // if top level array list, put the file size in the header
+                    if (is_top_level) {
                         try self.core.seekFromEnd(0);
                         const file_size = try self.core.getPos();
                         const header = TopLevelArrayListHeader{
@@ -979,7 +971,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         part.ctx.run(&next_cursor) catch |err| {
                             // since an error occurred, there may be inaccessible
                             // junk at the end of the db, so delete it if possible
-                            self.truncateToTxEnd() catch {};
+                            self.truncate() catch {};
                             return err;
                         };
                         return next_cursor.slot_ptr;
@@ -1298,7 +1290,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             try writer.writeAll(&index_block);
                             // if top level array list, update the file size in the list
                             // header to prevent truncation from destroying this block
-                            if (is_top_level and self.header.allow_truncation) {
+                            if (is_top_level) {
                                 try self.core.seekFromEnd(0);
                                 const file_size = try self.core.getPos();
                                 try self.core.seekTo(DATABASE_START + byteSizeOf(ArrayListHeader));

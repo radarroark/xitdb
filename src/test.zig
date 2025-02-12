@@ -9,7 +9,7 @@ test "high level api" {
 
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
-    try testHighLevelApi(allocator, .memory, .{ .buffer = &buffer, .max_size = 50000, .allow_truncation = true });
+    try testHighLevelApi(allocator, .memory, .{ .buffer = &buffer, .max_size = 50000 });
 
     if (std.fs.cwd().openFile("main.db", .{})) |file| {
         file.close();
@@ -971,13 +971,10 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             defer allocator.free(value);
             try std.testing.expectEqualStrings("baz", value);
 
-            // if truncation is allowed, verify that the db is
-            // properly truncated back to its original size after error
-            if (init_opts.allow_truncation) {
-                try db.core.seekFromEnd(0);
-                const size_after = try db.core.getPos();
-                try std.testing.expectEqual(size_before, size_after);
-            }
+            // verify that the db is properly truncated back to its original size after error
+            try db.core.seekFromEnd(0);
+            const size_after = try db.core.getPos();
+            try std.testing.expectEqual(size_before, size_after);
         }
 
         // read foo into stack-allocated buffer
@@ -1425,11 +1422,9 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         // during that transaction, return an error so the transaction is
         // cancelled, causing truncation to happen. this test ensures that
         // the new index block is NOT truncated. this is prevented by updating
-        // the tx end slot from the last transaction with the file's current
-        // size. see `readArrayListSlot` for more.
+        // the file size in the header immediately after making a new index block.
+        // see `readArrayListSlot` for more.
         if (db_kind == .file) {
-            std.debug.assert(init_opts.allow_truncation);
-
             for (xitdb.SLOT_COUNT + 1..xitdb.SLOT_COUNT * 2 + 1) |i| {
                 const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
                 defer allocator.free(value);
