@@ -270,12 +270,17 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         const HASH_SIZE = byteSizeOf(HashInt);
         const INDEX_BLOCK_SIZE = byteSizeOf(Slot) * SLOT_COUNT;
         const LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE = byteSizeOf(LinkedArrayListSlot) * SLOT_COUNT;
-        const TX_END_BLOCK_SIZE = byteSizeOf(u64) * SLOT_COUNT;
 
         const ArrayListHeaderInt = u128;
         const ArrayListHeader = packed struct {
             ptr: u64,
             size: u64,
+        };
+
+        const TopLevelArrayListHeaderInt = u192;
+        const TopLevelArrayListHeader = packed struct {
+            file_size: u64,
+            parent: ArrayListHeader,
         };
 
         const LinkedArrayListHeaderInt = u136;
@@ -459,20 +464,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             try self.core.seekFromEnd(0);
             const file_size = try self.core.getPos();
 
-            const last_index = list_size - 1;
-            const last_slot_ptr = try self.readSlotPointer(.read_only, void, &.{.{ .array_list_get = last_index }}, root_cursor.slot_ptr);
-            const last_slot_pos = last_slot_ptr.position orelse return error.ExpectedSlotPosition;
-            const last_slot_i = last_index % SLOT_COUNT;
-            const last_index_block_pos = last_slot_pos - (last_slot_i * byteSizeOf(Slot));
-            const last_tx_end_slot_pos = last_index_block_pos + INDEX_BLOCK_SIZE + (last_slot_i * byteSizeOf(u64));
+            try self.core.seekTo(DATABASE_START);
             const core_reader = self.core.reader();
-            try self.core.seekTo(last_tx_end_slot_pos);
-            const tx_end = try core_reader.readInt(u64, .big);
+            const header: TopLevelArrayListHeader = @bitCast(try core_reader.readInt(TopLevelArrayListHeaderInt, .big));
 
-            if (file_size == tx_end) return;
+            if (file_size == header.file_size) return;
 
             switch (db_kind) {
-                .memory => self.core.buffer.shrinkAndFree(tx_end),
+                .memory => self.core.buffer.shrinkAndFree(header.file_size),
                 .file => {
                     if (.windows != builtin.os.tag) {
                         // for some reason, calling `setEndPos` on a read-only file
@@ -486,7 +485,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         };
                     }
 
-                    self.core.file.setEndPos(tx_end) catch |err| switch (err) {
+                    self.core.file.setEndPos(header.file_size) catch |err| switch (err) {
                         error.AccessDenied => return,
                         else => |e| return e,
                     };
@@ -526,19 +525,18 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         if (self.header.tag == .none) {
                             // write the array list header
                             try self.core.seekTo(DATABASE_START);
-                            const array_list_ptr = DATABASE_START + byteSizeOf(ArrayListHeader);
-                            try writer.writeInt(ArrayListHeaderInt, @bitCast(ArrayListHeader{
-                                .ptr = array_list_ptr,
-                                .size = 0,
+                            const array_list_ptr = DATABASE_START + byteSizeOf(TopLevelArrayListHeader);
+                            try writer.writeInt(TopLevelArrayListHeaderInt, @bitCast(TopLevelArrayListHeader{
+                                .file_size = 0,
+                                .parent = .{
+                                    .ptr = array_list_ptr,
+                                    .size = 0,
+                                },
                             }), .big);
 
                             // write the first block
                             const index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                             try writer.writeAll(&index_block);
-                            if (self.header.allow_truncation) {
-                                const tx_end_block = [_]u8{0} ** TX_END_BLOCK_SIZE;
-                                try writer.writeAll(&tx_end_block);
-                            }
 
                             // update db header
                             try self.core.seekTo(0);
@@ -649,21 +647,23 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     const writer = self.core.writer();
 
-                    // if top level array list, put the file size in the tx end block
                     if (is_top_level and self.header.allow_truncation) {
-                        const last_slot_pos = append_result.slot_ptr.position orelse return error.ExpectedSlotPosition;
-                        const last_slot_i = (append_result.header.size - 1) % SLOT_COUNT;
-                        const last_index_block_pos = last_slot_pos - (last_slot_i * byteSizeOf(Slot));
-                        const last_tx_end_slot_pos = last_index_block_pos + INDEX_BLOCK_SIZE + (last_slot_i * byteSizeOf(u64));
+                        // if top level array list, put the file size in the header
                         try self.core.seekFromEnd(0);
                         const file_size = try self.core.getPos();
-                        try self.core.seekTo(last_tx_end_slot_pos);
-                        try writer.writeInt(u64, file_size, .big);
-                    }
+                        const header = TopLevelArrayListHeader{
+                            .file_size = file_size,
+                            .parent = append_result.header,
+                        };
 
-                    // update header
-                    try self.core.seekTo(next_array_list_start);
-                    try writer.writeInt(ArrayListHeaderInt, @bitCast(append_result.header), .big);
+                        // update header
+                        try self.core.seekTo(next_array_list_start);
+                        try writer.writeInt(TopLevelArrayListHeaderInt, @bitCast(header), .big);
+                    } else {
+                        // update header
+                        try self.core.seekTo(next_array_list_start);
+                        try writer.writeInt(ArrayListHeaderInt, @bitCast(append_result.header), .big);
+                    }
 
                     return final_slot_ptr;
                 },
@@ -681,11 +681,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const writer = self.core.writer();
                     try self.core.seekTo(next_array_list_start);
                     try writer.writeInt(ArrayListHeaderInt, @bitCast(slice_header), .big);
-
-                    // if top level array list, truncate file/buffer to tx end
-                    if (is_top_level) {
-                        try self.truncateToTxEnd();
-                    }
 
                     return final_slot_ptr;
                 },
@@ -1301,24 +1296,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             const next_index_pos = try self.core.getPos();
                             var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                             try writer.writeAll(&index_block);
-                            // if top level array list, put a "tx end block" after leaf node
-                            if (is_top_level and self.header.allow_truncation and shift == 1) {
-                                var tx_end_block = [_]u8{0} ** TX_END_BLOCK_SIZE;
-                                try writer.writeAll(&tx_end_block);
-                            }
-                            // if top level array list, update the last tx end slot with the
-                            // file's current size, to prevent any future truncation from deleting
-                            // the new index node we just created.
+                            // if top level array list, update the file size in the list
+                            // header to prevent truncation from destroying this block
                             if (is_top_level and self.header.allow_truncation) {
-                                const last_index = key - 1;
-                                const last_slot_ptr = try self.readSlotPointer(.read_only, void, &.{.{ .array_list_get = last_index }}, self.rootCursor().slot_ptr);
-                                const last_slot_pos = last_slot_ptr.position orelse return error.ExpectedSlotPosition;
-                                const last_slot_i = last_index % SLOT_COUNT;
-                                const last_index_block_pos = last_slot_pos - (last_slot_i * byteSizeOf(Slot));
-                                const last_tx_end_slot_pos = last_index_block_pos + INDEX_BLOCK_SIZE + (last_slot_i * byteSizeOf(u64));
                                 try self.core.seekFromEnd(0);
                                 const file_size = try self.core.getPos();
-                                try self.core.seekTo(last_tx_end_slot_pos);
+                                try self.core.seekTo(DATABASE_START + byteSizeOf(ArrayListHeader));
                                 try writer.writeInt(u64, file_size, .big);
                             }
                             try self.core.seekTo(slot_pos);

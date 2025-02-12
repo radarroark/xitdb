@@ -365,28 +365,11 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         try std.testing.expectEqualStrings("Pay the bills", todo_value);
     }
 
-    // the db size is reduced after slicing the top level arraylist
+    // remove the last transaction with `slice`
     {
         const history = try DB.ArrayList(.read_write).init(db.rootCursor());
 
-        try db.core.seekFromEnd(0);
-        const size_before = try db.core.getPos();
-
-        // truncate the last transaction
         try history.slice(1);
-
-        try db.core.seekFromEnd(0);
-        const size_after = try db.core.getPos();
-
-        // the size of the file/buffer has shrunk
-        // because slicing the top-level array list
-        // causes the file/buffer to be truncated
-        try std.testing.expect(size_after < size_before);
-    }
-
-    // the last transaction is now the first one
-    {
-        const history = try DB.ArrayList(.read_write).init(db.rootCursor());
 
         const moment_cursor = (try history.getCursor(-1)).?;
         const moment = try DB.HashMap(.read_only).init(moment_cursor);
