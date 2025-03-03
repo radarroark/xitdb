@@ -1,11 +1,17 @@
-xitdb is an embedded, immutable database written in Zig.
+xitdb is an immutable database written in Zig.
 
 * Each transaction efficiently creates a new "copy" of the database, and past copies can still be read from.
 * It supports writing to a file as well as purely in-memory use.
 * No query engine of any kind. You just write data structures (primarily an `ArrayList` and `HashMap`) that can be nested arbitrarily.
-* No dependencies besides the Zig standard library.
+* No dependencies besides the Zig standard library (currently requires Zig 0.14.0).
 
-What is this for? I don't know, really. Help me figure that out. In theory it can work in the same use cases as SQLite, I suppose. The high-level API below will probably change a lot. There is a lower-level API that I'm not even going to mention here; see the tests if you're curious.
+This database was originally made for the [xit version control system](https://github.com/radarroark/xit), but I bet it has a lot of potential for other projects. The combination of being immutable and having an API similar to in-memory data structures is pretty powerful. Consider using it instead of SQLite for your Zig projects: it's simpler, it's pure Zig, and it creates no impedence mismatch with your program the way SQL databases do.
+
+Usually, you want to use a top-level `ArrayList` like in the example below, because that allows you to store a reference to each copy of the database (which I call a "moment"). This is how it supports transactions, despite not having any rollback journal or write-ahead log. It's an append-only database, so the data you are writing is invisible to any reader until the very last step, when the top-level list's header is updated.
+
+You can also use a top-level `HashMap`, which is useful for ephemeral databases where immutability or transaction safety isn't necessary. Since xitdb supports in-memory databases, you could use it as an over-the-wire serialization format. Much like "Cap'n Proto", xitdb has no encoding/decoding step: you just give the buffer to xitdb and it can immediately read from it.
+
+The `HashMap` and `ArrayList` are based on the hash array mapped trie from Phil Bagwell. There is also a `LinkedArrayList`, which is based on the RRB tree, also from Phil Bagwell. It is similar to an `ArrayList`, except it can be efficiently sliced and concatenated. At some point I'll get off my lazy ass and provide better documentation, but for now, check out the example below and the tests.
 
 ```zig
 // create db file
@@ -25,7 +31,8 @@ const history = try DB.ArrayList(.read_write).init(db.rootCursor());
 // object. the context object has a method that will run before the
 // transaction has completed. this method is where we can write
 // changes to the db. if any error happens in it, the transaction
-// will not complete and the db will be unaffected.
+// will not complete, the data added to the file will be truncated,
+// and the db will be unaffected.
 //
 // after this transaction, the db will look like this if represented
 // as JSON (in reality the format is binary):
