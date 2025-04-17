@@ -457,6 +457,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             const core_reader = self.core.reader();
             const header_file_size = try core_reader.readInt(u64, .big);
 
+            if (header_file_size == 0) return;
+
             try self.core.seekFromEnd(0);
             const file_size = try self.core.getPos();
 
