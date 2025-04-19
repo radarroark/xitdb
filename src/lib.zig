@@ -827,6 +827,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         // if the top level hash map hasn't been initialized
                         if (self.header.tag == .none) {
                             // write the first block
+                            try self.core.seekTo(DATABASE_START);
                             const map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                             try writer.writeAll(&map_index_block);
 
