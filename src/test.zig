@@ -820,7 +820,9 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             };
             _ = try root_cursor.writePath(Ctx, &.{
                 .array_list_init,
-                .{ .array_list_get = -1 },
+                .array_list_append,
+                .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+                .hash_map_init,
                 .{ .hash_map_get = .{ .value = foo_key } },
                 .{ .ctx = Ctx{ .allocator = allocator } },
             });
