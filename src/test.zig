@@ -132,7 +132,7 @@ fn hashInt(buffer: []const u8) HashInt {
     var h = std.crypto.hash.Sha1.init(.{});
     h.update(buffer);
     h.final(&hash);
-    return std.mem.bytesToValue(HashInt, &hash);
+    return std.mem.readInt(HashInt, &hash, .big);
 }
 
 fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, HashInt).InitOpts) !void {
