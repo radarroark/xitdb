@@ -2343,6 +2343,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             try self.db.core.seekTo(self.slot_ptr.slot.value);
                             return try core_reader.readInt(u64, .big);
                         },
+                        .short_bytes => {
+                            const bytes = std.mem.toBytes(std.mem.nativeTo(u64, self.slot_ptr.slot.value, .big));
+                            return std.mem.indexOfScalar(u8, &bytes, 0) orelse byteSizeOf(u64);
+                        },
                         else => return error.UnexpectedTag,
                     }
                 }

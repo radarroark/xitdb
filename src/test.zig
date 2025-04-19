@@ -927,6 +927,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
 
             // the slot tag is .short_bytes because the byte array is <= 8 bytes long
             try std.testing.expectEqual(.short_bytes, bar_cursor.slot().tag);
+            try std.testing.expectEqual(8, try bar_cursor.count());
 
             // make sure .short_bytes can be read with a reader
             var bar_reader = try bar_cursor.reader();
