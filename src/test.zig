@@ -958,7 +958,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
                 .hash_map_init,
-                .{ .hash_map_get = .{ .value = hashInt("foo") } },
+                .{ .hash_map_get = .{ .value = foo_key } },
                 .{ .ctx = Ctx{ .allocator = allocator } },
             }) catch |err| switch (err) {
                 error.CancelTransaction => {},
@@ -997,7 +997,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
             .hash_map_init,
-            .{ .hash_map_get = .{ .value = hashInt("bar") } },
+            .{ .hash_map_get = .{ .value = bar_key } },
             .{ .write = .{ .bytes = "bar" } },
         })).slot_ptr.slot;
 
