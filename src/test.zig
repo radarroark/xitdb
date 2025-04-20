@@ -991,7 +991,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             try std.testing.expectEqualStrings("baz", bar_buffer_value);
         }
 
-        // write bar and get pointer to it
+        // write bar and get slot to it
         const bar_slot = (try root_cursor.writePath(void, &.{
             .array_list_init,
             .array_list_append,
@@ -1001,7 +1001,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .{ .write = .{ .bytes = "bar" } },
         })).slot_ptr.slot;
 
-        // overwrite foo -> bar using the bar pointer
+        // overwrite foo -> bar using the bar slot
         _ = try root_cursor.writePath(void, &.{
             .array_list_init,
             .array_list_append,
@@ -1010,22 +1010,22 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .{ .hash_map_get = .{ .value = foo_key } },
             .{ .write = .{ .slot = bar_slot } },
         });
-        const baz_cursor = (try root_cursor.readPath(void, &.{
+        const bar_cursor = (try root_cursor.readPath(void, &.{
             .{ .array_list_get = -1 },
+            .{ .hash_map_get = .{ .value = foo_key } },
+        })).?;
+        const bar_value = try bar_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+        defer allocator.free(bar_value);
+        try std.testing.expectEqualStrings("bar", bar_value);
+
+        // can still read the old value
+        const baz_cursor = (try root_cursor.readPath(void, &.{
+            .{ .array_list_get = -2 },
             .{ .hash_map_get = .{ .value = foo_key } },
         })).?;
         const baz_value = try baz_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(baz_value);
-        try std.testing.expectEqualStrings("bar", baz_value);
-
-        // can still read the old value
-        const baz_cursor2 = (try root_cursor.readPath(void, &.{
-            .{ .array_list_get = -2 },
-            .{ .hash_map_get = .{ .value = foo_key } },
-        })).?;
-        const baz_value2 = try baz_cursor2.readBytesAlloc(allocator, MAX_READ_BYTES);
-        defer allocator.free(baz_value2);
-        try std.testing.expectEqualStrings("baz", baz_value2);
+        try std.testing.expectEqualStrings("baz", baz_value);
 
         // key not found
         const not_found_key = hashInt("this doesn't exist");
