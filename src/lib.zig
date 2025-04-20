@@ -2174,7 +2174,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     return @bitCast(self.slot_ptr.slot.value);
                 }
 
-                pub fn readBytesAlloc(self: Cursor(write_mode), allocator: std.mem.Allocator, max_size: usize) ![]u8 {
+                pub fn readBytesAlloc(self: Cursor(write_mode), allocator: std.mem.Allocator, max_size_maybe: ?usize) ![]u8 {
                     const core_reader = self.db.core.reader();
 
                     switch (self.slot_ptr.slot.tag) {
@@ -2183,8 +2183,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             try self.db.core.seekTo(self.slot_ptr.slot.value);
                             const value_size = try core_reader.readInt(u64, .big);
 
-                            if (value_size > max_size) {
-                                return error.StreamTooLong;
+                            if (max_size_maybe) |max_size| {
+                                if (value_size > max_size) {
+                                    return error.StreamTooLong;
+                                }
                             }
 
                             const value = try allocator.alloc(u8, value_size);
@@ -2197,8 +2199,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             const bytes = std.mem.toBytes(std.mem.nativeTo(u64, self.slot_ptr.slot.value, .big));
                             const value_size = std.mem.indexOfScalar(u8, &bytes, 0) orelse byteSizeOf(u64);
 
-                            if (value_size > max_size) {
-                                return error.StreamTooLong;
+                            if (max_size_maybe) |max_size| {
+                                if (value_size > max_size) {
+                                    return error.StreamTooLong;
+                                }
                             }
 
                             const value = try allocator.alloc(u8, value_size);

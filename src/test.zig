@@ -970,7 +970,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .{ .array_list_get = -1 },
                 .{ .hash_map_get = .{ .value = foo_key } },
             })).?;
-            const value = try value_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+            const value = try value_cursor.readBytesAlloc(allocator, null); // make sure null max size works
             defer allocator.free(value);
             try std.testing.expectEqualStrings("baz", value);
 
