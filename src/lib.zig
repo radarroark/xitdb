@@ -2414,7 +2414,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         self.core.stack.deinit();
                     }
 
-                    pub fn next(self: *Iter) !?Cursor(.read_only) {
+                    pub fn next(self: *Iter) !?Cursor(write_mode) {
                         switch (self.cursor.slot_ptr.slot.tag) {
                             .none => return null,
                             .array_list => {
@@ -2461,7 +2461,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         return stack;
                     }
 
-                    fn nextInternal(self: *Iter, comptime block_size: u64) !?Cursor(.read_only) {
+                    fn nextInternal(self: *Iter, comptime block_size: u64) !?Cursor(write_mode) {
                         while (self.core.stack.items.len > 0) {
                             const level = self.core.stack.items[self.core.stack.items.len - 1];
                             if (level.index == level.block.len) {

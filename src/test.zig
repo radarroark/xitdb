@@ -1659,7 +1659,9 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         // their flag is set, rather than skipping over them.
         {
             _ = try root_cursor.writePath(void, &.{
+                .array_list_init,
                 .{ .array_list_get = -1 },
+                .array_list_init,
                 .{ .array_list_get = 0 },
                 .{ .write = .{ .slot = null } },
             });
@@ -1740,27 +1742,49 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         });
 
         // iterate over hash_map
-        var inner_cursor = (try root_cursor.readPath(void, &.{
-            .{ .array_list_get = -1 },
-        })).?;
-        var iter = try inner_cursor.iterator();
-        defer iter.deinit();
-        var i: u64 = 0;
-        while (try iter.next()) |kv_pair_cursor| {
-            const kv_pair = try kv_pair_cursor.readKeyValuePair();
-            if (kv_pair.hash == foo_key) {
-                const key = try kv_pair.key_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
-                defer allocator.free(key);
-                try std.testing.expectEqualStrings("foo", key);
-                try std.testing.expectEqual(42, kv_pair.value_cursor.slot_ptr.slot.value);
-            } else {
-                const value = try kv_pair.value_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
-                defer allocator.free(value);
-                try std.testing.expectEqual(kv_pair.hash, hashInt(value));
+        {
+            var inner_cursor = (try root_cursor.readPath(void, &.{
+                .{ .array_list_get = -1 },
+            })).?;
+            var iter = try inner_cursor.iterator();
+            defer iter.deinit();
+            var i: u64 = 0;
+            while (try iter.next()) |kv_pair_cursor| {
+                const kv_pair = try kv_pair_cursor.readKeyValuePair();
+                if (kv_pair.hash == foo_key) {
+                    const key = try kv_pair.key_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+                    defer allocator.free(key);
+                    try std.testing.expectEqualStrings("foo", key);
+                    try std.testing.expectEqual(42, kv_pair.value_cursor.slot_ptr.slot.value);
+                } else {
+                    const value = try kv_pair.value_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+                    defer allocator.free(value);
+                    try std.testing.expectEqual(kv_pair.hash, hashInt(value));
+                }
+                i += 1;
             }
-            i += 1;
+            try std.testing.expectEqual(10, i);
         }
-        try std.testing.expectEqual(10, i);
+
+        // iterate over hash_map with writeable cursor
+        {
+            var inner_cursor = try root_cursor.writePath(void, &.{
+                .array_list_init,
+                .array_list_append,
+                .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+            });
+            var iter = try inner_cursor.iterator();
+            defer iter.deinit();
+            var i: u64 = 0;
+            while (try iter.next()) |kv_pair_cursor| {
+                var kv_pair = try kv_pair_cursor.readKeyValuePair();
+                if (kv_pair.hash == foo_key) {
+                    try kv_pair.key_cursor.write(.{ .bytes = "bar" });
+                }
+                i += 1;
+            }
+            try std.testing.expectEqual(10, i);
+        }
     }
 
     {
