@@ -1343,8 +1343,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 return error.ArrayListSliceOutOfBounds;
             }
 
-            const prev_shift: u6 = @intCast(if (header.size - 1 < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, header.size - 1));
-            const next_shift: u6 = @intCast(if (size - 1 < SLOT_COUNT) 0 else std.math.log(u64, SLOT_COUNT, size - 1));
+            const prev_shift: u6 = @intCast(if (header.size < SLOT_COUNT + 1) 0 else std.math.log(u64, SLOT_COUNT, header.size - 1));
+            const next_shift: u6 = @intCast(if (size < SLOT_COUNT + 1) 0 else std.math.log(u64, SLOT_COUNT, size - 1));
 
             if (prev_shift == next_shift) {
                 // the root node doesn't need to change
