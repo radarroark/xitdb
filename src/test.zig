@@ -863,81 +863,6 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             });
         }
 
-        // write bar -> longstring
-        const bar_key = hashInt("bar");
-        {
-            var bar_cursor = try root_cursor.writePath(void, &.{
-                .array_list_init,
-                .array_list_append,
-                .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
-                .{ .hash_map_get = .{ .value = bar_key } },
-            });
-            try bar_cursor.write(.{ .bytes = "longstring" });
-
-            // the slot tag is .bytes because the byte array is > 8 bytes long
-            try std.testing.expectEqual(.bytes, bar_cursor.slot().tag);
-
-            // writing again returns the same slot
-            {
-                var next_bar_cursor = try root_cursor.writePath(void, &.{
-                    .array_list_init,
-                    .array_list_append,
-                    .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                    .hash_map_init,
-                    .{ .hash_map_get = .{ .value = bar_key } },
-                });
-                try next_bar_cursor.writeIfEmpty(.{ .bytes = "longstring" });
-                try std.testing.expectEqual(bar_cursor.slot_ptr.slot, next_bar_cursor.slot_ptr.slot);
-            }
-
-            // writing with write returns a new slot
-            {
-                var next_bar_cursor = try root_cursor.writePath(void, &.{
-                    .array_list_init,
-                    .array_list_append,
-                    .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                    .hash_map_init,
-                    .{ .hash_map_get = .{ .value = bar_key } },
-                });
-                try next_bar_cursor.write(.{ .bytes = "longstring" });
-                try std.testing.expect(!bar_cursor.slot_ptr.slot.eql(next_bar_cursor.slot_ptr.slot));
-            }
-        }
-
-        // read bar
-        {
-            const foo_cursor = (try root_cursor.readPath(void, &.{
-                .{ .array_list_get = -1 },
-                .{ .hash_map_get = .{ .value = bar_key } },
-            })).?;
-            const foo_value = try foo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
-            defer allocator.free(foo_value);
-            try std.testing.expectEqualStrings("longstring", foo_value);
-        }
-
-        // write bar -> shortstr
-        {
-            var bar_cursor = try root_cursor.writePath(void, &.{
-                .array_list_init,
-                .array_list_append,
-                .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
-                .{ .hash_map_get = .{ .value = bar_key } },
-            });
-            try bar_cursor.write(.{ .bytes = "shortstr" });
-
-            // the slot tag is .short_bytes because the byte array is <= 8 bytes long
-            try std.testing.expectEqual(.short_bytes, bar_cursor.slot().tag);
-            try std.testing.expectEqual(8, try bar_cursor.count());
-
-            // make sure .short_bytes can be read with a reader
-            var bar_reader = try bar_cursor.reader();
-            const bar_value = try bar_reader.readAllAlloc(allocator, MAX_READ_BYTES);
-            defer allocator.free(bar_value);
-            try std.testing.expectEqualStrings("shortstr", bar_value);
-        }
-
         // if error in ctx, db doesn't change
         {
             try db.core.seekFromEnd(0);
@@ -978,6 +903,180 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             try db.core.seekFromEnd(0);
             const size_after = try db.core.getPos();
             try std.testing.expectEqual(size_before, size_after);
+        }
+
+        // write bar -> longstring
+        const bar_key = hashInt("bar");
+        {
+            var bar_cursor = try root_cursor.writePath(void, &.{
+                .array_list_init,
+                .array_list_append,
+                .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+                .hash_map_init,
+                .{ .hash_map_get = .{ .value = bar_key } },
+            });
+            try bar_cursor.write(.{ .bytes = "longstring" });
+
+            // the slot tag is .bytes because the byte array is > 8 bytes long
+            try std.testing.expectEqual(.bytes, bar_cursor.slot().tag);
+
+            // writing again returns the same slot
+            {
+                var next_bar_cursor = try root_cursor.writePath(void, &.{
+                    .array_list_init,
+                    .array_list_append,
+                    .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+                    .hash_map_init,
+                    .{ .hash_map_get = .{ .value = bar_key } },
+                });
+                try next_bar_cursor.writeIfEmpty(.{ .bytes = "longstring" });
+                try std.testing.expectEqual(bar_cursor.slot_ptr.slot, next_bar_cursor.slot_ptr.slot);
+            }
+
+            // writing with write returns a new slot
+            {
+                var next_bar_cursor = try root_cursor.writePath(void, &.{
+                    .array_list_init,
+                    .array_list_append,
+                    .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+                    .hash_map_init,
+                    .{ .hash_map_get = .{ .value = bar_key } },
+                });
+                try next_bar_cursor.write(.{ .bytes = "longstring" });
+                try std.testing.expect(!bar_cursor.slot_ptr.slot.eql(next_bar_cursor.slot_ptr.slot));
+            }
+
+            // read bar
+            {
+                const read_bar_cursor = (try root_cursor.readPath(void, &.{
+                    .{ .array_list_get = -1 },
+                    .{ .hash_map_get = .{ .value = bar_key } },
+                })).?;
+                const bar_value = try read_bar_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
+                defer allocator.free(bar_value);
+                try std.testing.expectEqualStrings("longstring", bar_value);
+            }
+        }
+
+        // write bar -> shortstr
+        {
+            var bar_cursor = try root_cursor.writePath(void, &.{
+                .array_list_init,
+                .array_list_append,
+                .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+                .hash_map_init,
+                .{ .hash_map_get = .{ .value = bar_key } },
+            });
+            try bar_cursor.write(.{ .bytes = "shortstr" });
+
+            // the slot tag is .short_bytes because the byte array is <= 8 bytes long
+            try std.testing.expectEqual(.short_bytes, bar_cursor.slot().tag);
+            try std.testing.expectEqual(8, try bar_cursor.count());
+
+            // make sure .short_bytes can be read with a reader
+            var bar_reader = try bar_cursor.reader();
+            const bar_value = try bar_reader.readAllAlloc(allocator, MAX_READ_BYTES);
+            defer allocator.free(bar_value);
+            try std.testing.expectEqualStrings("shortstr", bar_value);
+        }
+
+        // write bytes with a format tag
+        {
+            // shortstr
+            {
+                var bar_cursor = try root_cursor.writePath(void, &.{
+                    .array_list_init,
+                    .array_list_append,
+                    .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+                    .hash_map_init,
+                    .{ .hash_map_get = .{ .value = bar_key } },
+                });
+                try bar_cursor.write(.{ .tagged_bytes = .{ .value = "shortstr", .format_tag = "st".* } });
+
+                // the slot tag is .bytes because the byte array is > 8 bytes long including the format tag
+                try std.testing.expectEqual(.bytes, bar_cursor.slot().tag);
+                try std.testing.expectEqual(8, try bar_cursor.count());
+
+                // read bar
+                const read_bar_cursor = (try root_cursor.readPath(void, &.{
+                    .{ .array_list_get = -1 },
+                    .{ .hash_map_get = .{ .value = bar_key } },
+                })).?;
+                const bytes = try read_bar_cursor.readBytesObjectAlloc(allocator, MAX_READ_BYTES);
+                defer allocator.free(bytes.value);
+                try std.testing.expectEqualStrings("shortstr", bytes.value);
+                try std.testing.expectEqualStrings("st", &bytes.format_tag.?);
+
+                // make sure .bytes can be read with a reader
+                var bar_reader = try bar_cursor.reader();
+                const bar_value = try bar_reader.readAllAlloc(allocator, MAX_READ_BYTES);
+                defer allocator.free(bar_value);
+                try std.testing.expectEqualStrings("shortstr", bar_value);
+            }
+
+            // shorts
+            {
+                var bar_cursor = try root_cursor.writePath(void, &.{
+                    .array_list_init,
+                    .array_list_append,
+                    .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+                    .hash_map_init,
+                    .{ .hash_map_get = .{ .value = bar_key } },
+                });
+                try bar_cursor.write(.{ .tagged_bytes = .{ .value = "shorts", .format_tag = "st".* } });
+
+                // the slot tag is .short_bytes because the byte array is <= 8 bytes long including the format tag
+                try std.testing.expectEqual(.short_bytes, bar_cursor.slot().tag);
+                try std.testing.expectEqual(6, try bar_cursor.count());
+
+                // read bar
+                const read_bar_cursor = (try root_cursor.readPath(void, &.{
+                    .{ .array_list_get = -1 },
+                    .{ .hash_map_get = .{ .value = bar_key } },
+                })).?;
+                var buffer = [_]u8{0} ** MAX_READ_BYTES;
+                const bytes = try read_bar_cursor.readBytesObject(&buffer);
+                try std.testing.expectEqualStrings("shorts", bytes.value);
+                try std.testing.expectEqualStrings("st", &bytes.format_tag.?);
+
+                // make sure .short_bytes can be read with a reader
+                var bar_reader = try bar_cursor.reader();
+                const bar_value = try bar_reader.readAllAlloc(allocator, MAX_READ_BYTES);
+                defer allocator.free(bar_value);
+                try std.testing.expectEqualStrings("shorts", bar_value);
+            }
+
+            // short
+            {
+                var bar_cursor = try root_cursor.writePath(void, &.{
+                    .array_list_init,
+                    .array_list_append,
+                    .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+                    .hash_map_init,
+                    .{ .hash_map_get = .{ .value = bar_key } },
+                });
+                try bar_cursor.write(.{ .tagged_bytes = .{ .value = "short", .format_tag = "st".* } });
+
+                // the slot tag is .short_bytes because the byte array is <= 8 bytes long including the format tag
+                try std.testing.expectEqual(.short_bytes, bar_cursor.slot().tag);
+                try std.testing.expectEqual(5, try bar_cursor.count());
+
+                // read bar
+                const read_bar_cursor = (try root_cursor.readPath(void, &.{
+                    .{ .array_list_get = -1 },
+                    .{ .hash_map_get = .{ .value = bar_key } },
+                })).?;
+                var buffer = [_]u8{0} ** MAX_READ_BYTES;
+                const bytes = try read_bar_cursor.readBytesObject(&buffer);
+                try std.testing.expectEqualStrings("short", bytes.value);
+                try std.testing.expectEqualStrings("st", &bytes.format_tag.?);
+
+                // make sure .short_bytes can be read with a reader
+                var bar_reader = try bar_cursor.reader();
+                const bar_value = try bar_reader.readAllAlloc(allocator, MAX_READ_BYTES);
+                defer allocator.free(bar_value);
+                try std.testing.expectEqualStrings("short", bar_value);
+            }
         }
 
         // read foo into stack-allocated buffer

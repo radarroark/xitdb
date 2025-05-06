@@ -19,6 +19,20 @@ const SlotInt = u72;
 pub const Slot = packed struct {
     value: u64 = 0,
     tag: Tag = .none,
+    // "full" means different things depending on the tag:
+    // 1. if `index`, it means that it has no more space
+    //    for children. this is only relevant for the linked
+    //    array list, whose index slots must be marked as
+    //    full to prevent gaps from being used.
+    // 2. if `none`, it means the slot should be treated as
+    //    being used. this allows us to distinguish between
+    //    an unused slot (whose tag is always `none`) and
+    //    a slot that was explicitly set to `none`.
+    // 3. if `bytes` or `short_bytes`, it means the byte
+    //    array has a special format tag stored immediately
+    //    after it. this format tag is two bytes long and
+    //    has no special meaning to xitdb, but users can
+    //    use it to interpret the bytes a certain way.
     full: bool = false,
 
     pub fn eql(self: Slot, other: Slot) bool {
@@ -316,12 +330,23 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             value,
         };
 
+        pub const Bytes = struct {
+            value: []const u8,
+            format_tag: ?[2]u8 = null,
+
+            pub fn isShort(self: Bytes) bool {
+                const total_size = if (self.format_tag != null) byteSizeOf(u64) - 2 else byteSizeOf(u64);
+                return self.value.len <= total_size and null == std.mem.indexOfScalar(u8, self.value, 0);
+            }
+        };
+
         pub const WriteableData = union(enum) {
             slot: ?Slot,
             uint: u64,
             int: i64,
             float: f64,
             bytes: []const u8,
+            tagged_bytes: Bytes,
         };
 
         pub fn PathPart(comptime Ctx: type) type {
@@ -924,23 +949,29 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     const core_writer = self.core.writer();
 
-                    var slot: Slot = switch (part.write) {
-                        .slot => part.write.slot orelse .{ .tag = .none },
-                        .uint => .{ .value = part.write.uint, .tag = .uint },
-                        .int => .{ .value = @bitCast(part.write.int), .tag = .int },
-                        .float => .{ .value = @bitCast(part.write.float), .tag = .float },
-                        .bytes => blk: {
-                            if (part.write.bytes.len <= byteSizeOf(u64) and null == std.mem.indexOfScalar(u8, part.write.bytes, 0)) {
-                                var bytes = [_]u8{0} ** byteSizeOf(u64);
-                                @memcpy(bytes[0..part.write.bytes.len], part.write.bytes);
-                                break :blk .{ .value = std.mem.nativeTo(u64, std.mem.bytesToValue(u64, &bytes), .big), .tag = .short_bytes };
+                    var slot: Slot = write_switch: switch (part.write) {
+                        .slot => |slot_maybe| slot_maybe orelse .{ .tag = .none },
+                        .uint => |uint| .{ .value = uint, .tag = .uint },
+                        .int => |int| .{ .value = @bitCast(int), .tag = .int },
+                        .float => |float| .{ .value = @bitCast(float), .tag = .float },
+                        .bytes => |bytes| continue :write_switch .{ .tagged_bytes = Bytes{ .value = bytes } },
+                        .tagged_bytes => |bytes| blk: {
+                            if (bytes.isShort()) {
+                                var value = [_]u8{0} ** byteSizeOf(u64);
+                                @memcpy(value[0..bytes.value.len], bytes.value);
+                                if (bytes.format_tag) |format_tag| {
+                                    @memcpy(value[value.len - 2 ..], &format_tag);
+                                }
+                                const value_int = std.mem.nativeTo(u64, std.mem.bytesToValue(u64, &value), .big);
+                                break :blk .{ .value = value_int, .tag = .short_bytes, .full = bytes.format_tag != null };
                             } else {
                                 var next_cursor = Cursor(.read_write){
                                     .slot_ptr = slot_ptr,
                                     .db = self,
                                 };
                                 var writer = try next_cursor.writer();
-                                try writer.writeAll(part.write.bytes);
+                                writer.format_tag = bytes.format_tag; // the writer will write the format tag when finish is called
+                                try writer.writeAll(bytes.value);
                                 try writer.finish();
                                 break :blk writer.slot;
                             }
@@ -2054,9 +2085,18 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     slot: Slot,
                     start_position: u64,
                     relative_position: u64,
+                    format_tag: ?[2]u8,
 
-                    pub fn finish(self: Writer) !void {
+                    pub fn finish(self: *Writer) !void {
                         const core_writer = self.parent.db.core.writer();
+
+                        if (self.format_tag) |format_tag| {
+                            self.slot.full = true; // byte arrays with format tags must have this set to true
+                            try self.parent.db.core.seekFromEnd(0);
+                            const format_tag_pos = try self.parent.db.core.getPos();
+                            if (self.start_position + self.size != format_tag_pos) return error.UnexpectedWriterPosition;
+                            try core_writer.writeAll(&format_tag);
+                        }
 
                         try self.parent.db.core.seekTo(self.slot.value);
                         try core_writer.writeInt(u64, self.size, .big);
@@ -2174,11 +2214,19 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     return @bitCast(self.slot_ptr.slot.value);
                 }
 
-                pub fn readBytesAlloc(self: Cursor(write_mode), allocator: std.mem.Allocator, max_size_maybe: ?usize) ![]u8 {
+                pub fn readBytesAlloc(self: Cursor(write_mode), allocator: std.mem.Allocator, max_size_maybe: ?usize) ![]const u8 {
+                    return (try self.readBytesObjectAlloc(allocator, max_size_maybe)).value;
+                }
+
+                pub fn readBytes(self: Cursor(write_mode), buffer: []u8) ![]const u8 {
+                    return (try self.readBytesObject(buffer)).value;
+                }
+
+                pub fn readBytesObjectAlloc(self: Cursor(write_mode), allocator: std.mem.Allocator, max_size_maybe: ?usize) !Bytes {
                     const core_reader = self.db.core.reader();
 
                     switch (self.slot_ptr.slot.tag) {
-                        .none => return try allocator.alloc(u8, 0),
+                        .none => return .{ .value = try allocator.alloc(u8, 0) },
                         .bytes => {
                             try self.db.core.seekTo(self.slot_ptr.slot.value);
                             const value_size = try core_reader.readInt(u64, .big);
@@ -2189,15 +2237,26 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 }
                             }
 
+                            const start_position = try self.db.core.getPos();
+
                             const value = try allocator.alloc(u8, value_size);
                             errdefer allocator.free(value);
 
                             try core_reader.readNoEof(value);
-                            return value;
+
+                            const format_tag = if (self.slot_ptr.slot.full) blk: {
+                                try self.db.core.seekTo(start_position + value_size);
+                                var buf = [_]u8{0} ** 2;
+                                try core_reader.readNoEof(&buf);
+                                break :blk buf;
+                            } else null;
+
+                            return .{ .value = value, .format_tag = format_tag };
                         },
                         .short_bytes => {
                             const bytes = std.mem.toBytes(std.mem.nativeTo(u64, self.slot_ptr.slot.value, .big));
-                            const value_size = std.mem.indexOfScalar(u8, &bytes, 0) orelse byteSizeOf(u64);
+                            const total_size = if (self.slot_ptr.slot.full) byteSizeOf(u64) - 2 else byteSizeOf(u64);
+                            const value_size = std.mem.indexOfScalar(u8, bytes[0..total_size], 0) orelse total_size;
 
                             if (max_size_maybe) |max_size| {
                                 if (value_size > max_size) {
@@ -2208,17 +2267,24 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             const value = try allocator.alloc(u8, value_size);
                             errdefer allocator.free(value);
                             @memcpy(value, bytes[0..value_size]);
-                            return value;
+
+                            const format_tag = if (self.slot_ptr.slot.full) blk: {
+                                var buf = [_]u8{0} ** 2;
+                                @memcpy(&buf, bytes[total_size..]);
+                                break :blk buf;
+                            } else null;
+
+                            return .{ .value = value, .format_tag = format_tag };
                         },
                         else => return error.UnexpectedTag,
                     }
                 }
 
-                pub fn readBytes(self: Cursor(write_mode), buffer: []u8) ![]u8 {
+                pub fn readBytesObject(self: Cursor(write_mode), buffer: []u8) !Bytes {
                     const core_reader = self.db.core.reader();
 
                     switch (self.slot_ptr.slot.tag) {
-                        .none => return if (buffer.len == 0) buffer else error.EndOfStream,
+                        .none => return if (buffer.len == 0) .{ .value = buffer } else error.EndOfStream,
                         .bytes => {
                             try self.db.core.seekTo(self.slot_ptr.slot.value);
                             const value_size = try core_reader.readInt(u64, .big);
@@ -2227,19 +2293,39 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 return error.StreamTooLong;
                             }
 
+                            const start_position = try self.db.core.getPos();
+
                             try core_reader.readNoEof(buffer[0..value_size]);
-                            return buffer[0..value_size];
+                            const value = buffer[0..value_size];
+
+                            const format_tag = if (self.slot_ptr.slot.full) blk: {
+                                try self.db.core.seekTo(start_position + value_size);
+                                var buf = [_]u8{0} ** 2;
+                                try core_reader.readNoEof(&buf);
+                                break :blk buf;
+                            } else null;
+
+                            return .{ .value = value, .format_tag = format_tag };
                         },
                         .short_bytes => {
                             const bytes = std.mem.toBytes(std.mem.nativeTo(u64, self.slot_ptr.slot.value, .big));
-                            const value_size = std.mem.indexOfScalar(u8, &bytes, 0) orelse byteSizeOf(u64);
+                            const total_size = if (self.slot_ptr.slot.full) byteSizeOf(u64) - 2 else byteSizeOf(u64);
+                            const value_size = std.mem.indexOfScalar(u8, bytes[0..total_size], 0) orelse total_size;
 
                             if (value_size > buffer.len) {
                                 return error.StreamTooLong;
                             }
 
                             @memcpy(buffer[0..value_size], bytes[0..value_size]);
-                            return buffer[0..value_size];
+                            const value = buffer[0..value_size];
+
+                            const format_tag = if (self.slot_ptr.slot.full) blk: {
+                                var buf = [_]u8{0} ** 2;
+                                @memcpy(&buf, bytes[total_size..]);
+                                break :blk buf;
+                            } else null;
+
+                            return .{ .value = value, .format_tag = format_tag };
                         },
                         else => return error.UnexpectedTag,
                     }
@@ -2296,7 +2382,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         },
                         .short_bytes => {
                             const bytes = std.mem.toBytes(std.mem.nativeTo(u64, self.slot_ptr.slot.value, .big));
-                            const value_size = std.mem.indexOfScalar(u8, &bytes, 0) orelse byteSizeOf(u64);
+                            const total_size = if (self.slot_ptr.slot.full) byteSizeOf(u64) - 2 else byteSizeOf(u64);
+                            const value_size = std.mem.indexOfScalar(u8, bytes[0..total_size], 0) orelse total_size;
                             return .{
                                 .parent = self,
                                 .size = value_size,
@@ -2322,6 +2409,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         .slot = .{ .value = ptr_pos, .tag = .bytes },
                         .start_position = start_position,
                         .relative_position = 0,
+                        .format_tag = null,
                     };
                 }
 
@@ -2349,7 +2437,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         },
                         .short_bytes => {
                             const bytes = std.mem.toBytes(std.mem.nativeTo(u64, self.slot_ptr.slot.value, .big));
-                            return std.mem.indexOfScalar(u8, &bytes, 0) orelse byteSizeOf(u64);
+                            const total_size = if (self.slot_ptr.slot.full) byteSizeOf(u64) - 2 else byteSizeOf(u64);
+                            return std.mem.indexOfScalar(u8, bytes[0..total_size], 0) orelse total_size;
                         },
                         else => return error.UnexpectedTag,
                     }
