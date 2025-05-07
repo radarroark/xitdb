@@ -355,7 +355,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             int: i64,
             float: f64,
             bytes: []const u8,
-            tagged_bytes: Bytes,
+            bytes_object: Bytes,
         };
 
         pub fn PathPart(comptime Ctx: type) type {
@@ -963,8 +963,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         .uint => |uint| .{ .value = uint, .tag = .uint },
                         .int => |int| .{ .value = @bitCast(int), .tag = .int },
                         .float => |float| .{ .value = @bitCast(float), .tag = .float },
-                        .bytes => |bytes| continue :write_switch .{ .tagged_bytes = Bytes{ .value = bytes } },
-                        .tagged_bytes => |bytes| blk: {
+                        .bytes => |bytes| continue :write_switch .{ .bytes_object = .{ .value = bytes } },
+                        .bytes_object => |bytes| blk: {
                             if (bytes.isShort()) {
                                 var value = [_]u8{0} ** byteSizeOf(u64);
                                 @memcpy(value[0..bytes.value.len], bytes.value);

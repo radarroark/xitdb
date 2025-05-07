@@ -991,7 +991,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                     .hash_map_init,
                     .{ .hash_map_get = .{ .value = bar_key } },
                 });
-                try bar_cursor.write(.{ .tagged_bytes = .{ .value = "shortstr", .format_tag = "st".* } });
+                try bar_cursor.write(.{ .bytes_object = .{ .value = "shortstr", .format_tag = "st".* } });
 
                 // the slot tag is .bytes because the byte array is > 8 bytes long including the format tag
                 try std.testing.expectEqual(.bytes, bar_cursor.slot().tag);
@@ -1023,7 +1023,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                     .hash_map_init,
                     .{ .hash_map_get = .{ .value = bar_key } },
                 });
-                try bar_cursor.write(.{ .tagged_bytes = .{ .value = "shorts", .format_tag = "st".* } });
+                try bar_cursor.write(.{ .bytes_object = .{ .value = "shorts", .format_tag = "st".* } });
 
                 // the slot tag is .short_bytes because the byte array is <= 8 bytes long including the format tag
                 try std.testing.expectEqual(.short_bytes, bar_cursor.slot().tag);
@@ -1055,7 +1055,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                     .hash_map_init,
                     .{ .hash_map_get = .{ .value = bar_key } },
                 });
-                try bar_cursor.write(.{ .tagged_bytes = .{ .value = "short", .format_tag = "st".* } });
+                try bar_cursor.write(.{ .bytes_object = .{ .value = "short", .format_tag = "st".* } });
 
                 // the slot tag is .short_bytes because the byte array is <= 8 bytes long including the format tag
                 try std.testing.expectEqual(.short_bytes, bar_cursor.slot().tag);
