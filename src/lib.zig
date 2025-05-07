@@ -20,14 +20,14 @@ pub const Slot = packed struct {
     value: u64 = 0,
     tag: Tag = .none,
     // "full" means different things depending on the tag:
-    // 1. if `index`, it means that it has no more space
-    //    for children. this is only relevant for the linked
-    //    array list, whose index slots must be marked as
-    //    full to prevent gaps from being used.
-    // 2. if `none`, it means the slot should be treated as
+    // 1. if `none`, it means the slot should be treated as
     //    being used. this allows us to distinguish between
     //    an unused slot (whose tag is always `none`) and
     //    a slot that was explicitly set to `none`.
+    // 2. if `index`, it means that it has no more space
+    //    for children. this is only relevant for the linked
+    //    array list, whose index slots must be marked as
+    //    full to prevent gaps from being used.
     // 3. if `bytes` or `short_bytes`, it means the byte
     //    array has a special format tag stored immediately
     //    after it. this format tag is two bytes long and
@@ -332,6 +332,15 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
         pub const Bytes = struct {
             value: []const u8,
+            // the format tag can be any arbitrary two bytes.
+            // this is never used by xitdb itself, but it is
+            // stored with the byte array and can be retrieved
+            // by calling `readBytesObject`. the purpose is to
+            // allow users to interpret byte arrays in special
+            // ways. for example, if you need to store an int
+            // that is larger than 64 bits, you could store it
+            // as a byte array and give it a format tag such
+            // as "bi" so you can interpret it as a big integer.
             format_tag: ?[2]u8 = null,
 
             pub fn isShort(self: Bytes) bool {
