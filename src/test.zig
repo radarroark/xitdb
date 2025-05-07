@@ -104,8 +104,10 @@ test "low level memory operations" {
     try db.core.seekTo(0);
     try writer.writeAll("Hello");
     try std.testing.expectEqualStrings("Hello", db.core.buffer.items[0..5]);
-    try writer.writeInt(u64, 42, .little);
-    const hello = try std.fmt.allocPrint(allocator, "Hello{s}", .{std.mem.asBytes(&std.mem.nativeTo(u64, 42, .little))});
+    try writer.writeInt(u64, 42, .big);
+    var bytes = [_]u8{0} ** (@bitSizeOf(u64) / 8);
+    std.mem.writeInt(u64, &bytes, 42, .big);
+    const hello = try std.fmt.allocPrint(allocator, "Hello{s}", .{bytes});
     defer allocator.free(hello);
     try std.testing.expectEqualStrings(hello, db.core.buffer.items[0..13]);
 
@@ -114,7 +116,7 @@ test "low level memory operations" {
     var block = [_]u8{0} ** 5;
     try reader.readNoEof(&block);
     try std.testing.expectEqualStrings("Hello", &block);
-    try std.testing.expectEqual(42, reader.readInt(u64, .little));
+    try std.testing.expectEqual(42, reader.readInt(u64, .big));
 }
 
 test "validate tag" {
@@ -811,10 +813,10 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
 
                         try bar_reader.seekTo(2);
                         try bar_reader.seekBy(-1);
-                        try std.testing.expectEqual('a', try bar_reader.readInt(u8, .little));
+                        try std.testing.expectEqual('a', try bar_reader.readInt(u8, .big));
 
                         try bar_reader.seekFromEnd(-3);
-                        try std.testing.expectEqual('b', try bar_reader.readInt(u8, .little));
+                        try std.testing.expectEqual('b', try bar_reader.readInt(u8, .big));
                     }
                 }
             };

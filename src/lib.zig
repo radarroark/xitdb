@@ -67,7 +67,7 @@ pub const Tag = enum(u7) {
 };
 
 const DATABASE_START = byteSizeOf(DatabaseHeader);
-const MAGIC_NUMBER: u24 = std.mem.nativeTo(u24, std.mem.bytesToValue(u24, "xit"), .big);
+const MAGIC_NUMBER: u24 = std.mem.readInt(u24, "xit", .big);
 pub const VERSION: u16 = 0;
 const DatabaseHeaderInt = u96;
 pub const DatabaseHeader = packed struct {
@@ -111,11 +111,13 @@ pub const HashId = packed struct(u32) {
     id: u32,
 
     pub fn fromBytes(hash_name: *const [4]u8) HashId {
-        return .{ .id = std.mem.nativeTo(u32, std.mem.bytesToValue(u32, hash_name), .big) };
+        return .{ .id = std.mem.readInt(u32, hash_name, .big) };
     }
 
     pub fn toBytes(self: HashId) [4]u8 {
-        return std.mem.toBytes(std.mem.nativeTo(u32, self.id, .big));
+        var bytes = [_]u8{0} ** 4;
+        std.mem.writeInt(u32, &bytes, self.id, .big);
+        return bytes;
     }
 };
 
@@ -174,7 +176,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         if (new_position > self.parent.buffer.items.len) return error.EndOfStream;
                         const bytes = self.parent.buffer.items[self.parent.position..new_position];
                         self.parent.position = new_position;
-                        return std.mem.toNative(T, std.mem.bytesToValue(T, bytes), endian);
+                        return std.mem.readInt(T, bytes[0..size], endian);
                     }
                 };
 
@@ -207,8 +209,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         const size = @bitSizeOf(T) / 8;
                         const new_position = self.parent.position + size;
                         try self.resizeBuffer(new_position);
-                        const bytes = std.mem.asBytes(&std.mem.nativeTo(T, value, endian));
-                        @memcpy(self.parent.buffer.items[self.parent.position..new_position], bytes[0..size]);
+                        var bytes = [_]u8{0} ** size;
+                        std.mem.writeInt(T, &bytes, value, endian);
+                        @memcpy(self.parent.buffer.items[self.parent.position..new_position], &bytes);
                         self.parent.position = new_position;
                     }
                 };
@@ -971,7 +974,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 if (bytes.format_tag) |format_tag| {
                                     @memcpy(value[value.len - 2 ..], &format_tag);
                                 }
-                                const value_int = std.mem.nativeTo(u64, std.mem.bytesToValue(u64, &value), .big);
+                                const value_int = std.mem.readInt(u64, &value, .big);
                                 break :blk .{ .value = value_int, .tag = .short_bytes, .full = bytes.format_tag != null };
                             } else {
                                 var next_cursor = Cursor(.read_write){
@@ -2263,7 +2266,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             return .{ .value = value, .format_tag = format_tag };
                         },
                         .short_bytes => {
-                            const bytes = std.mem.toBytes(std.mem.nativeTo(u64, self.slot_ptr.slot.value, .big));
+                            var bytes = [_]u8{0} ** byteSizeOf(u64);
+                            std.mem.writeInt(u64, &bytes, self.slot_ptr.slot.value, .big);
                             const total_size = if (self.slot_ptr.slot.full) byteSizeOf(u64) - 2 else byteSizeOf(u64);
                             const value_size = std.mem.indexOfScalar(u8, bytes[0..total_size], 0) orelse total_size;
 
@@ -2317,7 +2321,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             return .{ .value = value, .format_tag = format_tag };
                         },
                         .short_bytes => {
-                            const bytes = std.mem.toBytes(std.mem.nativeTo(u64, self.slot_ptr.slot.value, .big));
+                            var bytes = [_]u8{0} ** byteSizeOf(u64);
+                            std.mem.writeInt(u64, &bytes, self.slot_ptr.slot.value, .big);
                             const total_size = if (self.slot_ptr.slot.full) byteSizeOf(u64) - 2 else byteSizeOf(u64);
                             const value_size = std.mem.indexOfScalar(u8, bytes[0..total_size], 0) orelse total_size;
 
@@ -2390,7 +2395,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             };
                         },
                         .short_bytes => {
-                            const bytes = std.mem.toBytes(std.mem.nativeTo(u64, self.slot_ptr.slot.value, .big));
+                            var bytes = [_]u8{0} ** byteSizeOf(u64);
+                            std.mem.writeInt(u64, &bytes, self.slot_ptr.slot.value, .big);
                             const total_size = if (self.slot_ptr.slot.full) byteSizeOf(u64) - 2 else byteSizeOf(u64);
                             const value_size = std.mem.indexOfScalar(u8, bytes[0..total_size], 0) orelse total_size;
                             return .{
@@ -2445,7 +2451,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             return try core_reader.readInt(u64, .big);
                         },
                         .short_bytes => {
-                            const bytes = std.mem.toBytes(std.mem.nativeTo(u64, self.slot_ptr.slot.value, .big));
+                            var bytes = [_]u8{0} ** byteSizeOf(u64);
+                            std.mem.writeInt(u64, &bytes, self.slot_ptr.slot.value, .big);
                             const total_size = if (self.slot_ptr.slot.full) byteSizeOf(u64) - 2 else byteSizeOf(u64);
                             return std.mem.indexOfScalar(u8, bytes[0..total_size], 0) orelse total_size;
                         },
