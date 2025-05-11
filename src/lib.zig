@@ -637,7 +637,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         else => return error.UnexpectedTag,
                     }
                 },
-                .array_list_get => {
+                .array_list_get => |index| {
                     const tag = if (is_top_level) self.header.tag else slot_ptr.slot.tag;
                     switch (tag) {
                         .none => return error.KeyNotFound,
@@ -646,7 +646,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     }
 
                     const next_array_list_start = slot_ptr.slot.value;
-                    const index = part.array_list_get;
 
                     try self.core.seekTo(next_array_list_start);
                     const reader = self.core.reader();
@@ -698,7 +697,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     return final_slot_ptr;
                 },
-                .array_list_slice => {
+                .array_list_slice => |array_list_slice| {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     if (slot_ptr.slot.tag != .array_list) return error.UnexpectedTag;
@@ -711,7 +710,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const orig_header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
 
                     // slice
-                    const slice_header = try self.readArrayListSlice(orig_header, part.array_list_slice.size);
+                    const slice_header = try self.readArrayListSlice(orig_header, array_list_slice.size);
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], slot_ptr);
 
                     // update header
@@ -784,14 +783,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         else => return error.UnexpectedTag,
                     }
                 },
-                .linked_array_list_get => {
+                .linked_array_list_get => |index| {
                     switch (slot_ptr.slot.tag) {
                         .none => return error.KeyNotFound,
                         .linked_array_list => {},
                         else => return error.UnexpectedTag,
                     }
-
-                    const index = part.linked_array_list_get;
 
                     try self.core.seekTo(slot_ptr.slot.value);
                     const reader = self.core.reader();
@@ -825,7 +822,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     return final_slot_ptr;
                 },
-                .linked_array_list_slice => {
+                .linked_array_list_slice => |linked_array_list_slice| {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     if (slot_ptr.slot.tag != .linked_array_list) return error.UnexpectedTag;
@@ -838,7 +835,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const orig_header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
 
                     // slice
-                    const slice_header = try self.readLinkedArrayListSlice(orig_header, part.linked_array_list_slice.offset, part.linked_array_list_slice.size);
+                    const slice_header = try self.readLinkedArrayListSlice(orig_header, linked_array_list_slice.offset, linked_array_list_slice.size);
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], slot_ptr);
 
                     // update header
@@ -848,12 +845,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     return final_slot_ptr;
                 },
-                .linked_array_list_concat => {
+                .linked_array_list_concat => |linked_array_list_concat| {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     if (slot_ptr.slot.tag != .linked_array_list) return error.UnexpectedTag;
 
-                    if (part.linked_array_list_concat.list.tag != .linked_array_list) return error.UnexpectedTag;
+                    if (linked_array_list_concat.list.tag != .linked_array_list) return error.UnexpectedTag;
 
                     const reader = self.core.reader();
                     const next_array_list_start = slot_ptr.slot.value;
@@ -861,7 +858,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     // read headers
                     try self.core.seekTo(next_array_list_start);
                     const header_a: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
-                    try self.core.seekTo(part.linked_array_list_concat.list.value);
+                    try self.core.seekTo(linked_array_list_concat.list.value);
                     const header_b: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
 
                     // concat
@@ -946,22 +943,22 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         else => return error.UnexpectedTag,
                     }
                 },
-                .hash_map_get => {
+                .hash_map_get => |hash_map_get| {
                     switch (slot_ptr.slot.tag) {
                         .none => return error.KeyNotFound,
                         .hash_map => {},
                         else => return error.UnexpectedTag,
                     }
 
-                    const next_slot_ptr = switch (part.hash_map_get) {
-                        .kv_pair => try self.readMapSlot(slot_ptr.slot.value, part.hash_map_get.kv_pair, 0, write_mode, is_top_level, .kv_pair),
-                        .key => try self.readMapSlot(slot_ptr.slot.value, part.hash_map_get.key, 0, write_mode, is_top_level, .key),
-                        .value => try self.readMapSlot(slot_ptr.slot.value, part.hash_map_get.value, 0, write_mode, is_top_level, .value),
+                    const next_slot_ptr = switch (hash_map_get) {
+                        .kv_pair => |kv_pair| try self.readMapSlot(slot_ptr.slot.value, kv_pair, 0, write_mode, is_top_level, .kv_pair),
+                        .key => |key| try self.readMapSlot(slot_ptr.slot.value, key, 0, write_mode, is_top_level, .key),
+                        .value => |value| try self.readMapSlot(slot_ptr.slot.value, value, 0, write_mode, is_top_level, .value),
                     };
 
                     return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                 },
-                .hash_map_remove => {
+                .hash_map_remove => |key_hash| {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     switch (slot_ptr.slot.tag) {
@@ -970,18 +967,18 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         else => return error.UnexpectedTag,
                     }
 
-                    _ = try self.removeMapSlot(slot_ptr.slot.value, part.hash_map_remove, 0, is_top_level);
+                    _ = try self.removeMapSlot(slot_ptr.slot.value, key_hash, 0, is_top_level);
 
                     return slot_ptr;
                 },
-                .write => {
+                .write => |data| {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     const position = slot_ptr.position orelse return error.CursorNotWriteable;
 
                     const core_writer = self.core.writer();
 
-                    var slot: Slot = write_switch: switch (part.write) {
+                    var slot: Slot = write_switch: switch (data) {
                         .slot => |slot_maybe| slot_maybe orelse .{ .tag = .none },
                         .uint => |uint| .{ .value = uint, .tag = .uint },
                         .int => |int| .{ .value = @bitCast(int), .tag = .int },
@@ -1022,19 +1019,19 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const next_slot_ptr = SlotPointer{ .position = slot_ptr.position, .slot = slot };
                     return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                 },
-                .ctx => {
+                .ctx => |ctx| {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     if (path.len > 1) return error.PathPartMustBeAtEnd;
 
-                    if (@TypeOf(part.ctx) == void) {
+                    if (@TypeOf(ctx) == void) {
                         return error.NotImplmented;
                     } else {
                         var next_cursor = Cursor(.read_write){
                             .slot_ptr = slot_ptr,
                             .db = self,
                         };
-                        part.ctx.run(&next_cursor) catch |err| {
+                        ctx.run(&next_cursor) catch |err| {
                             // since an error occurred, there may be inaccessible
                             // junk at the end of the db, so delete it if possible
                             self.truncate() catch {};
