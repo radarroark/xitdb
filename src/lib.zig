@@ -703,9 +703,15 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     if (slot_ptr.slot.tag != .array_list) return error.UnexpectedTag;
 
+                    const reader = self.core.reader();
                     const next_array_list_start = slot_ptr.slot.value;
 
-                    const slice_header = try self.readArrayListSlice(next_array_list_start, part.array_list_slice.size);
+                    // read header
+                    try self.core.seekTo(next_array_list_start);
+                    const orig_header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
+
+                    // slice
+                    const slice_header = try self.readArrayListSlice(orig_header, part.array_list_slice.size);
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], slot_ptr);
 
                     // update header
@@ -824,9 +830,15 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     if (slot_ptr.slot.tag != .linked_array_list) return error.UnexpectedTag;
 
+                    const reader = self.core.reader();
                     const next_array_list_start = slot_ptr.slot.value;
 
-                    const slice_header = try self.readLinkedArrayListSlice(next_array_list_start, part.linked_array_list_slice.offset, part.linked_array_list_slice.size);
+                    // read header
+                    try self.core.seekTo(next_array_list_start);
+                    const orig_header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
+
+                    // slice
+                    const slice_header = try self.readLinkedArrayListSlice(orig_header, part.linked_array_list_slice.offset, part.linked_array_list_slice.size);
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], slot_ptr);
 
                     // update header
@@ -843,9 +855,17 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     if (part.linked_array_list_concat.list.tag != .linked_array_list) return error.UnexpectedTag;
 
+                    const reader = self.core.reader();
                     const next_array_list_start = slot_ptr.slot.value;
 
-                    const concat_header = try self.readLinkedArrayListConcat(next_array_list_start, part.linked_array_list_concat.list);
+                    // read headers
+                    try self.core.seekTo(next_array_list_start);
+                    const header_a: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
+                    try self.core.seekTo(part.linked_array_list_concat.list.value);
+                    const header_b: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
+
+                    // concat
+                    const concat_header = try self.readLinkedArrayListConcat(header_a, header_b);
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], slot_ptr);
 
                     // update header
@@ -1376,11 +1396,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             }
         }
 
-        fn readArrayListSlice(self: *Database(db_kind, HashInt), index_start: u64, size: u64) !ArrayListHeader {
+        fn readArrayListSlice(self: *Database(db_kind, HashInt), header: ArrayListHeader, size: u64) !ArrayListHeader {
             const core_reader = self.core.reader();
-
-            try self.core.seekTo(index_start);
-            const header: ArrayListHeader = @bitCast(try core_reader.readInt(ArrayListHeaderInt, .big));
 
             if (size > header.size) {
                 return error.ArrayListSliceOutOfBounds;
@@ -1657,12 +1674,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             }
         }
 
-        fn readLinkedArrayListSlice(self: *Database(db_kind, HashInt), index_start: u64, offset: u64, size: u64) !LinkedArrayListHeader {
-            const core_reader = self.core.reader();
+        fn readLinkedArrayListSlice(self: *Database(db_kind, HashInt), header: LinkedArrayListHeader, offset: u64, size: u64) !LinkedArrayListHeader {
             const core_writer = self.core.writer();
-
-            try self.core.seekTo(index_start);
-            const header: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
 
             if (offset + size > header.size) {
                 return error.LinkedArrayListSliceOutOfBounds;
@@ -1818,21 +1831,16 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             };
         }
 
-        fn readLinkedArrayListConcat(self: *Database(db_kind, HashInt), index_start: u64, list: Slot) !LinkedArrayListHeader {
-            const core_reader = self.core.reader();
+        fn readLinkedArrayListConcat(self: *Database(db_kind, HashInt), header_a: LinkedArrayListHeader, header_b: LinkedArrayListHeader) !LinkedArrayListHeader {
             const core_writer = self.core.writer();
 
             // read the first list's blocks
-            try self.core.seekTo(index_start);
-            const header_a: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
             var blocks_a = std.ArrayList(LinkedArrayListBlockInfo).init(self.allocator);
             defer blocks_a.deinit();
             const key_a = if (header_a.size == 0) 0 else header_a.size - 1;
             try self.readLinkedArrayListBlocks(header_a.ptr, key_a, header_a.shift, &blocks_a);
 
             // read the second list's blocks
-            try self.core.seekTo(list.value);
-            const header_b: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
             var blocks_b = std.ArrayList(LinkedArrayListBlockInfo).init(self.allocator);
             defer blocks_b.deinit();
             try self.readLinkedArrayListBlocks(header_b.ptr, 0, header_b.shift, &blocks_b);
