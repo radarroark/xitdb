@@ -670,9 +670,15 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const tag = if (is_top_level) self.header.tag else slot_ptr.slot.tag;
                     if (tag != .array_list) return error.UnexpectedTag;
 
+                    const reader = self.core.reader();
                     const next_array_list_start = slot_ptr.slot.value;
 
-                    const append_result = try self.readArrayListSlotAppend(next_array_list_start, write_mode, is_top_level);
+                    // read header
+                    try self.core.seekTo(next_array_list_start);
+                    const orig_header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
+
+                    // append
+                    const append_result = try self.readArrayListSlotAppend(orig_header, write_mode, is_top_level);
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], append_result.slot_ptr);
 
                     const writer = self.core.writer();
@@ -810,9 +816,15 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     if (slot_ptr.slot.tag != .linked_array_list) return error.UnexpectedTag;
 
+                    const reader = self.core.reader();
                     const next_array_list_start = slot_ptr.slot.value;
 
-                    const append_result = try self.readLinkedArrayListSlotAppend(next_array_list_start, write_mode, is_top_level);
+                    // read header
+                    try self.core.seekTo(next_array_list_start);
+                    const orig_header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
+
+                    // append
+                    const append_result = try self.readLinkedArrayListSlotAppend(orig_header, write_mode, is_top_level);
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], append_result.slot_ptr.slot_ptr);
 
                     // update header
@@ -1291,12 +1303,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             slot_ptr: SlotPointer,
         };
 
-        fn readArrayListSlotAppend(self: *Database(db_kind, HashInt), index_start: u64, comptime write_mode: WriteMode, is_top_level: bool) !ArrayListAppendResult {
-            const reader = self.core.reader();
+        fn readArrayListSlotAppend(self: *Database(db_kind, HashInt), header: ArrayListHeader, comptime write_mode: WriteMode, is_top_level: bool) !ArrayListAppendResult {
             const writer = self.core.writer();
 
-            try self.core.seekTo(index_start);
-            const header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
             var index_pos = header.ptr;
 
             const key = header.size;
@@ -1434,12 +1443,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             slot_ptr: LinkedArrayListSlotPointer,
         };
 
-        fn readLinkedArrayListSlotAppend(self: *Database(db_kind, HashInt), index_start: u64, comptime write_mode: WriteMode, is_top_level: bool) !LinkedArrayListAppendResult {
-            const reader = self.core.reader();
+        fn readLinkedArrayListSlotAppend(self: *Database(db_kind, HashInt), header: LinkedArrayListHeader, comptime write_mode: WriteMode, is_top_level: bool) !LinkedArrayListAppendResult {
             const writer = self.core.writer();
 
-            try self.core.seekTo(index_start);
-            const header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
             var ptr = header.ptr;
             const key = header.size;
             var shift = header.shift;
