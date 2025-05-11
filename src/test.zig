@@ -186,9 +186,9 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
                 try todos.insert(1, .{ .bytes = "Wash the car" });
 
                 // make sure `insertCursor` works as well
-                const todo_cursor = try todos.insertCursor(-1);
+                const todo_cursor = try todos.insertCursor(1);
                 _ = try DB.HashMap(.read_write).init(todo_cursor);
-                try todos.remove(-1);
+                try todos.remove(1);
             }
         };
         try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
