@@ -2993,6 +2993,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     });
                 }
 
+                pub fn insertCursor(self: LinkedArrayList(.read_write), index: u64) !Cursor(.read_write) {
+                    return try self.cursor.writePath(void, &.{
+                        .{ .linked_array_list_insert = index },
+                    });
+                }
+
                 pub fn remove(self: LinkedArrayList(.read_write), index: u64) !void {
                     _ = try self.cursor.writePath(void, &.{
                         .{ .linked_array_list_remove = index },
