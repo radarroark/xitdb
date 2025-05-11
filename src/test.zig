@@ -278,6 +278,7 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
                 const todos = try DB.LinkedArrayList(.read_write).init(todos_cursor);
                 try todos.concat(todos_cursor.slot());
                 try todos.slice(1, 2);
+                try todos.remove(1);
             }
         };
         try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
@@ -317,7 +318,7 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
 
         const todos_cursor = (try moment.getCursor(hashInt("todos"))).?;
         const todos = try DB.LinkedArrayList(.read_only).init(todos_cursor);
-        try std.testing.expectEqual(2, try todos.count());
+        try std.testing.expectEqual(1, try todos.count());
 
         const todo_cursor = (try todos.getCursor(0)).?;
         const todo_value = try todo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
@@ -676,14 +677,14 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
     }
 }
 
-fn testInsert(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, HashInt).InitOpts, comptime original_size: usize, comptime insert_index: u64) !void {
+fn testInsertAndRemove(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, HashInt).InitOpts, comptime original_size: usize, comptime insert_index: u64) !void {
     try clearStorage(db_kind, init_opts);
     var db = try xitdb.Database(db_kind, HashInt).init(allocator, init_opts);
     var root_cursor = db.rootCursor();
 
     const insert_value: u64 = 12345;
 
-    const Ctx = struct {
+    const InsertCtx = struct {
         allocator: std.mem.Allocator,
 
         pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, HashInt).Cursor(.read_write)) !void {
@@ -747,7 +748,61 @@ fn testInsert(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
             }));
         }
     };
-    _ = try root_cursor.writePath(Ctx, &.{
+    _ = try root_cursor.writePath(InsertCtx, &.{
+        .array_list_init,
+        .array_list_append,
+        .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+        .hash_map_init,
+        .{ .ctx = .{ .allocator = allocator } },
+    });
+
+    const RemoveCtx = struct {
+        allocator: std.mem.Allocator,
+
+        pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, HashInt).Cursor(.read_write)) !void {
+            var values = std.ArrayList(u64).init(self.allocator);
+            defer values.deinit();
+
+            for (0..original_size) |i| {
+                const n = i * 2;
+                try values.append(n);
+            }
+
+            // remove inserted value from the list
+            const even_list_insert_cursor = try cursor.writePath(void, &.{
+                .{ .hash_map_get = .{ .value = hashInt("even-insert") } },
+                .{ .linked_array_list_remove = insert_index },
+            });
+
+            // check all values in the new list
+            for (values.items, 0..) |val, i| {
+                const n = (try cursor.readPath(void, &.{
+                    .{ .hash_map_get = .{ .value = hashInt("even-insert") } },
+                    .{ .linked_array_list_get = i },
+                })).?.slot_ptr.slot.value;
+                try std.testing.expectEqual(val, n);
+            }
+
+            // check all values in the new list with an iterator
+            {
+                var iter = try even_list_insert_cursor.iterator();
+                defer iter.deinit();
+                var i: u64 = 0;
+                while (try iter.next()) |num_cursor| {
+                    try std.testing.expectEqual(values.items[i], try num_cursor.readUint());
+                    i += 1;
+                }
+                try std.testing.expectEqual(values.items.len, i);
+            }
+
+            // there are no extra items
+            try std.testing.expectEqual(null, try cursor.readPath(void, &.{
+                .{ .hash_map_get = .{ .value = hashInt("even-insert") } },
+                .{ .linked_array_list_get = values.items.len },
+            }));
+        }
+    };
+    _ = try root_cursor.writePath(RemoveCtx, &.{
         .array_list_init,
         .array_list_append,
         .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
@@ -1987,10 +2042,11 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         try testConcat(allocator, db_kind, init_opts, 0, 0);
 
         // insert linked_array_list
-        try testInsert(allocator, db_kind, init_opts, 10, 0);
-        try testInsert(allocator, db_kind, init_opts, 10, 5);
-        try testInsert(allocator, db_kind, init_opts, 10, 9);
-        try testInsert(allocator, db_kind, init_opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 2);
+        try testInsertAndRemove(allocator, db_kind, init_opts, 1, 0);
+        try testInsertAndRemove(allocator, db_kind, init_opts, 10, 0);
+        try testInsertAndRemove(allocator, db_kind, init_opts, 10, 5);
+        try testInsertAndRemove(allocator, db_kind, init_opts, 10, 9);
+        try testInsertAndRemove(allocator, db_kind, init_opts, xitdb.SLOT_COUNT * 5, xitdb.SLOT_COUNT * 2);
     }
 
     // concat linked_array_list multiple times

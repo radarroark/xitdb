@@ -384,6 +384,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     list: Slot,
                 },
                 linked_array_list_insert: u64,
+                linked_array_list_remove: u64,
                 hash_map_init,
                 hash_map_get: union(HashMapSlotKind) {
                     kv_pair: HashInt,
@@ -902,7 +903,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const orig_header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
 
                     if (index >= orig_header.size) {
-                        return error.LinkedArrayListInsertOutOfBounds;
+                        return error.OutOfBounds;
                     }
 
                     // split up the list
@@ -920,6 +921,42 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     // recur down the rest of the path
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr.slot_ptr);
+
+                    // update header
+                    const writer = self.core.writer();
+                    try self.core.seekTo(next_array_list_start);
+                    try writer.writeInt(LinkedArrayListHeaderInt, @bitCast(concat_header), .big);
+
+                    return final_slot_ptr;
+                },
+                .linked_array_list_remove => |index| {
+                    if (write_mode == .read_only) return error.WriteNotAllowed;
+
+                    if (slot_ptr.slot.tag != .linked_array_list) return error.UnexpectedTag;
+
+                    const reader = self.core.reader();
+                    const next_array_list_start = slot_ptr.slot.value;
+
+                    // read header
+                    try self.core.seekTo(next_array_list_start);
+                    const orig_header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
+
+                    if (index >= orig_header.size) {
+                        return error.OutOfBounds;
+                    }
+
+                    // split up the list
+                    const header_a = try self.readLinkedArrayListSlice(orig_header, 0, index);
+                    const header_b = try self.readLinkedArrayListSlice(orig_header, index + 1, orig_header.size - (index + 1));
+
+                    // concat the lists
+                    const concat_header = try self.readLinkedArrayListConcat(header_a, header_b);
+
+                    // get pointer to the list
+                    const next_slot_ptr = SlotPointer{ .position = concat_header.ptr, .slot = .{ .value = next_array_list_start, .tag = .linked_array_list } };
+
+                    // recur down the rest of the path
+                    const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
 
                     // update header
                     const writer = self.core.writer();
@@ -1450,7 +1487,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             const core_reader = self.core.reader();
 
             if (size > header.size) {
-                return error.ArrayListSliceOutOfBounds;
+                return error.OutOfBounds;
             }
 
             const prev_shift: u6 = @intCast(if (header.size < SLOT_COUNT + 1) 0 else std.math.log(u64, SLOT_COUNT, header.size - 1));
@@ -1725,7 +1762,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             const core_writer = self.core.writer();
 
             if (offset + size > header.size) {
-                return error.LinkedArrayListSliceOutOfBounds;
+                return error.OutOfBounds;
             }
 
             // read the list's left blocks
@@ -1766,15 +1803,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         }
                         slot_i += 1;
                     }
-                    // middle slots
-                    if (left_block.i != right_block.i) {
+                    if (size > 1) {
+                        // middle slots
                         for (left_block.block[left_block.i + 1 .. right_block.i]) |middle_slot| {
                             new_root_block[slot_i] = middle_slot;
                             slot_i += 1;
                         }
-                    }
-                    // right slot
-                    if (size > 1) {
+
+                        // right slot
                         if (next_slots[1]) |right_slot| {
                             new_root_block[slot_i] = right_slot;
                         } else {
@@ -2954,6 +2990,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     _ = try self.cursor.writePath(void, &.{
                         .{ .linked_array_list_insert = index },
                         .{ .write = data },
+                    });
+                }
+
+                pub fn remove(self: LinkedArrayList(.read_write), index: u64) !void {
+                    _ = try self.cursor.writePath(void, &.{
+                        .{ .linked_array_list_remove = index },
                     });
                 }
             };
