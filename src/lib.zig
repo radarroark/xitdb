@@ -383,8 +383,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 linked_array_list_concat: struct {
                     list: Slot,
                 },
-                linked_array_list_insert: u64,
-                linked_array_list_remove: u64,
+                linked_array_list_insert: i65,
+                linked_array_list_remove: i65,
                 hash_map_init,
                 hash_map_get: union(HashMapSlotKind) {
                     kv_pair: HashInt,
@@ -902,13 +902,18 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     try self.core.seekTo(next_array_list_start);
                     const orig_header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
 
-                    if (index >= orig_header.size) {
-                        return error.OutOfBounds;
+                    // get the key
+                    if (index >= orig_header.size or index < -@as(i65, orig_header.size)) {
+                        return error.KeyNotFound;
                     }
+                    const key: u64 = if (index < 0)
+                        @intCast(orig_header.size - @abs(index))
+                    else
+                        @intCast(index);
 
                     // split up the list
-                    const header_a = try self.readLinkedArrayListSlice(orig_header, 0, index);
-                    const header_b = try self.readLinkedArrayListSlice(orig_header, index, orig_header.size - index);
+                    const header_a = try self.readLinkedArrayListSlice(orig_header, 0, key);
+                    const header_b = try self.readLinkedArrayListSlice(orig_header, key, orig_header.size - key);
 
                     // add new slot to first list
                     const append_result = try self.readLinkedArrayListSlotAppend(header_a, write_mode, is_top_level);
@@ -917,7 +922,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const concat_header = try self.readLinkedArrayListConcat(append_result.header, header_b);
 
                     // get pointer to the new slot
-                    const next_slot_ptr = try self.readLinkedArrayListSlot(concat_header.ptr, index, concat_header.shift, .read_only, is_top_level);
+                    const next_slot_ptr = try self.readLinkedArrayListSlot(concat_header.ptr, key, concat_header.shift, .read_only, is_top_level);
 
                     // recur down the rest of the path
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr.slot_ptr);
@@ -941,13 +946,18 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     try self.core.seekTo(next_array_list_start);
                     const orig_header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
 
-                    if (index >= orig_header.size) {
-                        return error.OutOfBounds;
+                    // get the key
+                    if (index >= orig_header.size or index < -@as(i65, orig_header.size)) {
+                        return error.KeyNotFound;
                     }
+                    const key: u64 = if (index < 0)
+                        @intCast(orig_header.size - @abs(index))
+                    else
+                        @intCast(index);
 
                     // split up the list
-                    const header_a = try self.readLinkedArrayListSlice(orig_header, 0, index);
-                    const header_b = try self.readLinkedArrayListSlice(orig_header, index + 1, orig_header.size - (index + 1));
+                    const header_a = try self.readLinkedArrayListSlice(orig_header, 0, key);
+                    const header_b = try self.readLinkedArrayListSlice(orig_header, key + 1, orig_header.size - (key + 1));
 
                     // concat the lists
                     const concat_header = try self.readLinkedArrayListConcat(header_a, header_b);
@@ -1487,7 +1497,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             const core_reader = self.core.reader();
 
             if (size > header.size) {
-                return error.OutOfBounds;
+                return error.KeyNotFound;
             }
 
             const prev_shift: u6 = @intCast(if (header.size < SLOT_COUNT + 1) 0 else std.math.log(u64, SLOT_COUNT, header.size - 1));
@@ -1762,7 +1772,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             const core_writer = self.core.writer();
 
             if (offset + size > header.size) {
-                return error.OutOfBounds;
+                return error.KeyNotFound;
             }
 
             // read the list's left blocks
@@ -2986,20 +2996,20 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     });
                 }
 
-                pub fn insert(self: LinkedArrayList(.read_write), index: u64, data: WriteableData) !void {
+                pub fn insert(self: LinkedArrayList(.read_write), index: i65, data: WriteableData) !void {
                     _ = try self.cursor.writePath(void, &.{
                         .{ .linked_array_list_insert = index },
                         .{ .write = data },
                     });
                 }
 
-                pub fn insertCursor(self: LinkedArrayList(.read_write), index: u64) !Cursor(.read_write) {
+                pub fn insertCursor(self: LinkedArrayList(.read_write), index: i65) !Cursor(.read_write) {
                     return try self.cursor.writePath(void, &.{
                         .{ .linked_array_list_insert = index },
                     });
                 }
 
-                pub fn remove(self: LinkedArrayList(.read_write), index: u64) !void {
+                pub fn remove(self: LinkedArrayList(.read_write), index: i65) !void {
                     _ = try self.cursor.writePath(void, &.{
                         .{ .linked_array_list_remove = index },
                     });
