@@ -60,7 +60,7 @@ test "not using arraylist at the top level" {
         defer buffer.deinit();
 
         const DB = xitdb.Database(.memory, HashInt);
-        var db = try DB.init(allocator, .{ .buffer = &buffer, .max_size = 50000 });
+        var db = try DB.init(.{ .buffer = &buffer, .max_size = 50000 });
 
         const map = try DB.HashMap(.read_write).init(db.rootCursor());
         try map.put(hashInt("foo"), .{ .bytes = "foo" });
@@ -87,7 +87,7 @@ test "not using arraylist at the top level" {
         defer buffer.deinit();
 
         const DB = xitdb.Database(.memory, HashInt);
-        var db = try DB.init(allocator, .{ .buffer = &buffer, .max_size = 50000 });
+        var db = try DB.init(.{ .buffer = &buffer, .max_size = 50000 });
 
         try std.testing.expectError(error.InvalidTopLevelType, DB.LinkedArrayList(.read_write).init(db.rootCursor()));
     }
@@ -98,7 +98,7 @@ test "low level memory operations" {
 
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
-    var db = try xitdb.Database(.memory, HashInt).init(allocator, .{ .buffer = &buffer, .max_size = 10000 });
+    var db = try xitdb.Database(.memory, HashInt).init(.{ .buffer = &buffer, .max_size = 10000 });
 
     var writer = db.core.writer();
     try db.core.seekTo(0);
@@ -140,7 +140,7 @@ fn hashInt(buffer: []const u8) HashInt {
 fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, HashInt).InitOpts) !void {
     // init the db
     const DB = xitdb.Database(db_kind, HashInt);
-    var db = try DB.init(allocator, init_opts);
+    var db = try DB.init(init_opts);
 
     {
         // to get the benefits of immutability, the top-level data structure
@@ -239,11 +239,9 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         try std.testing.expectEqualStrings("Pay the bills", todo_value);
 
         var people_iter = try people.iterator();
-        defer people_iter.deinit();
         while (try people_iter.next()) |person_cursor| {
             const person = try DB.HashMap(.read_only).init(person_cursor);
             var person_iter = try person.iterator();
-            defer person_iter.deinit();
             while (try person_iter.next()) |kv_pair_cursor| {
                 _ = try kv_pair_cursor.readKeyValuePair();
             }
@@ -434,10 +432,10 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         if (db_kind == .file) {
             const file = try std.fs.cwd().openFile("main.db", .{ .mode = .read_only });
             defer file.close();
-            _ = try DB.init(allocator, .{ .file = file });
+            _ = try DB.init(.{ .file = file });
         }
 
-        db = try DB.init(allocator, init_opts);
+        db = try DB.init(init_opts);
 
         try db.core.seekFromEnd(0);
         const size_after = try db.core.getPos();
@@ -459,7 +457,7 @@ fn clearStorage(comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(
 
 fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, HashInt).InitOpts, comptime original_size: usize, comptime slice_offset: u64, comptime slice_size: u64) !void {
     try clearStorage(db_kind, init_opts);
-    var db = try xitdb.Database(db_kind, HashInt).init(allocator, init_opts);
+    var db = try xitdb.Database(db_kind, HashInt).init(init_opts);
     var root_cursor = db.rootCursor();
 
     const Ctx = struct {
@@ -504,7 +502,6 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
             // check all values in the new slice with an iterator
             {
                 var iter = try even_list_slice_cursor.iterator();
-                defer iter.deinit();
                 var i: u64 = 0;
                 while (try iter.next()) |num_cursor| {
                     try std.testing.expectEqual(values.items[slice_offset + i], try num_cursor.readUint());
@@ -566,7 +563,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
 
 fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, HashInt).InitOpts, comptime list_a_size: usize, comptime list_b_size: usize) !void {
     try clearStorage(db_kind, init_opts);
-    var db = try xitdb.Database(db_kind, HashInt).init(allocator, init_opts);
+    var db = try xitdb.Database(db_kind, HashInt).init(init_opts);
     var root_cursor = db.rootCursor();
 
     var values = std.ArrayList(u64).init(allocator);
@@ -656,7 +653,6 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
                 // check all values in the new list with an iterator
                 {
                     var iter = try combo_list_cursor.iterator();
-                    defer iter.deinit();
                     var i: u64 = 0;
                     while (try iter.next()) |num_cursor| {
                         try std.testing.expectEqual(self.values.items[i], try num_cursor.readUint());
@@ -684,7 +680,7 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
 
 fn testInsertAndRemove(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, HashInt).InitOpts, comptime original_size: usize, comptime insert_index: u64) !void {
     try clearStorage(db_kind, init_opts);
-    var db = try xitdb.Database(db_kind, HashInt).init(allocator, init_opts);
+    var db = try xitdb.Database(db_kind, HashInt).init(init_opts);
     var root_cursor = db.rootCursor();
 
     const insert_value: u64 = 12345;
@@ -737,7 +733,6 @@ fn testInsertAndRemove(allocator: std.mem.Allocator, comptime db_kind: xitdb.Dat
             // check all values in the new list with an iterator
             {
                 var iter = try even_list_insert_cursor.iterator();
-                defer iter.deinit();
                 var i: u64 = 0;
                 while (try iter.next()) |num_cursor| {
                     try std.testing.expectEqual(values.items[i], try num_cursor.readUint());
@@ -791,7 +786,6 @@ fn testInsertAndRemove(allocator: std.mem.Allocator, comptime db_kind: xitdb.Dat
             // check all values in the new list with an iterator
             {
                 var iter = try even_list_insert_cursor.iterator();
-                defer iter.deinit();
                 var i: u64 = 0;
                 while (try iter.next()) |num_cursor| {
                     try std.testing.expectEqual(values.items[i], try num_cursor.readUint());
@@ -821,10 +815,10 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
     {
         // make empty database
         try clearStorage(db_kind, init_opts);
-        _ = try xitdb.Database(db_kind, HashInt).init(allocator, init_opts);
+        _ = try xitdb.Database(db_kind, HashInt).init(init_opts);
 
         // re-open without error
-        var db = try xitdb.Database(db_kind, HashInt).init(allocator, init_opts);
+        var db = try xitdb.Database(db_kind, HashInt).init(init_opts);
         const writer = db.core.writer();
 
         // modify the magic number
@@ -833,7 +827,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
 
         // re-open with error
         {
-            const db_or_error = xitdb.Database(db_kind, HashInt).init(allocator, init_opts);
+            const db_or_error = xitdb.Database(db_kind, HashInt).init(init_opts);
             if (db_or_error) |_| {
                 return error.ExpectedInvalidDatabaseError;
             } else |err| {
@@ -849,7 +843,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
 
         // re-open with error
         {
-            const db_or_error = xitdb.Database(db_kind, HashInt).init(allocator, init_opts);
+            const db_or_error = xitdb.Database(db_kind, HashInt).init(init_opts);
             if (db_or_error) |_| {
                 return error.ExpectedInvalidVersionError;
             } else |err| {
@@ -865,7 +859,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
 
         // make empty database
         try clearStorage(db_kind, init_opts);
-        const db = try xitdb.Database(db_kind, HashInt).init(allocator, init_opts_with_hash_id);
+        const db = try xitdb.Database(db_kind, HashInt).init(init_opts_with_hash_id);
 
         try std.testing.expectEqual(xitdb.HashId.fromBytes("sha1").id, db.header.hash_id.id);
         try std.testing.expectEqualStrings("sha1", &db.header.hash_id.toBytes());
@@ -874,7 +868,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
     // array_list of hash_maps
     {
         try clearStorage(db_kind, init_opts);
-        var db = try xitdb.Database(db_kind, HashInt).init(allocator, init_opts);
+        var db = try xitdb.Database(db_kind, HashInt).init(init_opts);
         var root_cursor = db.rootCursor();
 
         // write foo -> bar with a writer
@@ -1633,7 +1627,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
     // append to top-level array_list many times, filling up the array_list until a root overflow occurs
     {
         try clearStorage(db_kind, init_opts);
-        var db = try xitdb.Database(db_kind, HashInt).init(allocator, init_opts);
+        var db = try xitdb.Database(db_kind, HashInt).init(init_opts);
         var root_cursor = db.rootCursor();
 
         const wat_key = hashInt("wat");
@@ -1739,7 +1733,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
     // append to inner array_list many times, filling up the array_list until a root overflow occurs
     {
         try clearStorage(db_kind, init_opts);
-        var db = try xitdb.Database(db_kind, HashInt).init(allocator, init_opts);
+        var db = try xitdb.Database(db_kind, HashInt).init(init_opts);
         var root_cursor = db.rootCursor();
 
         for (0..xitdb.SLOT_COUNT + 1) |i| {
@@ -1852,7 +1846,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
     // iterate over inner array_list
     {
         try clearStorage(db_kind, init_opts);
-        var db = try xitdb.Database(db_kind, HashInt).init(allocator, init_opts);
+        var db = try xitdb.Database(db_kind, HashInt).init(init_opts);
         var root_cursor = db.rootCursor();
 
         // add wats
@@ -1883,7 +1877,6 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .{ .array_list_get = -1 },
             })).?;
             var iter = try inner_cursor.iterator();
-            defer iter.deinit();
             var i: u64 = 0;
             while (try iter.next()) |*next_cursor| {
                 const value = try std.fmt.allocPrint(allocator, "wat{}", .{i});
@@ -1911,7 +1904,6 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .{ .array_list_get = -1 },
             })).?;
             var iter = try inner_cursor.iterator();
-            defer iter.deinit();
             var i: u64 = 0;
             while (try iter.next()) |_| {
                 i += 1;
@@ -1929,7 +1921,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
     // iterate over inner hash_map
     {
         try clearStorage(db_kind, init_opts);
-        var db = try xitdb.Database(db_kind, HashInt).init(allocator, init_opts);
+        var db = try xitdb.Database(db_kind, HashInt).init(init_opts);
         var root_cursor = db.rootCursor();
 
         // add wats
@@ -1989,7 +1981,6 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .{ .array_list_get = -1 },
             })).?;
             var iter = try inner_cursor.iterator();
-            defer iter.deinit();
             var i: u64 = 0;
             while (try iter.next()) |kv_pair_cursor| {
                 const kv_pair = try kv_pair_cursor.readKeyValuePair();
@@ -2016,7 +2007,6 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
             });
             var iter = try inner_cursor.iterator();
-            defer iter.deinit();
             var i: u64 = 0;
             while (try iter.next()) |kv_pair_cursor| {
                 var kv_pair = try kv_pair_cursor.readKeyValuePair();
@@ -2057,7 +2047,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
     // concat linked_array_list multiple times
     {
         try clearStorage(db_kind, init_opts);
-        var db = try xitdb.Database(db_kind, HashInt).init(allocator, init_opts);
+        var db = try xitdb.Database(db_kind, HashInt).init(init_opts);
         var root_cursor = db.rootCursor();
 
         const Ctx = struct {
@@ -2090,7 +2080,6 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                     .{ .hash_map_get = .{ .value = hashInt("even") } },
                 })).?;
                 var iter = try inner_cursor.iterator();
-                defer iter.deinit();
                 var i: u64 = 0;
                 while (try iter.next()) |_| {
                     i += 1;
@@ -2147,7 +2136,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
     // append items to linked_array_list without setting their value
     {
         try clearStorage(db_kind, init_opts);
-        var db = try xitdb.Database(db_kind, HashInt).init(allocator, init_opts);
+        var db = try xitdb.Database(db_kind, HashInt).init(init_opts);
         var root_cursor = db.rootCursor();
 
         // appending without setting any value should work

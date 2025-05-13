@@ -137,7 +137,6 @@ pub const DatabaseKind = enum {
 
 pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
     return struct {
-        allocator: std.mem.Allocator,
         core: Core,
         header: DatabaseHeader,
         tx_start: ?u64,
@@ -286,6 +285,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         const HASH_SIZE = byteSizeOf(HashInt);
         const INDEX_BLOCK_SIZE = byteSizeOf(Slot) * SLOT_COUNT;
         const LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE = byteSizeOf(LinkedArrayListSlot) * SLOT_COUNT;
+        const MAX_BRANCH_LENGTH: usize = 16;
 
         const ArrayListHeaderInt = u128;
         const ArrayListHeader = packed struct {
@@ -411,11 +411,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             },
         };
 
-        pub fn init(allocator: std.mem.Allocator, opts: InitOpts) !Database(db_kind, HashInt) {
+        pub fn init(opts: InitOpts) !Database(db_kind, HashInt) {
             switch (db_kind) {
                 .memory => {
                     var self = Database(db_kind, HashInt){
-                        .allocator = allocator,
                         .core = .{
                             .buffer = opts.buffer,
                             .max_size = opts.max_size,
@@ -442,7 +441,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 },
                 .file => {
                     var self = Database(db_kind, HashInt){
-                        .allocator = allocator,
                         .core = .{ .file = opts.file },
                         .header = undefined,
                         .tx_start = null,
@@ -1730,7 +1728,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             }
         }
 
-        fn readLinkedArrayListBlocks(self: *Database(db_kind, HashInt), index_pos: u64, key: u64, shift: u6, blocks: *std.ArrayList(LinkedArrayListBlockInfo)) !void {
+        fn readLinkedArrayListBlocks(self: *Database(db_kind, HashInt), index_pos: u64, key: u64, shift: u6, blocks: *std.BoundedArray(LinkedArrayListBlockInfo, MAX_BRANCH_LENGTH)) !void {
             const reader = self.core.reader();
 
             var slot_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
@@ -1776,25 +1774,23 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             }
 
             // read the list's left blocks
-            var left_blocks = std.ArrayList(LinkedArrayListBlockInfo).init(self.allocator);
-            defer left_blocks.deinit();
+            var left_blocks = try std.BoundedArray(LinkedArrayListBlockInfo, MAX_BRANCH_LENGTH).init(0);
             try self.readLinkedArrayListBlocks(header.ptr, offset, header.shift, &left_blocks);
 
             // read the list's right blocks
-            var right_blocks = std.ArrayList(LinkedArrayListBlockInfo).init(self.allocator);
-            defer right_blocks.deinit();
+            var right_blocks = try std.BoundedArray(LinkedArrayListBlockInfo, MAX_BRANCH_LENGTH).init(0);
             const right_key = if (offset + size == 0) 0 else offset + size - 1;
             try self.readLinkedArrayListBlocks(header.ptr, right_key, header.shift, &right_blocks);
 
             // create the new blocks
-            const block_count = left_blocks.items.len;
+            const block_count = left_blocks.slice().len;
             var next_slots = [_]?LinkedArrayListSlot{null} ** 2;
             var next_shift: u6 = 0;
             for (0..block_count) |i| {
                 const is_leaf_node = next_slots[0] == null;
 
-                const left_block = left_blocks.items[block_count - i - 1];
-                const right_block = right_blocks.items[block_count - i - 1];
+                const left_block = left_blocks.slice()[block_count - i - 1];
+                const right_block = right_blocks.slice()[block_count - i - 1];
                 const orig_block_infos = [_]LinkedArrayListBlockInfo{
                     left_block,
                     right_block,
@@ -1932,23 +1928,21 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             const core_writer = self.core.writer();
 
             // read the first list's blocks
-            var blocks_a = std.ArrayList(LinkedArrayListBlockInfo).init(self.allocator);
-            defer blocks_a.deinit();
+            var blocks_a = try std.BoundedArray(LinkedArrayListBlockInfo, MAX_BRANCH_LENGTH).init(0);
             const key_a = if (header_a.size == 0) 0 else header_a.size - 1;
             try self.readLinkedArrayListBlocks(header_a.ptr, key_a, header_a.shift, &blocks_a);
 
             // read the second list's blocks
-            var blocks_b = std.ArrayList(LinkedArrayListBlockInfo).init(self.allocator);
-            defer blocks_b.deinit();
+            var blocks_b = try std.BoundedArray(LinkedArrayListBlockInfo, MAX_BRANCH_LENGTH).init(0);
             try self.readLinkedArrayListBlocks(header_b.ptr, 0, header_b.shift, &blocks_b);
 
             // stitch the blocks together
             var next_slots = [_]?LinkedArrayListSlot{null} ** 2;
             var next_shift: u6 = 0;
-            for (0..@max(blocks_a.items.len, blocks_b.items.len)) |i| {
+            for (0..@max(blocks_a.slice().len, blocks_b.slice().len)) |i| {
                 const block_infos: [2]?LinkedArrayListBlockInfo = .{
-                    if (i < blocks_a.items.len) blocks_a.items[blocks_a.items.len - 1 - i] else null,
-                    if (i < blocks_b.items.len) blocks_b.items[blocks_b.items.len - 1 - i] else null,
+                    if (i < blocks_a.slice().len) blocks_a.slice()[blocks_a.slice().len - 1 - i] else null,
+                    if (i < blocks_b.slice().len) blocks_b.slice()[blocks_b.slice().len - 1 - i] else null,
                 };
                 var next_blocks: [2]?[SLOT_COUNT]LinkedArrayListSlot = .{ null, null };
                 const is_leaf_node = next_slots[0] == null;
@@ -2570,7 +2564,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     core: struct {
                         size: u64,
                         index: u64,
-                        stack: std.ArrayList(Level),
+                        stack: std.BoundedArray(Level, MAX_BRANCH_LENGTH),
                     },
 
                     pub const Level = struct {
@@ -2586,7 +2580,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 .none => .{
                                     .size = 0,
                                     .index = 0,
-                                    .stack = std.ArrayList(Level).init(cursor.db.allocator),
+                                    .stack = try std.BoundedArray(Level, MAX_BRANCH_LENGTH).init(0),
                                 },
                                 .array_list => blk: {
                                     const position = cursor.slot_ptr.slot.value;
@@ -2620,10 +2614,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         };
                     }
 
-                    pub fn deinit(self: *Iter) void {
-                        self.core.stack.deinit();
-                    }
-
                     pub fn next(self: *Iter) !?Cursor(write_mode) {
                         switch (self.cursor.slot_ptr.slot.tag) {
                             .none => return null,
@@ -2642,7 +2632,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         }
                     }
 
-                    fn initStack(cursor: Cursor(write_mode), position: u64, comptime block_size: u64) !std.ArrayList(Level) {
+                    fn initStack(cursor: Cursor(write_mode), position: u64, comptime block_size: u64) !std.BoundedArray(Level, MAX_BRANCH_LENGTH) {
                         // find the block
                         try cursor.db.core.seekTo(position);
                         // read the block
@@ -2662,7 +2652,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             }
                         }
                         // init the stack
-                        var stack = std.ArrayList(Level).init(cursor.db.allocator);
+                        var stack = try std.BoundedArray(Level, MAX_BRANCH_LENGTH).init(0);
                         try stack.append(.{
                             .position = position,
                             .block = index_block,
@@ -2672,12 +2662,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     }
 
                     fn nextInternal(self: *Iter, comptime block_size: u64) !?Cursor(write_mode) {
-                        while (self.core.stack.items.len > 0) {
-                            const level = self.core.stack.items[self.core.stack.items.len - 1];
+                        while (self.core.stack.slice().len > 0) {
+                            const level = self.core.stack.slice()[self.core.stack.slice().len - 1];
                             if (level.index == level.block.len) {
                                 _ = self.core.stack.pop();
-                                if (self.core.stack.items.len > 0) {
-                                    self.core.stack.items[self.core.stack.items.len - 1].index += 1;
+                                if (self.core.stack.slice().len > 0) {
+                                    self.core.stack.slice()[self.core.stack.slice().len - 1].index += 1;
                                 }
                                 continue;
                             } else {
@@ -2710,7 +2700,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                     });
                                     continue;
                                 } else {
-                                    self.core.stack.items[self.core.stack.items.len - 1].index += 1;
+                                    self.core.stack.slice()[self.core.stack.slice().len - 1].index += 1;
                                     // normally a slot that is .none should be skipped because it doesn't
                                     // have a value, but if it's set to full, then it is actually a valid
                                     // item that should be returned.
