@@ -2056,6 +2056,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
                         }
 
+                        if (next_shift == std.math.maxInt(u6)) return error.MaxShiftExceeded;
                         next_shift += 1;
 
                         break :blk new_ptr;
