@@ -2798,10 +2798,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 }
 
                 pub fn putKey(self: HashMap(.read_write), hash: HashInt, data: WriteableData) !void {
-                    _ = try self.cursor.writePath(void, &.{
+                    var cursor = try self.cursor.writePath(void, &.{
                         .{ .hash_map_get = .{ .key = hash } },
-                        .{ .write = data },
                     });
+                    // keys are only written if empty, because their value should always
+                    // be the same at a given hash.
+                    try cursor.writeIfEmpty(data);
                 }
 
                 pub fn putKeyCursor(self: HashMap(.read_write), hash: HashInt) !Cursor(.read_write) {
