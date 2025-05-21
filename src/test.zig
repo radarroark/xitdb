@@ -2163,7 +2163,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         }
     }
 
-    // prepend to linked_array_list many times
+    // insert at beginning of linked_array_list many times
     {
         try clearStorage(db_kind, init_opts);
         var db = try xitdb.Database(db_kind, HashInt).init(init_opts);
@@ -2185,6 +2185,33 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
                 .linked_array_list_init,
                 .{ .linked_array_list_insert = 0 },
+                .{ .write = .{ .uint = i } },
+            });
+        }
+    }
+
+    // insert at end of linked_array_list many times
+    {
+        try clearStorage(db_kind, init_opts);
+        var db = try xitdb.Database(db_kind, HashInt).init(init_opts);
+        var root_cursor = db.rootCursor();
+
+        _ = try root_cursor.writePath(void, &.{
+            .array_list_init,
+            .array_list_append,
+            .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+            .linked_array_list_init,
+            .linked_array_list_append,
+            .{ .write = .{ .uint = 42 } },
+        });
+
+        for (0..1_000) |i| {
+            _ = try root_cursor.writePath(void, &.{
+                .array_list_init,
+                .array_list_append,
+                .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+                .linked_array_list_init,
+                .{ .linked_array_list_insert = i },
                 .{ .write = .{ .uint = i } },
             });
         }

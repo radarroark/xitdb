@@ -2017,25 +2017,34 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 // clear the next slots
                 next_slots = .{ null, null };
 
-                // put the slots to write in separate blocks.
-                // if there are enough slots to fill two blocks,
-                // we try to fill the right block first. this means
-                // that gaps will tend to be in the left block.
-                // this is better because when we prepend, the left
-                // list is going to be empty, and this will allow the
-                // gaps to exist along the left edge rather than
-                // accumulating inside the list, where it will
-                // eventually fill up and MaxShiftExceeded will happen.
+                // put the slots to write in separate blocks
                 var blocks: [2][SLOT_COUNT]LinkedArrayListSlot = .{
                     [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT,
                     [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT,
                 };
                 if (slot_i > SLOT_COUNT) {
-                    for (0..slot_i - SLOT_COUNT) |j| {
-                        blocks[0][j] = slots_to_write[j];
-                    }
-                    for (0..SLOT_COUNT) |j| {
-                        blocks[1][j] = slots_to_write[j + (slot_i - SLOT_COUNT)];
+                    // if there are enough slots to fill two blocks,
+                    // we need to decide which block to leave the gap in.
+                    // if the first list is smaller, leave the gap in
+                    // the first block. otherwise, leave it in the second.
+                    // this will cause the gap to stay near the left or
+                    // right edge of the concatenated list. we do this
+                    // because if many gaps form inside the list, the
+                    // branches will get long and lead to MaxShiftExceeded.
+                    if (header_a.size < header_b.size) {
+                        for (0..slot_i - SLOT_COUNT) |j| {
+                            blocks[0][j] = slots_to_write[j];
+                        }
+                        for (0..SLOT_COUNT) |j| {
+                            blocks[1][j] = slots_to_write[j + (slot_i - SLOT_COUNT)];
+                        }
+                    } else {
+                        for (0..SLOT_COUNT) |j| {
+                            blocks[0][j] = slots_to_write[j];
+                        }
+                        for (0..slot_i - SLOT_COUNT) |j| {
+                            blocks[1][j] = slots_to_write[j + SLOT_COUNT];
+                        }
                     }
                 } else {
                     for (0..slot_i) |j| {
