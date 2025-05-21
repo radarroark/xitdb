@@ -1425,7 +1425,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         }
 
         fn readArrayListSlot(self: *Database(db_kind, HashInt), index_pos: u64, key: u64, shift: u6, comptime write_mode: WriteMode, is_top_level: bool) !SlotPointer {
-            if (shift == MAX_BRANCH_LENGTH) return error.MaxShiftExceeded;
+            if (shift >= MAX_BRANCH_LENGTH) return error.MaxShiftExceeded;
 
             const reader = self.core.reader();
 
@@ -1643,7 +1643,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         }
 
         fn readLinkedArrayListSlot(self: *Database(db_kind, HashInt), index_pos: u64, key: u64, shift: u6, comptime write_mode: WriteMode, is_top_level: bool) !LinkedArrayListSlotPointer {
-            if (shift == MAX_BRANCH_LENGTH) return error.MaxShiftExceeded;
+            if (shift >= MAX_BRANCH_LENGTH) return error.MaxShiftExceeded;
 
             const reader = self.core.reader();
             const writer = self.core.writer();
