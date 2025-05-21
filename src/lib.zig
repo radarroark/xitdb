@@ -1425,6 +1425,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         }
 
         fn readArrayListSlot(self: *Database(db_kind, HashInt), index_pos: u64, key: u64, shift: u6, comptime write_mode: WriteMode, is_top_level: bool) !SlotPointer {
+            if (shift == MAX_BRANCH_LENGTH) return error.MaxShiftExceeded;
+
             const reader = self.core.reader();
 
             const i: u4 = @intCast(key >> (shift * BIT_COUNT) & MASK);
@@ -1641,6 +1643,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         }
 
         fn readLinkedArrayListSlot(self: *Database(db_kind, HashInt), index_pos: u64, key: u64, shift: u6, comptime write_mode: WriteMode, is_top_level: bool) !LinkedArrayListSlotPointer {
+            if (shift == MAX_BRANCH_LENGTH) return error.MaxShiftExceeded;
+
             const reader = self.core.reader();
             const writer = self.core.writer();
 
@@ -2013,12 +2017,35 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 // clear the next slots
                 next_slots = .{ null, null };
 
+                // put the slots to write in separate blocks.
+                // if there are enough slots to fill two blocks,
+                // we try to fill the right block first. this means
+                // that gaps will tend to be in the left block.
+                // this is better because when we prepend, the left
+                // list is going to be empty, and this will allow the
+                // gaps to exist along the left edge rather than
+                // accumulating inside the list, where it will
+                // eventually fill up and MaxShiftExceeded will happen.
+                var blocks: [2][SLOT_COUNT]LinkedArrayListSlot = .{
+                    [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT,
+                    [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT,
+                };
+                if (slot_i > SLOT_COUNT) {
+                    for (0..slot_i - SLOT_COUNT) |j| {
+                        blocks[0][j] = slots_to_write[j];
+                    }
+                    for (0..SLOT_COUNT) |j| {
+                        blocks[1][j] = slots_to_write[j + (slot_i - SLOT_COUNT)];
+                    }
+                } else {
+                    for (0..slot_i) |j| {
+                        blocks[0][j] = slots_to_write[j];
+                    }
+                }
+
                 // write the block(s)
                 try self.core.seekFromEnd(0);
-                for (&next_slots, 0..) |*next_slot, block_i| {
-                    const start = block_i * SLOT_COUNT;
-                    const block = slots_to_write[start .. start + SLOT_COUNT];
-
+                for (blocks, &next_slots) |block, *next_slot| {
                     // this block is empty so don't bother writing it
                     if (block[0].slot.empty()) {
                         break;
@@ -2056,7 +2083,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
                         }
 
-                        if (next_shift == std.math.maxInt(u6)) return error.MaxShiftExceeded;
+                        if (next_shift == MAX_BRANCH_LENGTH) return error.MaxShiftExceeded;
                         next_shift += 1;
 
                         break :blk new_ptr;

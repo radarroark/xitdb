@@ -9,7 +9,7 @@ test "high level api" {
 
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
-    try testHighLevelApi(allocator, .memory, .{ .buffer = &buffer, .max_size = 50000 });
+    try testHighLevelApi(allocator, .memory, .{ .buffer = &buffer, .max_size = 50_000 });
 
     if (std.fs.cwd().openFile("main.db", .{})) |file| {
         file.close();
@@ -29,7 +29,7 @@ test "low level api" {
 
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
-    try testLowLevelApi(allocator, .memory, .{ .buffer = &buffer, .max_size = 50000 });
+    try testLowLevelApi(allocator, .memory, .{ .buffer = &buffer, .max_size = 50_000_000 });
 
     if (std.fs.cwd().openFile("main.db", .{})) |file| {
         file.close();
@@ -2159,6 +2159,33 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .linked_array_list_init,
                 .linked_array_list_append,
                 .{ .write = .{ .slot = null } },
+            });
+        }
+    }
+
+    // prepend to linked_array_list many times
+    {
+        try clearStorage(db_kind, init_opts);
+        var db = try xitdb.Database(db_kind, HashInt).init(init_opts);
+        var root_cursor = db.rootCursor();
+
+        _ = try root_cursor.writePath(void, &.{
+            .array_list_init,
+            .array_list_append,
+            .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+            .linked_array_list_init,
+            .linked_array_list_append,
+            .{ .write = .{ .uint = 42 } },
+        });
+
+        for (0..1_000) |i| {
+            _ = try root_cursor.writePath(void, &.{
+                .array_list_init,
+                .array_list_append,
+                .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
+                .linked_array_list_init,
+                .{ .linked_array_list_insert = 0 },
+                .{ .write = .{ .uint = i } },
             });
         }
     }
