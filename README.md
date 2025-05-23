@@ -97,3 +97,7 @@ const apple_value = try apple_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
 defer allocator.free(apple_value);
 try std.testing.expectEqualStrings("apple", apple_value);
 ```
+
+It is possible to read the database from multiple threads without locks, even while writes are happening. This is a big benefit of immutable databases. However, each thread needs to use its own file handle and Database object. Keep in mind that writes still need to come from a single thread.
+
+The `.file` database currently does not do any in-memory buffering, so the write performance won't be optimal. I plan on implementing that eventually.
