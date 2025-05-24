@@ -64,7 +64,9 @@ pub const Tag = enum(u7) {
     uint,
     int,
     float,
+    hash_set,
     counted_hash_map,
+    counted_hash_set,
 
     pub fn validate(self: Tag) !void {
         _ = try std.meta.intToEnum(Tag, @intFromEnum(self));
@@ -388,6 +390,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 linked_array_list_remove: i65,
                 hash_map_init: struct {
                     counted: bool = false,
+                    set: bool = false,
                 },
                 hash_map_get: union(HashMapSlotKind) {
                     kv_pair: HashInt,
@@ -980,9 +983,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     const tag: Tag = if (hash_map_init.counted)
-                        .counted_hash_map
+                        (if (hash_map_init.set) .counted_hash_set else .counted_hash_map)
                     else
-                        .hash_map;
+                        (if (hash_map_init.set) .hash_set else .hash_map);
 
                     if (is_top_level) {
                         const writer = self.core.writer();
@@ -1029,8 +1032,18 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                             return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                         },
-                        .hash_map, .counted_hash_map => {
-                            if (slot_ptr.slot.tag != tag) return error.UnexpectedTag;
+                        .hash_map, .hash_set, .counted_hash_map, .counted_hash_set => {
+                            if (hash_map_init.counted) {
+                                switch (slot_ptr.slot.tag) {
+                                    .counted_hash_map, .counted_hash_set => {},
+                                    else => return error.UnexpectedTag,
+                                }
+                            } else {
+                                switch (slot_ptr.slot.tag) {
+                                    .hash_map, .hash_set => {},
+                                    else => return error.UnexpectedTag,
+                                }
+                            }
 
                             const reader = self.core.reader();
                             const writer = self.core.writer();
@@ -1068,8 +1081,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     var counted = false;
                     switch (slot_ptr.slot.tag) {
                         .none => return error.KeyNotFound,
-                        .hash_map => {},
-                        .counted_hash_map => counted = true,
+                        .hash_map, .hash_set => {},
+                        .counted_hash_map, .counted_hash_set => counted = true,
                         else => return error.UnexpectedTag,
                     }
 
@@ -1096,8 +1109,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     var counted = false;
                     switch (slot_ptr.slot.tag) {
                         .none => return error.KeyNotFound,
-                        .hash_map => {},
-                        .counted_hash_map => counted = true,
+                        .hash_map, .hash_set => {},
+                        .counted_hash_map, .counted_hash_set => counted = true,
                         else => return error.UnexpectedTag,
                     }
 
@@ -2654,7 +2667,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             const total_size = if (self.slot_ptr.slot.full) byteSizeOf(u64) - 2 else byteSizeOf(u64);
                             return std.mem.indexOfScalar(u8, bytes[0..total_size], 0) orelse total_size;
                         },
-                        .counted_hash_map => {
+                        .counted_hash_map, .counted_hash_set => {
                             try self.db.core.seekTo(self.slot_ptr.slot.value);
                             return try core_reader.readInt(u64, .big);
                         },
@@ -2838,11 +2851,11 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 pub fn init(cursor: Database(db_kind, HashInt).Cursor(write_mode)) !HashMap(write_mode) {
                     return switch (write_mode) {
                         .read_only => switch (cursor.slot_ptr.slot.tag) {
-                            .none, .hash_map => .{ .cursor = cursor },
+                            .none, .hash_map, .hash_set => .{ .cursor = cursor },
                             else => error.UnexpectedTag,
                         },
                         .read_write => .{
-                            .cursor = try cursor.writePath(void, &.{.{ .hash_map_init = .{ .counted = false } }}),
+                            .cursor = try cursor.writePath(void, &.{.{ .hash_map_init = .{ .counted = false, .set = false } }}),
                         },
                     };
                 }
@@ -2933,11 +2946,11 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 pub fn init(cursor: Database(db_kind, HashInt).Cursor(write_mode)) !CountedHashMap(write_mode) {
                     return switch (write_mode) {
                         .read_only => switch (cursor.slot_ptr.slot.tag) {
-                            .none, .counted_hash_map => .{ .map = .{ .cursor = cursor } },
+                            .none, .counted_hash_map, .counted_hash_set => .{ .map = .{ .cursor = cursor } },
                             else => error.UnexpectedTag,
                         },
                         .read_write => .{
-                            .map = .{ .cursor = try cursor.writePath(void, &.{.{ .hash_map_init = .{ .counted = true } }}) },
+                            .map = .{ .cursor = try cursor.writePath(void, &.{.{ .hash_map_init = .{ .counted = true, .set = false } }}) },
                         },
                     };
                 }
@@ -2992,6 +3005,119 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                 pub fn remove(self: CountedHashMap(.read_write), hash: HashInt) !bool {
                     return try self.map.remove(hash);
+                }
+            };
+        }
+
+        pub fn HashSet(comptime write_mode: WriteMode) type {
+            return struct {
+                cursor: Database(db_kind, HashInt).Cursor(write_mode),
+
+                pub fn init(cursor: Database(db_kind, HashInt).Cursor(write_mode)) !HashSet(write_mode) {
+                    return switch (write_mode) {
+                        .read_only => switch (cursor.slot_ptr.slot.tag) {
+                            .none, .hash_map, .hash_set => .{ .cursor = cursor },
+                            else => error.UnexpectedTag,
+                        },
+                        .read_write => .{
+                            .cursor = try cursor.writePath(void, &.{.{ .hash_map_init = .{ .counted = false, .set = true } }}),
+                        },
+                    };
+                }
+
+                pub fn readOnly(self: HashSet(.read_write)) HashSet(.read_only) {
+                    return .{ .cursor = self.cursor.readOnly() };
+                }
+
+                pub fn iterator(self: HashSet(write_mode)) !Cursor(write_mode).Iter {
+                    return try self.cursor.iterator();
+                }
+
+                pub fn getCursor(self: HashSet(write_mode), hash: HashInt) !?Cursor(.read_only) {
+                    return try self.cursor.readPath(void, &.{
+                        .{ .hash_map_get = .{ .key = hash } },
+                    });
+                }
+
+                pub fn getSlot(self: HashSet(write_mode), hash: HashInt) !?Slot {
+                    return try self.cursor.readPathSlot(void, &.{
+                        .{ .hash_map_get = .{ .key = hash } },
+                    });
+                }
+
+                pub fn put(self: HashSet(.read_write), hash: HashInt, data: WriteableData) !void {
+                    var cursor = try self.cursor.writePath(void, &.{
+                        .{ .hash_map_get = .{ .key = hash } },
+                    });
+                    // keys are only written if empty, because their value should always
+                    // be the same at a given hash.
+                    try cursor.writeIfEmpty(data);
+                }
+
+                pub fn putCursor(self: HashSet(.read_write), hash: HashInt) !Cursor(.read_write) {
+                    return try self.cursor.writePath(void, &.{
+                        .{ .hash_map_get = .{ .key = hash } },
+                    });
+                }
+
+                pub fn remove(self: HashSet(.read_write), hash: HashInt) !bool {
+                    _ = self.cursor.writePath(void, &.{
+                        .{ .hash_map_remove = hash },
+                    }) catch |err| switch (err) {
+                        error.KeyNotFound => return false,
+                        else => |e| return e,
+                    };
+                    return true;
+                }
+            };
+        }
+
+        pub fn CountedHashSet(comptime write_mode: WriteMode) type {
+            return struct {
+                set: HashSet(write_mode),
+
+                pub fn init(cursor: Database(db_kind, HashInt).Cursor(write_mode)) !CountedHashSet(write_mode) {
+                    return switch (write_mode) {
+                        .read_only => switch (cursor.slot_ptr.slot.tag) {
+                            .none, .counted_hash_map, .counted_hash_set => .{ .set = .{ .cursor = cursor } },
+                            else => error.UnexpectedTag,
+                        },
+                        .read_write => .{
+                            .set = .{ .cursor = try cursor.writePath(void, &.{.{ .hash_map_init = .{ .counted = true, .set = true } }}) },
+                        },
+                    };
+                }
+
+                pub fn readOnly(self: CountedHashSet(.read_write)) CountedHashSet(.read_only) {
+                    return .{ .set = self.set.readOnly() };
+                }
+
+                pub fn count(self: CountedHashSet(write_mode)) !u64 {
+                    return try self.set.cursor.count();
+                }
+
+                pub fn iterator(self: CountedHashSet(write_mode)) !Cursor(write_mode).Iter {
+                    return try self.set.iterator();
+                }
+
+                pub fn getCursor(self: CountedHashSet(write_mode), hash: HashInt) !?Cursor(.read_only) {
+                    return try self.set.getCursor(hash);
+                }
+
+                pub fn getSlot(self: CountedHashSet(write_mode), hash: HashInt) !?Slot {
+                    return try self.set.getSlot(hash);
+                }
+
+                pub fn put(self: CountedHashSet(.read_write), hash: HashInt, data: WriteableData) !void {
+                    try self.set.put(hash, data);
+                }
+
+                pub fn putCursor(self: CountedHashSet(.read_write), hash: HashInt) !Cursor(.read_write) {
+                    return try self.set.putCursor(hash);
+                }
+
+                pub fn remove(self: CountedHashSet(.read_write), hash: HashInt) !bool {
+                    return try self.set.remove(hash);
                 }
             };
         }
