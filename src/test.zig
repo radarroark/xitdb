@@ -190,11 +190,23 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
                 _ = try DB.HashMap(.read_write).init(todo_cursor);
                 try todos.remove(1);
 
-                const letters_cursor = try moment.putCursor(hashInt("letters"));
-                const letters = try DB.CountedHashMap(.read_write).init(letters_cursor);
-                try letters.put(hashInt("a"), .{ .uint = 1 });
-                try letters.put(hashInt("a"), .{ .uint = 2 });
-                try letters.put(hashInt("c"), .{ .uint = 3 });
+                const letters_counted_map_cursor = try moment.putCursor(hashInt("letters-counted-map"));
+                const letters_counted_map = try DB.CountedHashMap(.read_write).init(letters_counted_map_cursor);
+                try letters_counted_map.put(hashInt("a"), .{ .uint = 1 });
+                try letters_counted_map.put(hashInt("a"), .{ .uint = 2 });
+                try letters_counted_map.put(hashInt("c"), .{ .uint = 3 });
+
+                const letters_set_cursor = try moment.putCursor(hashInt("letters-set"));
+                const letters_set = try DB.HashSet(.read_write).init(letters_set_cursor);
+                try letters_set.put(hashInt("a"), .{ .bytes = "a" });
+                try letters_set.put(hashInt("a"), .{ .bytes = "a" });
+                try letters_set.put(hashInt("c"), .{ .bytes = "c" });
+
+                const letters_counted_set_cursor = try moment.putCursor(hashInt("letters-counted-set"));
+                const letters_counted_set = try DB.CountedHashSet(.read_write).init(letters_counted_set_cursor);
+                try letters_counted_set.put(hashInt("a"), .{ .bytes = "a" });
+                try letters_counted_set.put(hashInt("a"), .{ .bytes = "a" });
+                try letters_counted_set.put(hashInt("c"), .{ .bytes = "c" });
             }
         };
         try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
@@ -253,9 +265,18 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
             }
         }
 
-        const letters_cursor = (try moment.getCursor(hashInt("letters"))).?;
-        const letters = try DB.CountedHashMap(.read_only).init(letters_cursor);
-        try std.testing.expectEqual(2, try letters.count());
+        const letters_counted_map_cursor = (try moment.getCursor(hashInt("letters-counted-map"))).?;
+        const letters_counted_map = try DB.CountedHashMap(.read_only).init(letters_counted_map_cursor);
+        try std.testing.expectEqual(2, try letters_counted_map.count());
+
+        const letters_set_cursor = (try moment.getCursor(hashInt("letters-set"))).?;
+        const letters_set = try DB.HashSet(.read_only).init(letters_set_cursor);
+        try std.testing.expect(null != try letters_set.getCursor(hashInt("a")));
+        try std.testing.expect(null != try letters_set.getCursor(hashInt("c")));
+
+        const letters_counted_set_cursor = (try moment.getCursor(hashInt("letters-counted-set"))).?;
+        const letters_counted_set = try DB.CountedHashSet(.read_only).init(letters_counted_set_cursor);
+        try std.testing.expectEqual(2, try letters_counted_set.count());
     }
 
     // make a new transaction and change the data
@@ -293,10 +314,20 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
                 try todos.slice(1, 2);
                 try todos.remove(1);
 
-                const letters_cursor = try moment.putCursor(hashInt("letters"));
-                const letters = try DB.CountedHashMap(.read_write).init(letters_cursor);
-                _ = try letters.remove(hashInt("b"));
-                _ = try letters.remove(hashInt("c"));
+                const letters_counted_map_cursor = try moment.putCursor(hashInt("letters-counted-map"));
+                const letters_counted_map = try DB.CountedHashMap(.read_write).init(letters_counted_map_cursor);
+                _ = try letters_counted_map.remove(hashInt("b"));
+                _ = try letters_counted_map.remove(hashInt("c"));
+
+                const letters_set_cursor = try moment.putCursor(hashInt("letters-set"));
+                const letters_set = try DB.HashSet(.read_write).init(letters_set_cursor);
+                _ = try letters_set.remove(hashInt("b"));
+                _ = try letters_set.remove(hashInt("c"));
+
+                const letters_counted_set_cursor = try moment.putCursor(hashInt("letters-counted-set"));
+                const letters_counted_set = try DB.CountedHashSet(.read_write).init(letters_counted_set_cursor);
+                _ = try letters_counted_set.remove(hashInt("b"));
+                _ = try letters_counted_set.remove(hashInt("c"));
             }
         };
         try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
@@ -343,9 +374,18 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         defer allocator.free(todo_value);
         try std.testing.expectEqualStrings("Wash the car", todo_value);
 
-        const letters_cursor = (try moment.getCursor(hashInt("letters"))).?;
-        const letters = try DB.CountedHashMap(.read_only).init(letters_cursor);
-        try std.testing.expectEqual(1, try letters.count());
+        const letters_counted_map_cursor = (try moment.getCursor(hashInt("letters-counted-map"))).?;
+        const letters_counted_map = try DB.CountedHashMap(.read_only).init(letters_counted_map_cursor);
+        try std.testing.expectEqual(1, try letters_counted_map.count());
+
+        const letters_set_cursor = (try moment.getCursor(hashInt("letters-set"))).?;
+        const letters_set = try DB.HashSet(.read_only).init(letters_set_cursor);
+        try std.testing.expect(null != try letters_set.getCursor(hashInt("a")));
+        try std.testing.expect(null == try letters_set.getCursor(hashInt("b")));
+
+        const letters_counted_set_cursor = (try moment.getCursor(hashInt("letters-counted-set"))).?;
+        const letters_counted_set = try DB.CountedHashSet(.read_only).init(letters_counted_set_cursor);
+        try std.testing.expectEqual(1, try letters_counted_set.count());
     }
 
     // the old data hasn't changed
