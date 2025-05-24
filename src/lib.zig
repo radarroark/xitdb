@@ -64,6 +64,7 @@ pub const Tag = enum(u7) {
     uint,
     int,
     float,
+    counted_hash_map,
 
     pub fn validate(self: Tag) !void {
         _ = try std.meta.intToEnum(Tag, @intFromEnum(self));
@@ -385,7 +386,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 },
                 linked_array_list_insert: i65,
                 linked_array_list_remove: i65,
-                hash_map_init,
+                hash_map_init: struct {
+                    counted: bool = false,
+                },
                 hash_map_get: union(HashMapSlotKind) {
                     kv_pair: HashInt,
                     key: HashInt,
@@ -973,27 +976,37 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     return final_slot_ptr;
                 },
-                .hash_map_init => {
+                .hash_map_init => |hash_map_init| {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
+
+                    const tag: Tag = if (hash_map_init.counted)
+                        .counted_hash_map
+                    else
+                        .hash_map;
 
                     if (is_top_level) {
                         const writer = self.core.writer();
 
                         // if the top level hash map hasn't been initialized
                         if (self.header.tag == .none) {
-                            // write the first block
                             try self.core.seekTo(DATABASE_START);
+
+                            if (hash_map_init.counted) {
+                                try writer.writeInt(u64, 0, .big);
+                            }
+
+                            // write the first block
                             const map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                             try writer.writeAll(&map_index_block);
 
                             // update db header
                             try self.core.seekTo(0);
-                            self.header.tag = .hash_map;
+                            self.header.tag = tag;
                             try writer.writeInt(DatabaseHeaderInt, @bitCast(self.header), .big);
                         }
 
                         var next_slot_ptr = slot_ptr;
-                        next_slot_ptr.slot.tag = .hash_map;
+                        next_slot_ptr.slot.tag = tag;
                         return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                     }
 
@@ -1005,15 +1018,20 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             const writer = self.core.writer();
                             try self.core.seekFromEnd(0);
                             const map_start = try self.core.getPos();
+                            if (hash_map_init.counted) {
+                                try writer.writeInt(u64, 0, .big);
+                            }
                             const map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                             try writer.writeAll(&map_index_block);
                             // make slot point to map
-                            const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = map_start, .tag = .hash_map } };
+                            const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = map_start, .tag = tag } };
                             try self.core.seekTo(position);
                             try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                             return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                         },
-                        .hash_map => {
+                        .hash_map, .counted_hash_map => {
+                            if (slot_ptr.slot.tag != tag) return error.UnexpectedTag;
+
                             const reader = self.core.reader();
                             const writer = self.core.writer();
 
@@ -1024,11 +1042,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 if (map_start < tx_start) {
                                     // read existing block
                                     try self.core.seekTo(map_start);
+                                    const map_count_maybe = if (hash_map_init.counted) try reader.readInt(u64, .big) else null;
                                     var map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                                     try reader.readNoEof(&map_index_block);
                                     // copy to the end
                                     try self.core.seekFromEnd(0);
                                     map_start = try self.core.getPos();
+                                    if (map_count_maybe) |map_count| try writer.writeInt(u64, map_count, .big);
                                     try writer.writeAll(&map_index_block);
                                 }
                             } else if (self.header.tag == .array_list) {
@@ -1036,7 +1056,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             }
 
                             // make slot point to map
-                            const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = map_start, .tag = .hash_map } };
+                            const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = map_start, .tag = tag } };
                             try self.core.seekTo(position);
                             try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                             return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
@@ -1045,30 +1065,58 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     }
                 },
                 .hash_map_get => |hash_map_get| {
+                    var counted = false;
                     switch (slot_ptr.slot.tag) {
                         .none => return error.KeyNotFound,
                         .hash_map => {},
+                        .counted_hash_map => counted = true,
                         else => return error.UnexpectedTag,
                     }
 
-                    const next_slot_ptr = switch (hash_map_get) {
+                    const res = switch (hash_map_get) {
                         .kv_pair => |kv_pair| try self.readMapSlot(slot_ptr.slot.value, kv_pair, 0, write_mode, is_top_level, .kv_pair),
                         .key => |key| try self.readMapSlot(slot_ptr.slot.value, key, 0, write_mode, is_top_level, .key),
                         .value => |value| try self.readMapSlot(slot_ptr.slot.value, value, 0, write_mode, is_top_level, .value),
                     };
 
-                    return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
+                    if (write_mode == .read_write and counted and res.is_empty) {
+                        const reader = self.core.reader();
+                        const writer = self.core.writer();
+                        try self.core.seekTo(slot_ptr.slot.value);
+                        const map_count = try reader.readInt(u64, .big);
+                        try self.core.seekTo(slot_ptr.slot.value);
+                        try writer.writeInt(u64, map_count + 1, .big);
+                    }
+
+                    return self.readSlotPointer(write_mode, Ctx, path[1..], res.slot_ptr);
                 },
                 .hash_map_remove => |key_hash| {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
+                    var counted = false;
                     switch (slot_ptr.slot.tag) {
                         .none => return error.KeyNotFound,
                         .hash_map => {},
+                        .counted_hash_map => counted = true,
                         else => return error.UnexpectedTag,
                     }
 
-                    _ = try self.removeMapSlot(slot_ptr.slot.value, key_hash, 0, is_top_level);
+                    var key_found = true;
+                    _ = self.removeMapSlot(slot_ptr.slot.value, key_hash, 0, is_top_level) catch |err| switch (err) {
+                        error.KeyNotFound => key_found = false,
+                        else => |e| return e,
+                    };
+
+                    if (write_mode == .read_write and counted and key_found) {
+                        const reader = self.core.reader();
+                        const writer = self.core.writer();
+                        try self.core.seekTo(slot_ptr.slot.value);
+                        const map_count = try reader.readInt(u64, .big);
+                        try self.core.seekTo(slot_ptr.slot.value);
+                        try writer.writeInt(u64, map_count - 1, .big);
+                    }
+
+                    if (!key_found) return error.KeyNotFound;
 
                     return slot_ptr;
                 },
@@ -1146,7 +1194,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
         // hash_map
 
-        fn readMapSlot(self: *Database(db_kind, HashInt), index_pos: u64, key_hash: HashInt, key_offset: u8, comptime write_mode: WriteMode, is_top_level: bool, hash_map_return: HashMapSlotKind) !SlotPointer {
+        const HashMapGetResult = struct {
+            slot_ptr: SlotPointer,
+            is_empty: bool,
+        };
+
+        fn readMapSlot(self: *Database(db_kind, HashInt), index_pos: u64, key_hash: HashInt, key_offset: u8, comptime write_mode: WriteMode, is_top_level: bool, target: HashMapSlotKind) !HashMapGetResult {
             if (key_offset >= (HASH_SIZE * 8) / BIT_COUNT) {
                 return error.KeyOffsetExceeded;
             }
@@ -1185,10 +1238,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             try self.core.seekTo(slot_pos);
                             try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
 
-                            return switch (hash_map_return) {
-                                .kv_pair => SlotPointer{ .position = slot_pos, .slot = next_slot },
-                                .key => SlotPointer{ .position = key_slot_pos, .slot = kv_pair.key_slot },
-                                .value => SlotPointer{ .position = value_slot_pos, .slot = kv_pair.value_slot },
+                            return .{
+                                .slot_ptr = switch (target) {
+                                    .kv_pair => SlotPointer{ .position = slot_pos, .slot = next_slot },
+                                    .key => SlotPointer{ .position = key_slot_pos, .slot = kv_pair.key_slot },
+                                    .value => SlotPointer{ .position = value_slot_pos, .slot = kv_pair.value_slot },
+                                },
+                                .is_empty = true,
                             };
                         },
                     }
@@ -1214,7 +1270,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             return error.ExpectedTxStart;
                         }
                     }
-                    return self.readMapSlot(next_ptr, key_hash, key_offset + 1, write_mode, is_top_level, hash_map_return);
+                    return self.readMapSlot(next_ptr, key_hash, key_offset + 1, write_mode, is_top_level, target);
                 },
                 .kv_pair => {
                     try self.core.seekTo(ptr);
@@ -1237,10 +1293,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                     try self.core.seekTo(slot_pos);
                                     try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
 
-                                    return switch (hash_map_return) {
-                                        .kv_pair => SlotPointer{ .position = slot_pos, .slot = next_slot },
-                                        .key => SlotPointer{ .position = key_slot_pos, .slot = kv_pair.key_slot },
-                                        .value => SlotPointer{ .position = value_slot_pos, .slot = kv_pair.value_slot },
+                                    return .{
+                                        .slot_ptr = switch (target) {
+                                            .kv_pair => SlotPointer{ .position = slot_pos, .slot = next_slot },
+                                            .key => SlotPointer{ .position = key_slot_pos, .slot = kv_pair.key_slot },
+                                            .value => SlotPointer{ .position = value_slot_pos, .slot = kv_pair.value_slot },
+                                        },
+                                        .is_empty = false,
                                     };
                                 }
                             } else if (self.header.tag == .array_list) {
@@ -1250,10 +1309,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                         const key_slot_pos = ptr + byteSizeOf(HashInt);
                         const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
-                        return switch (hash_map_return) {
-                            .kv_pair => SlotPointer{ .position = slot_pos, .slot = slot },
-                            .key => SlotPointer{ .position = key_slot_pos, .slot = kv_pair.key_slot },
-                            .value => SlotPointer{ .position = value_slot_pos, .slot = kv_pair.value_slot },
+                        return .{
+                            .slot_ptr = switch (target) {
+                                .kv_pair => SlotPointer{ .position = slot_pos, .slot = slot },
+                                .key => SlotPointer{ .position = key_slot_pos, .slot = kv_pair.key_slot },
+                                .value => SlotPointer{ .position = value_slot_pos, .slot = kv_pair.value_slot },
+                            },
+                            .is_empty = false,
                         };
                     } else {
                         switch (write_mode) {
@@ -1270,10 +1332,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 try writer.writeAll(&index_block);
                                 try self.core.seekTo(next_index_pos + (byteSizeOf(Slot) * next_i));
                                 try writer.writeInt(SlotInt, @bitCast(slot), .big);
-                                const next_slot_ptr = try self.readMapSlot(next_index_pos, key_hash, key_offset + 1, write_mode, is_top_level, hash_map_return);
+                                const res = try self.readMapSlot(next_index_pos, key_hash, key_offset + 1, write_mode, is_top_level, target);
                                 try self.core.seekTo(slot_pos);
                                 try writer.writeInt(SlotInt, @bitCast(Slot{ .value = next_index_pos, .tag = .index }), .big);
-                                return next_slot_ptr;
+                                return res;
                             },
                         }
                     }
@@ -2592,6 +2654,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             const total_size = if (self.slot_ptr.slot.full) byteSizeOf(u64) - 2 else byteSizeOf(u64);
                             return std.mem.indexOfScalar(u8, bytes[0..total_size], 0) orelse total_size;
                         },
+                        .counted_hash_map => {
+                            try self.db.core.seekTo(self.slot_ptr.slot.value);
+                            return try core_reader.readInt(u64, .big);
+                        },
                         else => return error.UnexpectedTag,
                     }
                 }
@@ -2776,7 +2842,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             else => error.UnexpectedTag,
                         },
                         .read_write => .{
-                            .cursor = try cursor.writePath(void, &.{.hash_map_init}),
+                            .cursor = try cursor.writePath(void, &.{.{ .hash_map_init = .{ .counted = false } }}),
                         },
                     };
                 }
@@ -2856,6 +2922,76 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         else => |e| return e,
                     };
                     return true;
+                }
+            };
+        }
+
+        pub fn CountedHashMap(comptime write_mode: WriteMode) type {
+            return struct {
+                map: HashMap(write_mode),
+
+                pub fn init(cursor: Database(db_kind, HashInt).Cursor(write_mode)) !CountedHashMap(write_mode) {
+                    return switch (write_mode) {
+                        .read_only => switch (cursor.slot_ptr.slot.tag) {
+                            .none, .counted_hash_map => .{ .map = .{ .cursor = cursor } },
+                            else => error.UnexpectedTag,
+                        },
+                        .read_write => .{
+                            .map = .{ .cursor = try cursor.writePath(void, &.{.{ .hash_map_init = .{ .counted = true } }}) },
+                        },
+                    };
+                }
+
+                pub fn readOnly(self: CountedHashMap(.read_write)) CountedHashMap(.read_only) {
+                    return .{ .map = self.map.readOnly() };
+                }
+
+                pub fn count(self: CountedHashMap(write_mode)) !u64 {
+                    return try self.map.cursor.count();
+                }
+
+                pub fn iterator(self: CountedHashMap(write_mode)) !Cursor(write_mode).Iter {
+                    return try self.map.iterator();
+                }
+
+                pub fn getCursor(self: CountedHashMap(write_mode), hash: HashInt) !?Cursor(.read_only) {
+                    return try self.map.getCursor(hash);
+                }
+
+                pub fn getSlot(self: CountedHashMap(write_mode), hash: HashInt) !?Slot {
+                    return try self.map.getSlot(hash);
+                }
+
+                pub fn getKeyCursor(self: CountedHashMap(write_mode), hash: HashInt) !?Cursor(.read_only) {
+                    return try self.map.getKeyCursor(hash);
+                }
+
+                pub fn getKeySlot(self: CountedHashMap(write_mode), hash: HashInt) !?Slot {
+                    return try self.map.getKeySlot(hash);
+                }
+
+                pub fn getKeyValuePair(self: CountedHashMap(write_mode), hash: HashInt) !?KeyValuePairCursor(.read_only) {
+                    return try self.map.getKeyValuePair(hash);
+                }
+
+                pub fn put(self: CountedHashMap(.read_write), hash: HashInt, data: WriteableData) !void {
+                    try self.map.put(hash, data);
+                }
+
+                pub fn putCursor(self: CountedHashMap(.read_write), hash: HashInt) !Cursor(.read_write) {
+                    return try self.map.putCursor(hash);
+                }
+
+                pub fn putKey(self: CountedHashMap(.read_write), hash: HashInt, data: WriteableData) !void {
+                    try self.map.putKey(hash, data);
+                }
+
+                pub fn putKeyCursor(self: CountedHashMap(.read_write), hash: HashInt) !Cursor(.read_write) {
+                    return try self.map.putKeyCursor(hash);
+                }
+
+                pub fn remove(self: CountedHashMap(.read_write), hash: HashInt) !bool {
+                    return try self.map.remove(hash);
                 }
             };
         }

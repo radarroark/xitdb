@@ -189,6 +189,12 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
                 const todo_cursor = try todos.insertCursor(1);
                 _ = try DB.HashMap(.read_write).init(todo_cursor);
                 try todos.remove(1);
+
+                const letters_cursor = try moment.putCursor(hashInt("letters"));
+                const letters = try DB.CountedHashMap(.read_write).init(letters_cursor);
+                try letters.put(hashInt("a"), .{ .uint = 1 });
+                try letters.put(hashInt("a"), .{ .uint = 2 });
+                try letters.put(hashInt("c"), .{ .uint = 3 });
             }
         };
         try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
@@ -246,6 +252,10 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
                 _ = try kv_pair_cursor.readKeyValuePair();
             }
         }
+
+        const letters_cursor = (try moment.getCursor(hashInt("letters"))).?;
+        const letters = try DB.CountedHashMap(.read_only).init(letters_cursor);
+        try std.testing.expectEqual(2, try letters.count());
     }
 
     // make a new transaction and change the data
@@ -282,6 +292,11 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
                 try todos.concat(todos_cursor.slot());
                 try todos.slice(1, 2);
                 try todos.remove(1);
+
+                const letters_cursor = try moment.putCursor(hashInt("letters"));
+                const letters = try DB.CountedHashMap(.read_write).init(letters_cursor);
+                _ = try letters.remove(hashInt("b"));
+                _ = try letters.remove(hashInt("c"));
             }
         };
         try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
@@ -327,6 +342,10 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         const todo_value = try todo_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
         defer allocator.free(todo_value);
         try std.testing.expectEqualStrings("Wash the car", todo_value);
+
+        const letters_cursor = (try moment.getCursor(hashInt("letters"))).?;
+        const letters = try DB.CountedHashMap(.read_only).init(letters_cursor);
+        try std.testing.expectEqual(1, try letters.count());
     }
 
     // the old data hasn't changed
@@ -556,7 +575,7 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
         .array_list_init,
         .array_list_append,
         .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-        .hash_map_init,
+        .{ .hash_map_init = .{} },
         .{ .ctx = .{ .allocator = allocator } },
     });
 }
@@ -612,7 +631,7 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
             .array_list_init,
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-            .hash_map_init,
+            .{ .hash_map_init = .{} },
             .{ .ctx = .{ .allocator = allocator, .values = &values } },
         });
     }
@@ -672,7 +691,7 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
             .array_list_init,
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-            .hash_map_init,
+            .{ .hash_map_init = .{} },
             .{ .ctx = .{ .allocator = allocator, .values = &values } },
         });
     }
@@ -752,7 +771,7 @@ fn testInsertAndRemove(allocator: std.mem.Allocator, comptime db_kind: xitdb.Dat
         .array_list_init,
         .array_list_append,
         .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-        .hash_map_init,
+        .{ .hash_map_init = .{} },
         .{ .ctx = .{ .allocator = allocator } },
     });
 
@@ -805,7 +824,7 @@ fn testInsertAndRemove(allocator: std.mem.Allocator, comptime db_kind: xitdb.Dat
         .array_list_init,
         .array_list_append,
         .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-        .hash_map_init,
+        .{ .hash_map_init = .{} },
         .{ .ctx = .{ .allocator = allocator } },
     });
 }
@@ -886,7 +905,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_get = .{ .value = foo_key } },
                 .{ .ctx = Ctx{} },
             });
@@ -959,7 +978,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_get = .{ .value = foo_key } },
                 .{ .ctx = Ctx{ .allocator = allocator } },
             });
@@ -994,7 +1013,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_get = .{ .value = foo_key } },
                 .{ .ctx = Ctx{ .allocator = allocator } },
             });
@@ -1019,7 +1038,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_get = .{ .value = foo_key } },
                 .{ .ctx = Ctx{ .allocator = allocator } },
             }) catch |err| switch (err) {
@@ -1049,7 +1068,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_get = .{ .value = bar_key } },
             });
             try bar_cursor.write(.{ .bytes = "longstring" });
@@ -1063,7 +1082,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                     .array_list_init,
                     .array_list_append,
                     .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                    .hash_map_init,
+                    .{ .hash_map_init = .{} },
                     .{ .hash_map_get = .{ .value = bar_key } },
                 });
                 try next_bar_cursor.writeIfEmpty(.{ .bytes = "longstring" });
@@ -1076,7 +1095,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                     .array_list_init,
                     .array_list_append,
                     .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                    .hash_map_init,
+                    .{ .hash_map_init = .{} },
                     .{ .hash_map_get = .{ .value = bar_key } },
                 });
                 try next_bar_cursor.write(.{ .bytes = "longstring" });
@@ -1101,7 +1120,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_get = .{ .value = bar_key } },
             });
             try bar_cursor.write(.{ .bytes = "shortstr" });
@@ -1125,7 +1144,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                     .array_list_init,
                     .array_list_append,
                     .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                    .hash_map_init,
+                    .{ .hash_map_init = .{} },
                     .{ .hash_map_get = .{ .value = bar_key } },
                 });
                 try bar_cursor.write(.{ .bytes_object = .{ .value = "shortstr", .format_tag = "st".* } });
@@ -1157,7 +1176,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                     .array_list_init,
                     .array_list_append,
                     .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                    .hash_map_init,
+                    .{ .hash_map_init = .{} },
                     .{ .hash_map_get = .{ .value = bar_key } },
                 });
                 try bar_cursor.write(.{ .bytes_object = .{ .value = "shorts", .format_tag = "st".* } });
@@ -1189,7 +1208,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                     .array_list_init,
                     .array_list_append,
                     .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                    .hash_map_init,
+                    .{ .hash_map_init = .{} },
                     .{ .hash_map_get = .{ .value = bar_key } },
                 });
                 try bar_cursor.write(.{ .bytes_object = .{ .value = "short", .format_tag = "st".* } });
@@ -1232,7 +1251,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .array_list_init,
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-            .hash_map_init,
+            .{ .hash_map_init = .{} },
             .{ .hash_map_get = .{ .value = bar_key } },
             .{ .write = .{ .bytes = "bar" } },
         })).slot_ptr.slot;
@@ -1242,7 +1261,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .array_list_init,
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-            .hash_map_init,
+            .{ .hash_map_init = .{} },
             .{ .hash_map_get = .{ .value = foo_key } },
             .{ .write = .{ .slot = bar_slot } },
         });
@@ -1277,7 +1296,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .array_list_init,
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-            .hash_map_init,
+            .{ .hash_map_init = .{} },
             .{ .hash_map_get = .{ .value = small_conflict_key } },
             .{ .write = .{ .bytes = "small" } },
         });
@@ -1289,7 +1308,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .array_list_init,
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-            .hash_map_init,
+            .{ .hash_map_init = .{} },
             .{ .hash_map_get = .{ .value = conflict_key } },
             .{ .write = .{ .bytes = "hello" } },
         });
@@ -1317,7 +1336,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .array_list_init,
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-            .hash_map_init,
+            .{ .hash_map_init = .{} },
             .{ .hash_map_get = .{ .value = conflict_key } },
             .{ .write = .{ .bytes = "goodbye" } },
         });
@@ -1364,7 +1383,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_remove = small_conflict_key },
             });
 
@@ -1410,7 +1429,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_remove = conflict_key },
             });
 
@@ -1450,7 +1469,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_get = .{ .value = foo_key } },
                 .{ .write = .{ .uint = 42 } },
             });
@@ -1469,7 +1488,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_get = .{ .value = foo_key } },
                 .{ .write = .{ .int = -42 } },
             });
@@ -1488,7 +1507,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_get = .{ .value = foo_key } },
                 .{ .write = .{ .float = 42.5 } },
             });
@@ -1506,7 +1525,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .array_list_init,
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-            .hash_map_init,
+            .{ .hash_map_init = .{} },
             .{ .hash_map_remove = foo_key },
         });
 
@@ -1515,7 +1534,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .array_list_init,
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-            .hash_map_init,
+            .{ .hash_map_init = .{} },
             .{ .hash_map_remove = hashInt("doesn't exist") },
         }));
 
@@ -1532,7 +1551,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_get = .{ .value = hashInt("fruits") } },
                 .array_list_init,
                 .array_list_append,
@@ -1554,7 +1573,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_get = .{ .value = hashInt("fruits") } },
                 .array_list_init,
                 .array_list_append,
@@ -1583,7 +1602,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_get = .{ .value = hashInt("fruits") } },
                 .array_list_init,
                 .array_list_append,
@@ -1595,7 +1614,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_get = .{ .value = hashInt("fruits") } },
                 .array_list_init,
                 .array_list_append,
@@ -1638,7 +1657,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_get = .{ .value = wat_key } },
                 .{ .write = .{ .bytes = value } },
             });
@@ -1680,7 +1699,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                     .array_list_init,
                     .array_list_append,
                     .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                    .hash_map_init,
+                    .{ .hash_map_init = .{} },
                     .{ .hash_map_get = .{ .value = wat_key } },
                     .{ .write = .{ .bytes = value } },
                     .{ .ctx = .{ .i = i } },
@@ -1698,7 +1717,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_get = .{ .value = wat_key } },
                 .{ .write = .{ .bytes = "wat32" } },
             });
@@ -1933,7 +1952,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 .array_list_init,
                 .array_list_append,
                 .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-                .hash_map_init,
+                .{ .hash_map_init = .{} },
                 .{ .hash_map_get = .{ .value = wat_key } },
                 .{ .write = .{ .bytes = value } },
             });
@@ -1953,7 +1972,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .array_list_init,
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-            .hash_map_init,
+            .{ .hash_map_init = .{} },
             .{ .hash_map_get = .{ .key = foo_key } },
             .{ .write = .{ .bytes = "foo" } },
         });
@@ -1961,7 +1980,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .array_list_init,
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-            .hash_map_init,
+            .{ .hash_map_init = .{} },
             .{ .hash_map_get = .{ .value = foo_key } },
             .{ .write = .{ .uint = 42 } },
         });
@@ -1971,7 +1990,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .array_list_init,
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-            .hash_map_init,
+            .{ .hash_map_init = .{} },
             .{ .hash_map_remove = hashInt("wat0") },
         });
 
@@ -2128,7 +2147,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             .array_list_init,
             .array_list_append,
             .{ .write = .{ .slot = try root_cursor.readPathSlot(void, &.{.{ .array_list_get = -1 }}) } },
-            .hash_map_init,
+            .{ .hash_map_init = .{} },
             .{ .ctx = .{ .allocator = allocator } },
         });
     }
