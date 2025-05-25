@@ -1086,10 +1086,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         else => return error.UnexpectedTag,
                     }
 
+                    const index_pos = if (counted) slot_ptr.slot.value + byteSizeOf(u64) else slot_ptr.slot.value;
+
                     const res = switch (hash_map_get) {
-                        .kv_pair => |kv_pair| try self.readMapSlot(slot_ptr.slot.value, kv_pair, 0, write_mode, is_top_level, .kv_pair),
-                        .key => |key| try self.readMapSlot(slot_ptr.slot.value, key, 0, write_mode, is_top_level, .key),
-                        .value => |value| try self.readMapSlot(slot_ptr.slot.value, value, 0, write_mode, is_top_level, .value),
+                        .kv_pair => |kv_pair| try self.readMapSlot(index_pos, kv_pair, 0, write_mode, is_top_level, .kv_pair),
+                        .key => |key| try self.readMapSlot(index_pos, key, 0, write_mode, is_top_level, .key),
+                        .value => |value| try self.readMapSlot(index_pos, value, 0, write_mode, is_top_level, .value),
                     };
 
                     if (write_mode == .read_write and counted and res.is_empty) {
@@ -1114,8 +1116,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         else => return error.UnexpectedTag,
                     }
 
+                    const index_pos = if (counted) slot_ptr.slot.value + byteSizeOf(u64) else slot_ptr.slot.value;
+
                     var key_found = true;
-                    _ = self.removeMapSlot(slot_ptr.slot.value, key_hash, 0, is_top_level) catch |err| switch (err) {
+                    _ = self.removeMapSlot(index_pos, key_hash, 0, is_top_level) catch |err| switch (err) {
                         error.KeyNotFound => key_found = false,
                         else => |e| return e,
                     };
