@@ -2724,10 +2724,15 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                         .stack = try initStack(cursor, header.ptr, LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE),
                                     };
                                 },
-                                .hash_map => .{
+                                .hash_map, .hash_set => .{
                                     .size = 0,
                                     .index = 0,
                                     .stack = try initStack(cursor, cursor.slot_ptr.slot.value, INDEX_BLOCK_SIZE),
+                                },
+                                .counted_hash_map, .counted_hash_set => .{
+                                    .size = 0,
+                                    .index = 0,
+                                    .stack = try initStack(cursor, cursor.slot_ptr.slot.value + byteSizeOf(u64), INDEX_BLOCK_SIZE),
                                 },
                                 else => return error.UnexpectedTag,
                             },
@@ -2747,7 +2752,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 self.core.index += 1;
                                 return try self.nextInternal(LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE);
                             },
-                            .hash_map => return try self.nextInternal(INDEX_BLOCK_SIZE),
+                            .hash_map, .hash_set, .counted_hash_map, .counted_hash_set => return try self.nextInternal(INDEX_BLOCK_SIZE),
                             else => return error.UnexpectedTag,
                         }
                     }
