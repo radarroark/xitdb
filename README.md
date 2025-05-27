@@ -12,7 +12,7 @@ Usually, you want to use a top-level `ArrayList` like in the example below, beca
 
 You can also use a top-level `HashMap`, which is useful for ephemeral databases where immutability or transaction safety isn't necessary. Since xitdb supports in-memory databases, you could use it as an over-the-wire serialization format. Much like "Cap'n Proto", xitdb has no encoding/decoding step: you just give the buffer to xitdb and it can immediately read from it.
 
-The `HashMap` and `ArrayList` are based on the hash array mapped trie from Phil Bagwell. There is also a `LinkedArrayList`, which is based on the RRB tree, also from Phil Bagwell. It is similar to an `ArrayList`, except it can be efficiently sliced and concatenated. At some point I'll get off my lazy ass and provide better documentation, but for now, check out the example below and the tests.
+The `HashMap` and `ArrayList` are based on the hash array mapped trie from Phil Bagwell. There is also a `LinkedArrayList`, which is based on the RRB tree, also from Phil Bagwell. It is similar to an `ArrayList`, except it can be efficiently sliced and concatenated. If you need a `HashMap` that maintains a count of its contents, there is a `CountedHashMap`. Lastly, there is a `HashSet` and `CountedHashSet` which work like a `HashMap` that only sets its keys. Check out the example below and the tests.
 
 ```zig
 // create db file
