@@ -21,7 +21,7 @@ defer file.close();
 
 // init the db
 const DB = xitdb.Database(.file, HashInt);
-var db = try DB.init(allocator, .{ .file = file });
+var db = try DB.init(.{ .file = file });
 
 // to get the benefits of immutability, the top-level data structure
 // must be an ArrayList, so each transaction is stored as an item in it
