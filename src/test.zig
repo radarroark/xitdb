@@ -7,9 +7,9 @@ const MAX_READ_BYTES = 1024;
 test "high level api" {
     const allocator = std.testing.allocator;
 
-    var buffer = std.ArrayList(u8).init(allocator);
-    defer buffer.deinit();
-    try testHighLevelApi(allocator, .memory, .{ .buffer = &buffer, .max_size = 50_000 });
+    var buffer = std.ArrayList(u8){};
+    defer buffer.deinit(allocator);
+    try testHighLevelApi(allocator, .memory, .{ .buffer = &buffer, .allocator = allocator, .max_size = 50_000 });
 
     if (std.fs.cwd().openFile("main.db", .{})) |file| {
         file.close();
@@ -27,9 +27,9 @@ test "high level api" {
 test "low level api" {
     const allocator = std.testing.allocator;
 
-    var buffer = std.ArrayList(u8).init(allocator);
-    defer buffer.deinit();
-    try testLowLevelApi(allocator, .memory, .{ .buffer = &buffer, .max_size = 50_000_000 });
+    var buffer = std.ArrayList(u8){};
+    defer buffer.deinit(allocator);
+    try testLowLevelApi(allocator, .memory, .{ .buffer = &buffer, .allocator = allocator, .max_size = 50_000_000 });
 
     if (std.fs.cwd().openFile("main.db", .{})) |file| {
         file.close();
@@ -56,11 +56,11 @@ test "not using arraylist at the top level" {
 
     // hash map
     {
-        var buffer = std.ArrayList(u8).init(allocator);
-        defer buffer.deinit();
+        var buffer = std.ArrayList(u8){};
+        defer buffer.deinit(allocator);
 
         const DB = xitdb.Database(.memory, HashInt);
-        var db = try DB.init(.{ .buffer = &buffer, .max_size = 50000 });
+        var db = try DB.init(.{ .buffer = &buffer, .allocator = allocator, .max_size = 50000 });
 
         const map = try DB.HashMap(.read_write).init(db.rootCursor());
         try map.put(hashInt("foo"), .{ .bytes = "foo" });
@@ -83,11 +83,11 @@ test "not using arraylist at the top level" {
 
     // linked array list is not currently allowed at the top level
     {
-        var buffer = std.ArrayList(u8).init(allocator);
-        defer buffer.deinit();
+        var buffer = std.ArrayList(u8){};
+        defer buffer.deinit(allocator);
 
         const DB = xitdb.Database(.memory, HashInt);
-        var db = try DB.init(.{ .buffer = &buffer, .max_size = 50000 });
+        var db = try DB.init(.{ .buffer = &buffer, .allocator = allocator, .max_size = 50000 });
 
         try std.testing.expectError(error.InvalidTopLevelType, DB.LinkedArrayList(.read_write).init(db.rootCursor()));
     }
@@ -96,9 +96,9 @@ test "not using arraylist at the top level" {
 test "low level memory operations" {
     const allocator = std.testing.allocator;
 
-    var buffer = std.ArrayList(u8).init(allocator);
-    defer buffer.deinit();
-    var db = try xitdb.Database(.memory, HashInt).init(.{ .buffer = &buffer, .max_size = 10000 });
+    var buffer = std.ArrayList(u8){};
+    defer buffer.deinit(allocator);
+    var db = try xitdb.Database(.memory, HashInt).init(.{ .buffer = &buffer, .allocator = allocator, .max_size = 10000 });
 
     var writer = db.core.writer();
     try db.core.seekTo(0);
@@ -548,7 +548,7 @@ fn clearStorage(comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(
             try init_opts.file.setEndPos(0);
         },
         .memory => {
-            init_opts.buffer.clearAndFree();
+            init_opts.buffer.clearAndFree(init_opts.allocator);
         },
     }
 }
@@ -562,13 +562,13 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
         allocator: std.mem.Allocator,
 
         pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, HashInt).Cursor(.read_write)) !void {
-            var values = std.ArrayList(u64).init(self.allocator);
-            defer values.deinit();
+            var values = std.ArrayList(u64){};
+            defer values.deinit(self.allocator);
 
             // create list
             for (0..original_size) |i| {
                 const n = i * 2;
-                try values.append(n);
+                try values.append(self.allocator, n);
                 _ = try cursor.writePath(void, &.{
                     .{ .hash_map_get = .{ .value = hashInt("even") } },
                     .linked_array_list_init,
@@ -623,10 +623,10 @@ fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind,
             });
 
             // check all values in the combo list
-            var combo_values = std.ArrayList(u64).init(self.allocator);
-            defer combo_values.deinit();
-            try combo_values.appendSlice(values.items[slice_offset .. slice_offset + slice_size]);
-            try combo_values.appendSlice(values.items[slice_offset .. slice_offset + slice_size]);
+            var combo_values = std.ArrayList(u64){};
+            defer combo_values.deinit(self.allocator);
+            try combo_values.appendSlice(self.allocator, values.items[slice_offset .. slice_offset + slice_size]);
+            try combo_values.appendSlice(self.allocator, values.items[slice_offset .. slice_offset + slice_size]);
             for (combo_values.items, 0..) |val, i| {
                 const n = (try cursor.readPath(void, &.{
                     .{ .hash_map_get = .{ .value = hashInt("combo") } },
@@ -664,8 +664,8 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
     var db = try xitdb.Database(db_kind, HashInt).init(init_opts);
     var root_cursor = db.rootCursor();
 
-    var values = std.ArrayList(u64).init(allocator);
-    defer values.deinit();
+    var values = std.ArrayList(u64){};
+    defer values.deinit(allocator);
 
     {
         const Ctx = struct {
@@ -680,7 +680,7 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
                 });
                 for (0..list_a_size) |i| {
                     const n = i * 2;
-                    try self.values.append(n);
+                    try self.values.append(self.allocator, n);
                     _ = try cursor.writePath(void, &.{
                         .{ .hash_map_get = .{ .value = hashInt("even") } },
                         .linked_array_list_init,
@@ -696,7 +696,7 @@ fn testConcat(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind
                 });
                 for (0..list_b_size) |i| {
                     const n = (i * 2) + 1;
-                    try self.values.append(n);
+                    try self.values.append(self.allocator, n);
                     _ = try cursor.writePath(void, &.{
                         .{ .hash_map_get = .{ .value = hashInt("odd") } },
                         .linked_array_list_init,
@@ -787,16 +787,16 @@ fn testInsertAndRemove(allocator: std.mem.Allocator, comptime db_kind: xitdb.Dat
         allocator: std.mem.Allocator,
 
         pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, HashInt).Cursor(.read_write)) !void {
-            var values = std.ArrayList(u64).init(self.allocator);
-            defer values.deinit();
+            var values = std.ArrayList(u64){};
+            defer values.deinit(self.allocator);
 
             // create list
             for (0..original_size) |i| {
                 if (i == insert_index) {
-                    try values.append(insert_value);
+                    try values.append(self.allocator, insert_value);
                 }
                 const n = i * 2;
-                try values.append(n);
+                try values.append(self.allocator, n);
                 _ = try cursor.writePath(void, &.{
                     .{ .hash_map_get = .{ .value = hashInt("even") } },
                     .linked_array_list_init,
@@ -858,12 +858,12 @@ fn testInsertAndRemove(allocator: std.mem.Allocator, comptime db_kind: xitdb.Dat
         allocator: std.mem.Allocator,
 
         pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, HashInt).Cursor(.read_write)) !void {
-            var values = std.ArrayList(u64).init(self.allocator);
-            defer values.deinit();
+            var values = std.ArrayList(u64){};
+            defer values.deinit(self.allocator);
 
             for (0..original_size) |i| {
                 const n = i * 2;
-                try values.append(n);
+                try values.append(self.allocator, n);
             }
 
             // remove inserted value from the list
@@ -1000,10 +1000,6 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             const bar_value = try bar_cursor.readBytesAlloc(allocator, MAX_READ_BYTES);
             defer allocator.free(bar_value);
             try std.testing.expectEqualStrings("bar", bar_value);
-
-            // make sure we can make a buffered reader
-            var buf_reader = std.io.bufferedReader(try bar_cursor.reader());
-            _ = try buf_reader.read(&[_]u8{});
         }
 
         // read foo from ctx
@@ -2152,13 +2148,13 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             allocator: std.mem.Allocator,
 
             pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, HashInt).Cursor(.read_write)) !void {
-                var values = std.ArrayList(u64).init(self.allocator);
-                defer values.deinit();
+                var values = std.ArrayList(u64){};
+                defer values.deinit(self.allocator);
 
                 // create list
                 for (0..xitdb.SLOT_COUNT + 1) |i| {
                     const n = i * 2;
-                    try values.append(n);
+                    try values.append(self.allocator, n);
                     _ = try cursor.writePath(void, &.{
                         .{ .hash_map_get = .{ .value = hashInt("even") } },
                         .linked_array_list_init,

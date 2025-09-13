@@ -147,6 +147,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         pub const Core = switch (db_kind) {
             .memory => struct {
                 buffer: *std.ArrayList(u8),
+                allocator: std.mem.Allocator,
                 max_size: ?u64,
                 position: u64,
 
@@ -196,7 +197,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                     return error.MaxSizeExceeded;
                                 }
                             }
-                            try self.parent.buffer.ensureTotalCapacityPrecise(new_size);
+                            try self.parent.buffer.ensureTotalCapacityPrecise(self.parent.allocator, new_size);
                             self.parent.buffer.expandToCapacity();
                         }
                     }
@@ -255,14 +256,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             .file => struct {
                 file: std.fs.File,
 
-                pub const Reader = std.fs.File.Reader;
+                pub const Reader = std.fs.File.DeprecatedReader;
 
-                pub fn reader(self: Core) std.fs.File.Reader {
-                    return self.file.reader();
+                pub fn reader(self: Core) std.fs.File.DeprecatedReader {
+                    return self.file.deprecatedReader();
                 }
 
-                pub fn writer(self: Core) std.fs.File.Writer {
-                    return self.file.writer();
+                pub fn writer(self: Core) std.fs.File.DeprecatedWriter {
+                    return self.file.deprecatedWriter();
                 }
 
                 pub fn seekTo(self: Core, offset: u64) !void {
@@ -408,6 +409,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         pub const InitOpts = switch (db_kind) {
             .memory => struct {
                 buffer: *std.ArrayList(u8),
+                allocator: std.mem.Allocator,
                 max_size: ?u64 = null,
                 hash_id: HashId = .{ .id = 0 },
             },
@@ -423,6 +425,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     var self = Database(db_kind, HashInt){
                         .core = .{
                             .buffer = opts.buffer,
+                            .allocator = opts.allocator,
                             .max_size = opts.max_size,
                             .position = 0,
                         },
@@ -452,8 +455,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         .tx_start = null,
                     };
 
-                    const meta = try self.core.file.metadata();
-                    const size = meta.size();
+                    const stat = try self.core.file.stat();
+                    const size = stat.size;
 
                     try self.core.seekTo(0);
                     if (size == 0) {
@@ -512,7 +515,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             if (file_size == header_file_size) return;
 
             switch (db_kind) {
-                .memory => self.core.buffer.shrinkAndFree(header_file_size),
+                .memory => self.core.buffer.shrinkAndFree(self.core.allocator, header_file_size),
                 .file => {
                     if (.windows != builtin.os.tag) {
                         // for some reason, calling `setEndPos` on a read-only file
@@ -520,7 +523,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         // writing a single byte at the end of the file to test
                         // if the file is open for writing.
                         try self.core.seekFromEnd(0);
-                        self.core.file.writer().writeByte(0) catch |err| switch (err) {
+                        self.core.file.deprecatedWriter().writeByte(0) catch |err| switch (err) {
                             error.NotOpenForWriting => return,
                             else => |e| return e,
                         };
@@ -1811,7 +1814,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             }
         }
 
-        fn readLinkedArrayListBlocks(self: *Database(db_kind, HashInt), index_pos: u64, key: u64, shift: u6, blocks: *std.BoundedArray(LinkedArrayListBlockInfo, MAX_BRANCH_LENGTH)) !void {
+        fn readLinkedArrayListBlocks(self: *Database(db_kind, HashInt), index_pos: u64, key: u64, shift: u6, blocks: *BoundedArray(LinkedArrayListBlockInfo, MAX_BRANCH_LENGTH)) !void {
             const reader = self.core.reader();
 
             var slot_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
@@ -1857,11 +1860,11 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             }
 
             // read the list's left blocks
-            var left_blocks = try std.BoundedArray(LinkedArrayListBlockInfo, MAX_BRANCH_LENGTH).init(0);
+            var left_blocks = try BoundedArray(LinkedArrayListBlockInfo, MAX_BRANCH_LENGTH).init(0);
             try self.readLinkedArrayListBlocks(header.ptr, offset, header.shift, &left_blocks);
 
             // read the list's right blocks
-            var right_blocks = try std.BoundedArray(LinkedArrayListBlockInfo, MAX_BRANCH_LENGTH).init(0);
+            var right_blocks = try BoundedArray(LinkedArrayListBlockInfo, MAX_BRANCH_LENGTH).init(0);
             const right_key = if (offset + size == 0) 0 else offset + size - 1;
             try self.readLinkedArrayListBlocks(header.ptr, right_key, header.shift, &right_blocks);
 
@@ -2011,12 +2014,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             const core_writer = self.core.writer();
 
             // read the first list's blocks
-            var blocks_a = try std.BoundedArray(LinkedArrayListBlockInfo, MAX_BRANCH_LENGTH).init(0);
+            var blocks_a = try BoundedArray(LinkedArrayListBlockInfo, MAX_BRANCH_LENGTH).init(0);
             const key_a = if (header_a.size == 0) 0 else header_a.size - 1;
             try self.readLinkedArrayListBlocks(header_a.ptr, key_a, header_a.shift, &blocks_a);
 
             // read the second list's blocks
-            var blocks_b = try std.BoundedArray(LinkedArrayListBlockInfo, MAX_BRANCH_LENGTH).init(0);
+            var blocks_b = try BoundedArray(LinkedArrayListBlockInfo, MAX_BRANCH_LENGTH).init(0);
             try self.readLinkedArrayListBlocks(header_b.ptr, 0, header_b.shift, &blocks_b);
 
             // stitch the blocks together
@@ -2684,7 +2687,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     core: struct {
                         size: u64,
                         index: u64,
-                        stack: std.BoundedArray(Level, MAX_BRANCH_LENGTH),
+                        stack: BoundedArray(Level, MAX_BRANCH_LENGTH),
                     },
 
                     pub const Level = struct {
@@ -2700,7 +2703,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 .none => .{
                                     .size = 0,
                                     .index = 0,
-                                    .stack = try std.BoundedArray(Level, MAX_BRANCH_LENGTH).init(0),
+                                    .stack = try BoundedArray(Level, MAX_BRANCH_LENGTH).init(0),
                                 },
                                 .array_list => blk: {
                                     const position = cursor.slot_ptr.slot.value;
@@ -2757,7 +2760,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         }
                     }
 
-                    fn initStack(cursor: Cursor(write_mode), position: u64, comptime block_size: u64) !std.BoundedArray(Level, MAX_BRANCH_LENGTH) {
+                    fn initStack(cursor: Cursor(write_mode), position: u64, comptime block_size: u64) !BoundedArray(Level, MAX_BRANCH_LENGTH) {
                         // find the block
                         try cursor.db.core.seekTo(position);
                         // read the block
@@ -2777,7 +2780,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             }
                         }
                         // init the stack
-                        var stack = try std.BoundedArray(Level, MAX_BRANCH_LENGTH).init(0);
+                        var stack = try BoundedArray(Level, MAX_BRANCH_LENGTH).init(0);
                         try stack.append(.{
                             .position = position,
                             .block = index_block,
@@ -3315,6 +3318,69 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     });
                 }
             };
+        }
+    };
+}
+
+fn BoundedArray(comptime T: type, comptime buffer_capacity: usize) type {
+    const alignment: std.mem.Alignment = .of(T);
+    return struct {
+        const Self = @This();
+        buffer: [buffer_capacity]T align(alignment.toByteUnits()) = undefined,
+        len: usize = 0,
+
+        pub fn init(len: usize) error{Overflow}!Self {
+            if (len > buffer_capacity) return error.Overflow;
+            return Self{ .len = len };
+        }
+
+        pub fn slice(self: anytype) switch (@TypeOf(&self.buffer)) {
+            *align(alignment.toByteUnits()) [buffer_capacity]T => []align(alignment.toByteUnits()) T,
+            *align(alignment.toByteUnits()) const [buffer_capacity]T => []align(alignment.toByteUnits()) const T,
+            else => unreachable,
+        } {
+            return self.buffer[0..self.len];
+        }
+
+        pub fn constSlice(self: *const Self) []align(alignment.toByteUnits()) const T {
+            return self.slice();
+        }
+
+        pub fn get(self: Self, i: usize) T {
+            return self.constSlice()[i];
+        }
+
+        pub fn set(self: *Self, i: usize, item: T) void {
+            self.slice()[i] = item;
+        }
+
+        pub fn ensureUnusedCapacity(self: Self, additional_count: usize) error{Overflow}!void {
+            if (self.len + additional_count > buffer_capacity) {
+                return error.Overflow;
+            }
+        }
+
+        pub fn addOne(self: *Self) error{Overflow}!*T {
+            try self.ensureUnusedCapacity(1);
+            return self.addOneAssumeCapacity();
+        }
+
+        pub fn addOneAssumeCapacity(self: *Self) *T {
+            std.debug.assert(self.len < buffer_capacity);
+            self.len += 1;
+            return &self.slice()[self.len - 1];
+        }
+
+        pub fn pop(self: *Self) ?T {
+            if (self.len == 0) return null;
+            const item = self.get(self.len - 1);
+            self.len -= 1;
+            return item;
+        }
+
+        pub fn append(self: *Self, item: T) error{Overflow}!void {
+            const new_item_ptr = try self.addOne();
+            new_item_ptr.* = item;
         }
     };
 }
