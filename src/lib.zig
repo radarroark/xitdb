@@ -100,8 +100,8 @@ pub const DatabaseHeader = packed struct {
     // directly at the bytes.
     magic_number: u24 = MAGIC_NUMBER,
 
-    pub fn read(reader: anytype) !DatabaseHeader {
-        return @bitCast(try reader.readInt(DatabaseHeaderInt, .big));
+    pub fn read(reader: *std.Io.Reader) !DatabaseHeader {
+        return @bitCast(try reader.takeInt(DatabaseHeaderInt, .big));
     }
 
     pub fn validate(self: DatabaseHeader) !void {
@@ -255,11 +255,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             },
             .file => struct {
                 file: std.fs.File,
+                read_buffer: [1024]u8 = [_]u8{0} ** 1024,
 
-                pub const Reader = std.fs.File.DeprecatedReader;
-
-                pub fn reader(self: Core) std.fs.File.DeprecatedReader {
-                    return self.file.deprecatedReader();
+                pub fn reader(self: *Core) std.fs.File.Reader {
+                    return self.file.reader(&self.read_buffer);
                 }
 
                 pub fn writer(self: Core) std.fs.File.DeprecatedWriter {
@@ -437,8 +436,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     if (self.core.buffer.items.len == 0) {
                         self.header = try self.writeHeader(opts.hash_id);
                     } else {
-                        const reader = self.core.reader();
-                        self.header = try DatabaseHeader.read(reader);
+                        var reader = self.core.reader();
+                        self.header = try DatabaseHeader.read(&reader.interface);
                         try self.header.validate();
                         if (self.header.hash_size != byteSizeOf(HashInt)) {
                             return error.InvalidHashSize;
@@ -462,8 +461,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     if (size == 0) {
                         self.header = try self.writeHeader(opts.hash_id);
                     } else {
-                        const reader = self.core.reader();
-                        self.header = try DatabaseHeader.read(reader);
+                        var reader = self.core.reader();
+                        self.header = try DatabaseHeader.read(&reader.interface);
                         try self.header.validate();
                         if (self.header.hash_size != byteSizeOf(HashInt)) {
                             return error.InvalidHashSize;
@@ -503,9 +502,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
             if (list_size == 0) return;
 
-            try self.core.seekTo(DATABASE_START + byteSizeOf(ArrayListHeader));
-            const core_reader = self.core.reader();
-            const header_file_size = try core_reader.readInt(u64, .big);
+            var core_reader = self.core.reader();
+            try core_reader.seekTo(DATABASE_START + byteSizeOf(ArrayListHeader));
+            const header_file_size = try core_reader.interface.takeInt(u64, .big);
 
             if (header_file_size == 0) return;
 
@@ -615,7 +614,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                         },
                         .array_list => {
-                            const reader = self.core.reader();
+                            var reader = self.core.reader();
                             const writer = self.core.writer();
 
                             var array_list_start = slot_ptr.slot.value;
@@ -624,11 +623,11 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             if (self.tx_start) |tx_start| {
                                 if (array_list_start < tx_start) {
                                     // read existing block
-                                    try self.core.seekTo(array_list_start);
-                                    var header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
-                                    try self.core.seekTo(header.ptr);
+                                    try reader.seekTo(array_list_start);
+                                    var header: ArrayListHeader = @bitCast(try reader.interface.takeInt(ArrayListHeaderInt, .big));
+                                    try reader.seekTo(header.ptr);
                                     var array_list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                    try reader.readNoEof(&array_list_index_block);
+                                    try reader.interface.readSliceAll(&array_list_index_block);
                                     // copy to the end
                                     try self.core.seekFromEnd(0);
                                     array_list_start = try self.core.getPos();
@@ -660,9 +659,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     const next_array_list_start = slot_ptr.slot.value;
 
-                    try self.core.seekTo(next_array_list_start);
-                    const reader = self.core.reader();
-                    const header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
+                    var reader = self.core.reader();
+                    try reader.seekTo(next_array_list_start);
+                    const header: ArrayListHeader = @bitCast(try reader.interface.takeInt(ArrayListHeaderInt, .big));
                     if (index >= header.size or index < -@as(i65, header.size)) {
                         return error.KeyNotFound;
                     }
@@ -683,12 +682,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const tag = if (is_top_level) self.header.tag else slot_ptr.slot.tag;
                     if (tag != .array_list) return error.UnexpectedTag;
 
-                    const reader = self.core.reader();
+                    var reader = self.core.reader();
                     const next_array_list_start = slot_ptr.slot.value;
 
                     // read header
-                    try self.core.seekTo(next_array_list_start);
-                    const orig_header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
+                    try reader.seekTo(next_array_list_start);
+                    const orig_header: ArrayListHeader = @bitCast(try reader.interface.takeInt(ArrayListHeaderInt, .big));
 
                     // append
                     const append_result = try self.readArrayListSlotAppend(orig_header, write_mode, is_top_level);
@@ -721,12 +720,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     if (slot_ptr.slot.tag != .array_list) return error.UnexpectedTag;
 
-                    const reader = self.core.reader();
+                    var reader = self.core.reader();
                     const next_array_list_start = slot_ptr.slot.value;
 
                     // read header
-                    try self.core.seekTo(next_array_list_start);
-                    const orig_header: ArrayListHeader = @bitCast(try reader.readInt(ArrayListHeaderInt, .big));
+                    try reader.seekTo(next_array_list_start);
+                    const orig_header: ArrayListHeader = @bitCast(try reader.interface.takeInt(ArrayListHeaderInt, .big));
 
                     // slice
                     const slice_header = try self.readArrayListSlice(orig_header, array_list_slice.size);
@@ -767,7 +766,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                         },
                         .linked_array_list => {
-                            const reader = self.core.reader();
+                            var reader = self.core.reader();
                             const writer = self.core.writer();
 
                             var array_list_start = slot_ptr.slot.value;
@@ -776,11 +775,11 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             if (self.tx_start) |tx_start| {
                                 if (array_list_start < tx_start) {
                                     // read existing block
-                                    try self.core.seekTo(array_list_start);
-                                    var header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
-                                    try self.core.seekTo(header.ptr);
+                                    try reader.seekTo(array_list_start);
+                                    var header: LinkedArrayListHeader = @bitCast(try reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
+                                    try reader.seekTo(header.ptr);
                                     var array_list_index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
-                                    try reader.readNoEof(&array_list_index_block);
+                                    try reader.interface.readSliceAll(&array_list_index_block);
                                     // copy to the end
                                     try self.core.seekFromEnd(0);
                                     array_list_start = try self.core.getPos();
@@ -809,9 +808,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         else => return error.UnexpectedTag,
                     }
 
-                    try self.core.seekTo(slot_ptr.slot.value);
-                    const reader = self.core.reader();
-                    const header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
+                    var reader = self.core.reader();
+                    try reader.seekTo(slot_ptr.slot.value);
+                    const header: LinkedArrayListHeader = @bitCast(try reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
                     if (index >= header.size or index < -@as(i65, header.size)) {
                         return error.KeyNotFound;
                     }
@@ -829,12 +828,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     if (slot_ptr.slot.tag != .linked_array_list) return error.UnexpectedTag;
 
-                    const reader = self.core.reader();
+                    var reader = self.core.reader();
                     const next_array_list_start = slot_ptr.slot.value;
 
                     // read header
-                    try self.core.seekTo(next_array_list_start);
-                    const orig_header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
+                    try reader.seekTo(next_array_list_start);
+                    const orig_header: LinkedArrayListHeader = @bitCast(try reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
 
                     // append
                     const append_result = try self.readLinkedArrayListSlotAppend(orig_header, write_mode, is_top_level);
@@ -852,12 +851,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     if (slot_ptr.slot.tag != .linked_array_list) return error.UnexpectedTag;
 
-                    const reader = self.core.reader();
+                    var reader = self.core.reader();
                     const next_array_list_start = slot_ptr.slot.value;
 
                     // read header
-                    try self.core.seekTo(next_array_list_start);
-                    const orig_header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
+                    try reader.seekTo(next_array_list_start);
+                    const orig_header: LinkedArrayListHeader = @bitCast(try reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
 
                     // slice
                     const slice_header = try self.readLinkedArrayListSlice(orig_header, linked_array_list_slice.offset, linked_array_list_slice.size);
@@ -877,14 +876,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     if (linked_array_list_concat.list.tag != .linked_array_list) return error.UnexpectedTag;
 
-                    const reader = self.core.reader();
+                    var reader = self.core.reader();
                     const next_array_list_start = slot_ptr.slot.value;
 
                     // read headers
-                    try self.core.seekTo(next_array_list_start);
-                    const header_a: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
-                    try self.core.seekTo(linked_array_list_concat.list.value);
-                    const header_b: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
+                    try reader.seekTo(next_array_list_start);
+                    const header_a: LinkedArrayListHeader = @bitCast(try reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
+                    try reader.seekTo(linked_array_list_concat.list.value);
+                    const header_b: LinkedArrayListHeader = @bitCast(try reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
 
                     // concat
                     const concat_header = try self.readLinkedArrayListConcat(header_a, header_b);
@@ -902,12 +901,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     if (slot_ptr.slot.tag != .linked_array_list) return error.UnexpectedTag;
 
-                    const reader = self.core.reader();
+                    var reader = self.core.reader();
                     const next_array_list_start = slot_ptr.slot.value;
 
                     // read header
-                    try self.core.seekTo(next_array_list_start);
-                    const orig_header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
+                    try reader.seekTo(next_array_list_start);
+                    const orig_header: LinkedArrayListHeader = @bitCast(try reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
 
                     // get the key
                     if (index >= orig_header.size or index < -@as(i65, orig_header.size)) {
@@ -946,12 +945,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     if (slot_ptr.slot.tag != .linked_array_list) return error.UnexpectedTag;
 
-                    const reader = self.core.reader();
+                    var reader = self.core.reader();
                     const next_array_list_start = slot_ptr.slot.value;
 
                     // read header
-                    try self.core.seekTo(next_array_list_start);
-                    const orig_header: LinkedArrayListHeader = @bitCast(try reader.readInt(LinkedArrayListHeaderInt, .big));
+                    try reader.seekTo(next_array_list_start);
+                    const orig_header: LinkedArrayListHeader = @bitCast(try reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
 
                     // get the key
                     if (index >= orig_header.size or index < -@as(i65, orig_header.size)) {
@@ -1048,7 +1047,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 }
                             }
 
-                            const reader = self.core.reader();
+                            var reader = self.core.reader();
                             const writer = self.core.writer();
 
                             var map_start = slot_ptr.slot.value;
@@ -1057,10 +1056,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             if (self.tx_start) |tx_start| {
                                 if (map_start < tx_start) {
                                     // read existing block
-                                    try self.core.seekTo(map_start);
-                                    const map_count_maybe = if (hash_map_init.counted) try reader.readInt(u64, .big) else null;
+                                    try reader.seekTo(map_start);
+                                    const map_count_maybe = if (hash_map_init.counted) try reader.interface.takeInt(u64, .big) else null;
                                     var map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                    try reader.readNoEof(&map_index_block);
+                                    try reader.interface.readSliceAll(&map_index_block);
                                     // copy to the end
                                     try self.core.seekFromEnd(0);
                                     map_start = try self.core.getPos();
@@ -1098,10 +1097,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     };
 
                     if (write_mode == .read_write and counted and res.is_empty) {
-                        const reader = self.core.reader();
+                        var reader = self.core.reader();
                         const writer = self.core.writer();
-                        try self.core.seekTo(slot_ptr.slot.value);
-                        const map_count = try reader.readInt(u64, .big);
+                        try reader.seekTo(slot_ptr.slot.value);
+                        const map_count = try reader.interface.takeInt(u64, .big);
                         try self.core.seekTo(slot_ptr.slot.value);
                         try writer.writeInt(u64, map_count + 1, .big);
                     }
@@ -1128,10 +1127,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     };
 
                     if (write_mode == .read_write and counted and key_found) {
-                        const reader = self.core.reader();
+                        var reader = self.core.reader();
                         const writer = self.core.writer();
-                        try self.core.seekTo(slot_ptr.slot.value);
-                        const map_count = try reader.readInt(u64, .big);
+                        try reader.seekTo(slot_ptr.slot.value);
+                        const map_count = try reader.interface.takeInt(u64, .big);
                         try self.core.seekTo(slot_ptr.slot.value);
                         try writer.writeInt(u64, map_count - 1, .big);
                     }
@@ -1224,13 +1223,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 return error.KeyOffsetExceeded;
             }
 
-            const reader = self.core.reader();
+            var reader = self.core.reader();
             const writer = self.core.writer();
 
             const i: u4 = @intCast((key_hash >> key_offset * BIT_COUNT) & MASK);
             const slot_pos = index_pos + (byteSizeOf(Slot) * i);
-            try self.core.seekTo(slot_pos);
-            const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+            try reader.seekTo(slot_pos);
+            const slot: Slot = @bitCast(try reader.interface.takeInt(SlotInt, .big));
             try slot.tag.validate();
 
             const ptr = slot.value;
@@ -1275,9 +1274,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         if (self.tx_start) |tx_start| {
                             if (next_ptr < tx_start) {
                                 // read existing block
-                                try self.core.seekTo(ptr);
+                                try reader.seekTo(ptr);
                                 var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                try reader.readNoEof(&index_block);
+                                try reader.interface.readSliceAll(&index_block);
                                 // copy it to the end
                                 try self.core.seekFromEnd(0);
                                 next_ptr = try self.core.getPos();
@@ -1293,8 +1292,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     return self.readMapSlot(next_ptr, key_hash, key_offset + 1, write_mode, is_top_level, target);
                 },
                 .kv_pair => {
-                    try self.core.seekTo(ptr);
-                    const kv_pair: KeyValuePair = @bitCast(try reader.readInt(KeyValuePairInt, .big));
+                    try reader.seekTo(ptr);
+                    const kv_pair: KeyValuePair = @bitCast(try reader.interface.takeInt(KeyValuePairInt, .big));
 
                     if (kv_pair.hash == key_hash) {
                         if (write_mode == .read_write and !is_top_level) {
@@ -1369,14 +1368,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 return error.KeyOffsetExceeded;
             }
 
-            const reader = self.core.reader();
+            var reader = self.core.reader();
             const writer = self.core.writer();
 
             // read block
             var slot_block = [_]Slot{.{}} ** SLOT_COUNT;
-            try self.core.seekTo(index_pos);
+            try reader.seekTo(index_pos);
             var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-            try reader.readNoEof(&index_block);
+            try reader.interface.readSliceAll(&index_block);
             var stream = std.io.fixedBufferStream(&index_block);
             var block_reader = stream.reader();
             for (&slot_block) |*block_slot| {
@@ -1394,8 +1393,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 .none => return error.KeyNotFound,
                 .index => try self.removeMapSlot(slot.value, key_hash, key_offset + 1, is_top_level),
                 .kv_pair => blk: {
-                    try self.core.seekTo(slot.value);
-                    const kv_pair: KeyValuePair = @bitCast(try reader.readInt(KeyValuePairInt, .big));
+                    try reader.seekTo(slot.value);
+                    const kv_pair: KeyValuePair = @bitCast(try reader.interface.takeInt(KeyValuePairInt, .big));
                     if (kv_pair.hash == key_hash) {
                         break :blk .{ .tag = .none };
                     } else {
@@ -1509,12 +1508,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         fn readArrayListSlot(self: *Database(db_kind, HashInt), index_pos: u64, key: u64, shift: u6, comptime write_mode: WriteMode, is_top_level: bool) !SlotPointer {
             if (shift >= MAX_BRANCH_LENGTH) return error.MaxShiftExceeded;
 
-            const reader = self.core.reader();
+            var reader = self.core.reader();
 
             const i: u4 = @intCast(key >> (shift * BIT_COUNT) & MASK);
             const slot_pos = index_pos + (byteSizeOf(Slot) * i);
-            try self.core.seekTo(slot_pos);
-            const slot: Slot = @bitCast(try reader.readInt(SlotInt, .big));
+            try reader.seekTo(slot_pos);
+            const slot: Slot = @bitCast(try reader.interface.takeInt(SlotInt, .big));
             try slot.tag.validate();
 
             if (shift == 0) {
@@ -1553,9 +1552,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         if (self.tx_start) |tx_start| {
                             if (next_ptr < tx_start) {
                                 // read existing block
-                                try self.core.seekTo(ptr);
+                                try reader.seekTo(ptr);
                                 var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                try reader.readNoEof(&index_block);
+                                try reader.interface.readSliceAll(&index_block);
                                 // copy it to the end
                                 const writer = self.core.writer();
                                 try self.core.seekFromEnd(0);
@@ -1576,7 +1575,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         }
 
         fn readArrayListSlice(self: *Database(db_kind, HashInt), header: ArrayListHeader, size: u64) !ArrayListHeader {
-            const core_reader = self.core.reader();
+            var core_reader = self.core.reader();
 
             if (size > header.size) {
                 return error.KeyNotFound;
@@ -1596,8 +1595,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 var shift = prev_shift;
                 var index_pos = header.ptr;
                 while (shift > next_shift) {
-                    try self.core.seekTo(index_pos);
-                    const slot: Slot = @bitCast(try core_reader.readInt(SlotInt, .big));
+                    try core_reader.seekTo(index_pos);
+                    const slot: Slot = @bitCast(try core_reader.interface.takeInt(SlotInt, .big));
                     try slot.tag.validate();
                     shift -= 1;
                     index_pos = slot.value;
@@ -1727,14 +1726,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         fn readLinkedArrayListSlot(self: *Database(db_kind, HashInt), index_pos: u64, key: u64, shift: u6, comptime write_mode: WriteMode, is_top_level: bool) !LinkedArrayListSlotPointer {
             if (shift >= MAX_BRANCH_LENGTH) return error.MaxShiftExceeded;
 
-            const reader = self.core.reader();
+            var reader = self.core.reader();
             const writer = self.core.writer();
 
             var slot_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
             {
-                try self.core.seekTo(index_pos);
+                try reader.seekTo(index_pos);
                 var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
-                try reader.readNoEof(&index_block);
+                try reader.interface.readSliceAll(&index_block);
 
                 var stream = std.io.fixedBufferStream(&index_block);
                 var block_reader = stream.reader();
@@ -1784,9 +1783,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         if (self.tx_start) |tx_start| {
                             if (next_ptr < tx_start) {
                                 // read existing block
-                                try self.core.seekTo(ptr);
+                                try reader.seekTo(ptr);
                                 var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
-                                try reader.readNoEof(&index_block);
+                                try reader.interface.readSliceAll(&index_block);
                                 // copy it to the end
                                 try self.core.seekFromEnd(0);
                                 next_ptr = try self.core.getPos();
@@ -1815,13 +1814,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         }
 
         fn readLinkedArrayListBlocks(self: *Database(db_kind, HashInt), index_pos: u64, key: u64, shift: u6, blocks: *BoundedArray(LinkedArrayListBlockInfo, MAX_BRANCH_LENGTH)) !void {
-            const reader = self.core.reader();
+            var reader = self.core.reader();
 
             var slot_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
             {
-                try self.core.seekTo(index_pos);
+                try reader.seekTo(index_pos);
                 var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
-                try reader.readNoEof(&index_block);
+                try reader.interface.readSliceAll(&index_block);
 
                 var stream = std.io.fixedBufferStream(&index_block);
                 var block_reader = stream.reader();
@@ -2222,64 +2221,64 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     pub fn read(self: *Reader, buf: []u8) !u64 {
                         if (self.size < self.relative_position) return error.EndOfStream;
-                        try self.parent.db.core.seekTo(self.start_position + self.relative_position);
-                        const core_reader = self.parent.db.core.reader();
-                        const size = try core_reader.read(buf[0..@min(buf.len, self.size - self.relative_position)]);
+                        var core_reader = self.parent.db.core.reader();
+                        try core_reader.seekTo(self.start_position + self.relative_position);
+                        const size = try core_reader.interface.readSliceShort(buf[0..@min(buf.len, self.size - self.relative_position)]);
                         self.relative_position += size;
                         return size;
                     }
 
                     pub fn readNoEof(self: *Reader, buf: []u8) !void {
                         if (self.size < self.relative_position or self.size - self.relative_position < buf.len) return error.EndOfStream;
-                        try self.parent.db.core.seekTo(self.start_position + self.relative_position);
-                        const core_reader = self.parent.db.core.reader();
-                        try core_reader.readNoEof(buf);
+                        var core_reader = self.parent.db.core.reader();
+                        try core_reader.seekTo(self.start_position + self.relative_position);
+                        try core_reader.interface.readSliceAll(buf);
                         self.relative_position += buf.len;
                     }
 
                     pub fn readInt(self: *Reader, comptime T: type, endian: std.builtin.Endian) !T {
                         if (self.size < self.relative_position or self.size - self.relative_position < byteSizeOf(T)) return error.EndOfStream;
-                        try self.parent.db.core.seekTo(self.start_position + self.relative_position);
-                        const core_reader = self.parent.db.core.reader();
-                        const ret = try core_reader.readInt(T, endian);
+                        var core_reader = self.parent.db.core.reader();
+                        try core_reader.seekTo(self.start_position + self.relative_position);
+                        const ret = try core_reader.interface.takeInt(T, endian);
                         self.relative_position += byteSizeOf(T);
                         return ret;
                     }
 
-                    pub fn readUntilDelimiter(self: *Reader, buf: []u8, delimiter: u8) ![]u8 {
-                        if (self.size < self.relative_position) return error.EndOfStream;
-                        try self.parent.db.core.seekTo(self.start_position + self.relative_position);
-                        const core_reader = self.parent.db.core.reader();
-                        const buf_slice = core_reader.readUntilDelimiter(buf[0..@min(buf.len, self.size - self.relative_position)], delimiter) catch |err| switch (err) {
-                            error.StreamTooLong => return error.EndOfStream,
-                            else => |e| return e,
-                        };
-                        self.relative_position += buf_slice.len;
-                        self.relative_position += 1; // for the delimiter
-                        return buf_slice;
-                    }
+                    //pub fn readUntilDelimiter(self: *Reader, buf: []u8, delimiter: u8) ![]u8 {
+                    //    if (self.size < self.relative_position) return error.EndOfStream;
+                    //    try self.parent.db.core.seekTo(self.start_position + self.relative_position);
+                    //    const core_reader = self.parent.db.core.reader();
+                    //    const buf_slice = core_reader.readUntilDelimiter(buf[0..@min(buf.len, self.size - self.relative_position)], delimiter) catch |err| switch (err) {
+                    //        error.StreamTooLong => return error.EndOfStream,
+                    //        else => |e| return e,
+                    //    };
+                    //    self.relative_position += buf_slice.len;
+                    //    self.relative_position += 1; // for the delimiter
+                    //    return buf_slice;
+                    //}
 
-                    pub fn readUntilDelimiterAlloc(self: *Reader, allocator: std.mem.Allocator, delimiter: u8, max_size: usize) ![]u8 {
-                        if (self.size < self.relative_position) return error.EndOfStream;
-                        try self.parent.db.core.seekTo(self.start_position + self.relative_position);
-                        const core_reader = self.parent.db.core.reader();
-                        const buf_slice = core_reader.readUntilDelimiterAlloc(allocator, delimiter, @min(max_size, self.size - self.relative_position)) catch |err| switch (err) {
-                            error.StreamTooLong => return error.EndOfStream,
-                            else => |e| return e,
-                        };
-                        self.relative_position += buf_slice.len;
-                        self.relative_position += 1; // for the delimiter
-                        return buf_slice;
-                    }
+                    //pub fn readUntilDelimiterAlloc(self: *Reader, allocator: std.mem.Allocator, delimiter: u8, max_size: usize) ![]u8 {
+                    //    if (self.size < self.relative_position) return error.EndOfStream;
+                    //    try self.parent.db.core.seekTo(self.start_position + self.relative_position);
+                    //    const core_reader = self.parent.db.core.reader();
+                    //    const buf_slice = core_reader.readUntilDelimiterAlloc(allocator, delimiter, @min(max_size, self.size - self.relative_position)) catch |err| switch (err) {
+                    //        error.StreamTooLong => return error.EndOfStream,
+                    //        else => |e| return e,
+                    //    };
+                    //    self.relative_position += buf_slice.len;
+                    //    self.relative_position += 1; // for the delimiter
+                    //    return buf_slice;
+                    //}
 
                     pub fn readAllAlloc(self: *Reader, allocator: std.mem.Allocator, max_size: usize) ![]u8 {
                         if (self.size < self.relative_position) return error.EndOfStream;
                         if (self.size - self.relative_position > max_size) return error.StreamTooLong;
                         const buffer = try allocator.alloc(u8, self.size - self.relative_position);
                         errdefer allocator.free(buffer);
-                        try self.parent.db.core.seekTo(self.start_position + self.relative_position);
-                        const core_reader = self.parent.db.core.reader();
-                        const size = try core_reader.read(buffer);
+                        var core_reader = self.parent.db.core.reader();
+                        try core_reader.seekTo(self.start_position + self.relative_position);
+                        const size = try core_reader.interface.readSliceShort(buffer);
                         if (size != buffer.len) {
                             return error.UnexpectedReadSize;
                         }
@@ -2453,13 +2452,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 }
 
                 pub fn readBytesObjectAlloc(self: Cursor(write_mode), allocator: std.mem.Allocator, max_size_maybe: ?usize) !Bytes {
-                    const core_reader = self.db.core.reader();
+                    var core_reader = self.db.core.reader();
 
                     switch (self.slot_ptr.slot.tag) {
                         .none => return .{ .value = try allocator.alloc(u8, 0) },
                         .bytes => {
-                            try self.db.core.seekTo(self.slot_ptr.slot.value);
-                            const value_size = try core_reader.readInt(u64, .big);
+                            try core_reader.seekTo(self.slot_ptr.slot.value);
+                            const value_size = try core_reader.interface.takeInt(u64, .big);
 
                             if (max_size_maybe) |max_size| {
                                 if (value_size > max_size) {
@@ -2467,17 +2466,17 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 }
                             }
 
-                            const start_position = try self.db.core.getPos();
+                            const start_position = core_reader.logicalPos();
 
                             const value = try allocator.alloc(u8, value_size);
                             errdefer allocator.free(value);
 
-                            try core_reader.readNoEof(value);
+                            try core_reader.interface.readSliceAll(value);
 
                             const format_tag = if (self.slot_ptr.slot.full) blk: {
-                                try self.db.core.seekTo(start_position + value_size);
+                                try core_reader.seekTo(start_position + value_size);
                                 var buf = [_]u8{0} ** 2;
-                                try core_reader.readNoEof(&buf);
+                                try core_reader.interface.readSliceAll(&buf);
                                 break :blk buf;
                             } else null;
 
@@ -2512,27 +2511,27 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 }
 
                 pub fn readBytesObject(self: Cursor(write_mode), buffer: []u8) !Bytes {
-                    const core_reader = self.db.core.reader();
+                    var core_reader = self.db.core.reader();
 
                     switch (self.slot_ptr.slot.tag) {
                         .none => return if (buffer.len == 0) .{ .value = buffer } else error.EndOfStream,
                         .bytes => {
-                            try self.db.core.seekTo(self.slot_ptr.slot.value);
-                            const value_size = try core_reader.readInt(u64, .big);
+                            try core_reader.seekTo(self.slot_ptr.slot.value);
+                            const value_size = try core_reader.interface.takeInt(u64, .big);
 
                             if (value_size > buffer.len) {
                                 return error.StreamTooLong;
                             }
 
-                            const start_position = try self.db.core.getPos();
+                            const start_position = core_reader.logicalPos();
 
-                            try core_reader.readNoEof(buffer[0..value_size]);
+                            try core_reader.interface.readSliceAll(buffer[0..value_size]);
                             const value = buffer[0..value_size];
 
                             const format_tag = if (self.slot_ptr.slot.full) blk: {
-                                try self.db.core.seekTo(start_position + value_size);
+                                try core_reader.seekTo(start_position + value_size);
                                 var buf = [_]u8{0} ** 2;
-                                try core_reader.readNoEof(&buf);
+                                try core_reader.interface.readSliceAll(&buf);
                                 break :blk buf;
                             } else null;
 
@@ -2564,14 +2563,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 }
 
                 pub fn readKeyValuePair(self: Cursor(write_mode)) !KeyValuePairCursor(write_mode) {
-                    const core_reader = self.db.core.reader();
+                    var core_reader = self.db.core.reader();
 
                     if (self.slot_ptr.slot.tag != .kv_pair) {
                         return error.UnexpectedTag;
                     }
 
-                    try self.db.core.seekTo(self.slot_ptr.slot.value);
-                    const kv_pair: KeyValuePair = @bitCast(try core_reader.readInt(KeyValuePairInt, .big));
+                    try core_reader.seekTo(self.slot_ptr.slot.value);
+                    const kv_pair: KeyValuePair = @bitCast(try core_reader.interface.takeInt(KeyValuePairInt, .big));
 
                     try kv_pair.key_slot.tag.validate();
                     try kv_pair.value_slot.tag.validate();
@@ -2598,13 +2597,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 }
 
                 pub fn reader(self: *Cursor(write_mode)) !Reader {
-                    const core_reader = self.db.core.reader();
+                    var core_reader = self.db.core.reader();
 
                     switch (self.slot_ptr.slot.tag) {
                         .bytes => {
-                            try self.db.core.seekTo(self.slot_ptr.slot.value);
-                            const size: u64 = @intCast(try core_reader.readInt(u64, .big));
-                            const start_position = try self.db.core.getPos();
+                            try core_reader.seekTo(self.slot_ptr.slot.value);
+                            const size: u64 = @intCast(try core_reader.interface.takeInt(u64, .big));
+                            const start_position = core_reader.logicalPos();
                             return .{
                                 .parent = self,
                                 .size = size,
@@ -2651,22 +2650,22 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 }
 
                 pub fn count(self: Cursor(write_mode)) !u64 {
-                    const core_reader = self.db.core.reader();
+                    var core_reader = self.db.core.reader();
                     switch (self.slot_ptr.slot.tag) {
                         .none => return 0,
                         .array_list => {
-                            try self.db.core.seekTo(self.slot_ptr.slot.value);
-                            const header: ArrayListHeader = @bitCast(try core_reader.readInt(ArrayListHeaderInt, .big));
+                            try core_reader.seekTo(self.slot_ptr.slot.value);
+                            const header: ArrayListHeader = @bitCast(try core_reader.interface.takeInt(ArrayListHeaderInt, .big));
                             return header.size;
                         },
                         .linked_array_list => {
-                            try self.db.core.seekTo(self.slot_ptr.slot.value);
-                            const header: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
+                            try core_reader.seekTo(self.slot_ptr.slot.value);
+                            const header: LinkedArrayListHeader = @bitCast(try core_reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
                             return header.size;
                         },
                         .bytes => {
-                            try self.db.core.seekTo(self.slot_ptr.slot.value);
-                            return try core_reader.readInt(u64, .big);
+                            try core_reader.seekTo(self.slot_ptr.slot.value);
+                            return try core_reader.interface.takeInt(u64, .big);
                         },
                         .short_bytes => {
                             var bytes = [_]u8{0} ** byteSizeOf(u64);
@@ -2675,8 +2674,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             return std.mem.indexOfScalar(u8, bytes[0..total_size], 0) orelse total_size;
                         },
                         .counted_hash_map, .counted_hash_set => {
-                            try self.db.core.seekTo(self.slot_ptr.slot.value);
-                            return try core_reader.readInt(u64, .big);
+                            try core_reader.seekTo(self.slot_ptr.slot.value);
+                            return try core_reader.interface.takeInt(u64, .big);
                         },
                         else => return error.UnexpectedTag,
                     }
@@ -2707,9 +2706,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 },
                                 .array_list => blk: {
                                     const position = cursor.slot_ptr.slot.value;
-                                    try cursor.db.core.seekTo(position);
-                                    const core_reader = cursor.db.core.reader();
-                                    const header: ArrayListHeader = @bitCast(try core_reader.readInt(ArrayListHeaderInt, .big));
+                                    var core_reader = cursor.db.core.reader();
+                                    try core_reader.seekTo(position);
+                                    const header: ArrayListHeader = @bitCast(try core_reader.interface.takeInt(ArrayListHeaderInt, .big));
                                     break :blk .{
                                         .size = try cursor.count(),
                                         .index = 0,
@@ -2718,9 +2717,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 },
                                 .linked_array_list => blk: {
                                     const position = cursor.slot_ptr.slot.value;
-                                    try cursor.db.core.seekTo(position);
-                                    const core_reader = cursor.db.core.reader();
-                                    const header: LinkedArrayListHeader = @bitCast(try core_reader.readInt(LinkedArrayListHeaderInt, .big));
+                                    var core_reader = cursor.db.core.reader();
+                                    try core_reader.seekTo(position);
+                                    const header: LinkedArrayListHeader = @bitCast(try core_reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
                                     break :blk .{
                                         .size = try cursor.count(),
                                         .index = 0,
@@ -2762,11 +2761,11 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     fn initStack(cursor: Cursor(write_mode), position: u64, comptime block_size: u64) !BoundedArray(Level, MAX_BRANCH_LENGTH) {
                         // find the block
-                        try cursor.db.core.seekTo(position);
+                        var core_reader = cursor.db.core.reader();
+                        try core_reader.seekTo(position);
                         // read the block
-                        const core_reader = cursor.db.core.reader();
                         var index_block_bytes = [_]u8{0} ** block_size;
-                        try core_reader.readNoEof(&index_block_bytes);
+                        try core_reader.interface.readSliceAll(&index_block_bytes);
                         // convert the block into slots
                         var index_block = [_]Slot{undefined} ** SLOT_COUNT;
                         {
@@ -2802,12 +2801,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 const next_slot = level.block[level.index];
                                 if (next_slot.tag == .index) {
                                     // find the block
+                                    var core_reader = self.cursor.db.core.reader();
                                     const next_pos = next_slot.value;
-                                    try self.cursor.db.core.seekTo(next_pos);
+                                    try core_reader.seekTo(next_pos);
                                     // read the block
-                                    const core_reader = self.cursor.db.core.reader();
                                     var index_block_bytes = [_]u8{0} ** block_size;
-                                    try core_reader.readNoEof(&index_block_bytes);
+                                    try core_reader.interface.readSliceAll(&index_block_bytes);
                                     // convert the block into slots
                                     var index_block = [_]Slot{undefined} ** SLOT_COUNT;
                                     {
