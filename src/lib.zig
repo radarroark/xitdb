@@ -104,7 +104,7 @@ pub const DatabaseHeader = packed struct {
         return @bitCast(try reader.takeInt(DatabaseHeaderInt, .big));
     }
 
-    pub fn write(self: DatabaseHeader, writer: anytype) !void {
+    pub fn write(self: DatabaseHeader, writer: *std.Io.Writer) !void {
         try writer.writeInt(DatabaseHeaderInt, @bitCast(self), .big);
     }
 
@@ -247,16 +247,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     }
                 }
 
-                pub fn seekFromEnd(self: *Core, offset: i64) !void {
-                    if (offset <= 0) {
-                        self.position = self.buffer.items.len -| @as(u64, @intCast(@abs(offset)));
-                    }
-                }
-
-                pub fn getPos(self: Core) !u64 {
-                    return self.position;
-                }
-
                 pub fn getSize(self: Core) !u64 {
                     return self.buffer.items.len;
                 }
@@ -269,8 +259,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     return self.file.reader(&self.read_buffer);
                 }
 
-                pub fn writer(self: Core) std.fs.File.DeprecatedWriter {
-                    return self.file.deprecatedWriter();
+                pub fn writer(self: Core) std.fs.File.Writer {
+                    return self.file.writer(&.{});
                 }
 
                 pub fn seekTo(self: Core, offset: u64) !void {
@@ -281,17 +271,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     try self.file.seekBy(offset);
                 }
 
-                pub fn seekFromEnd(self: Core, offset: i64) !void {
-                    try self.file.seekFromEnd(offset);
-                }
-
-                pub fn getPos(self: Core) !u64 {
-                    return @intCast(try self.file.getPos());
-                }
-
                 pub fn getSize(self: Core) !u64 {
-                    try self.seekFromEnd(0);
-                    return try self.getPos();
+                    try self.file.seekFromEnd(0);
+                    return @intCast(try self.file.getPos());
                 }
             },
         };
@@ -445,16 +427,17 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         .tx_start = null,
                     };
 
-                    try self.core.seekTo(0);
                     if (self.core.buffer.items.len == 0) {
                         self.header = .{
                             .hash_id = opts.hash_id,
                             .hash_size = byteSizeOf(HashInt),
                         };
-                        const writer = self.core.writer();
-                        try self.header.write(writer);
+                        var writer = self.core.writer();
+                        try writer.seekTo(0);
+                        try self.header.write(&writer.interface);
                     } else {
                         var reader = self.core.reader();
+                        try reader.seekTo(0);
                         self.header = try DatabaseHeader.read(&reader.interface);
                         try self.header.validate();
                         if (self.header.hash_size != byteSizeOf(HashInt)) {
@@ -475,16 +458,17 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const stat = try self.core.file.stat();
                     const size = stat.size;
 
-                    try self.core.seekTo(0);
                     if (size == 0) {
                         self.header = .{
                             .hash_id = opts.hash_id,
                             .hash_size = byteSizeOf(HashInt),
                         };
-                        const writer = self.core.writer();
-                        try self.header.write(writer);
+                        var writer = self.core.writer();
+                        try writer.seekTo(0);
+                        try self.header.write(&writer.interface);
                     } else {
                         var reader = self.core.reader();
+                        try reader.seekTo(0);
                         self.header = try DatabaseHeader.read(&reader.interface);
                         try self.header.validate();
                         if (self.header.hash_size != byteSizeOf(HashInt)) {
@@ -573,14 +557,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     if (write_mode == .read_only) return error.WriteNotAllowed;
 
                     if (is_top_level) {
-                        const writer = self.core.writer();
+                        var writer = self.core.writer();
 
                         // if the top level array list hasn't been initialized
                         if (self.header.tag == .none) {
                             // write the array list header
-                            try self.core.seekTo(DATABASE_START);
+                            try writer.seekTo(DATABASE_START);
                             const array_list_ptr = DATABASE_START + byteSizeOf(TopLevelArrayListHeader);
-                            try writer.writeInt(TopLevelArrayListHeaderInt, @bitCast(TopLevelArrayListHeader{
+                            try writer.interface.writeInt(TopLevelArrayListHeaderInt, @bitCast(TopLevelArrayListHeader{
                                 .file_size = 0,
                                 .parent = .{
                                     .ptr = array_list_ptr,
@@ -590,12 +574,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                             // write the first block
                             const index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                            try writer.writeAll(&index_block);
+                            try writer.interface.writeAll(&index_block);
 
                             // update db header
-                            try self.core.seekTo(0);
+                            try writer.seekTo(0);
                             self.header.tag = .array_list;
-                            try writer.writeInt(DatabaseHeaderInt, @bitCast(self.header), .big);
+                            try writer.interface.writeInt(DatabaseHeaderInt, @bitCast(self.header), .big);
                         }
 
                         var next_slot_ptr = slot_ptr;
@@ -608,25 +592,25 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     switch (slot_ptr.slot.tag) {
                         .none => {
                             // if slot was empty, insert the new list
-                            const writer = self.core.writer();
+                            var writer = self.core.writer();
                             const array_list_start = try self.core.getSize();
                             const array_list_ptr = array_list_start + byteSizeOf(ArrayListHeader);
-                            try self.core.seekTo(array_list_start);
-                            try writer.writeInt(ArrayListHeaderInt, @bitCast(ArrayListHeader{
+                            try writer.seekTo(array_list_start);
+                            try writer.interface.writeInt(ArrayListHeaderInt, @bitCast(ArrayListHeader{
                                 .ptr = array_list_ptr,
                                 .size = 0,
                             }), .big);
                             const array_list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                            try writer.writeAll(&array_list_index_block);
+                            try writer.interface.writeAll(&array_list_index_block);
                             // make slot point to list
                             const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = array_list_start, .tag = .array_list } };
-                            try self.core.seekTo(position);
-                            try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
+                            try writer.seekTo(position);
+                            try writer.interface.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                             return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                         },
                         .array_list => {
                             var reader = self.core.reader();
-                            const writer = self.core.writer();
+                            var writer = self.core.writer();
 
                             var array_list_start = slot_ptr.slot.value;
 
@@ -643,9 +627,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                     array_list_start = try self.core.getSize();
                                     const next_array_list_ptr = array_list_start + byteSizeOf(ArrayListHeader);
                                     header.ptr = next_array_list_ptr;
-                                    try self.core.seekTo(array_list_start);
-                                    try writer.writeInt(ArrayListHeaderInt, @bitCast(header), .big);
-                                    try writer.writeAll(&array_list_index_block);
+                                    try writer.seekTo(array_list_start);
+                                    try writer.interface.writeInt(ArrayListHeaderInt, @bitCast(header), .big);
+                                    try writer.interface.writeAll(&array_list_index_block);
                                 }
                             } else if (self.header.tag == .array_list) {
                                 return error.ExpectedTxStart;
@@ -653,8 +637,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                             // make slot point to list
                             const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = array_list_start, .tag = .array_list } };
-                            try self.core.seekTo(position);
-                            try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
+                            try writer.seekTo(position);
+                            try writer.interface.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                             return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                         },
                         else => return error.UnexpectedTag,
@@ -704,7 +688,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const append_result = try self.readArrayListSlotAppend(orig_header, write_mode, is_top_level);
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], append_result.slot_ptr);
 
-                    const writer = self.core.writer();
+                    var writer = self.core.writer();
 
                     // if top level array list, put the file size in the header
                     if (is_top_level) {
@@ -715,12 +699,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         };
 
                         // update header
-                        try self.core.seekTo(next_array_list_start);
-                        try writer.writeInt(TopLevelArrayListHeaderInt, @bitCast(header), .big);
+                        try writer.seekTo(next_array_list_start);
+                        try writer.interface.writeInt(TopLevelArrayListHeaderInt, @bitCast(header), .big);
                     } else {
                         // update header
-                        try self.core.seekTo(next_array_list_start);
-                        try writer.writeInt(ArrayListHeaderInt, @bitCast(append_result.header), .big);
+                        try writer.seekTo(next_array_list_start);
+                        try writer.interface.writeInt(ArrayListHeaderInt, @bitCast(append_result.header), .big);
                     }
 
                     return final_slot_ptr;
@@ -742,9 +726,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], slot_ptr);
 
                     // update header
-                    const writer = self.core.writer();
-                    try self.core.seekTo(next_array_list_start);
-                    try writer.writeInt(ArrayListHeaderInt, @bitCast(slice_header), .big);
+                    var writer = self.core.writer();
+                    try writer.seekTo(next_array_list_start);
+                    try writer.interface.writeInt(ArrayListHeaderInt, @bitCast(slice_header), .big);
 
                     return final_slot_ptr;
                 },
@@ -758,26 +742,26 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     switch (slot_ptr.slot.tag) {
                         .none => {
                             // if slot was empty, insert the new list
-                            const writer = self.core.writer();
+                            var writer = self.core.writer();
                             const array_list_start = try self.core.getSize();
                             const array_list_ptr = array_list_start + byteSizeOf(LinkedArrayListHeader);
-                            try self.core.seekTo(array_list_start);
-                            try writer.writeInt(LinkedArrayListHeaderInt, @bitCast(LinkedArrayListHeader{
+                            try writer.seekTo(array_list_start);
+                            try writer.interface.writeInt(LinkedArrayListHeaderInt, @bitCast(LinkedArrayListHeader{
                                 .shift = 0,
                                 .ptr = array_list_ptr,
                                 .size = 0,
                             }), .big);
                             const array_list_index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
-                            try writer.writeAll(&array_list_index_block);
+                            try writer.interface.writeAll(&array_list_index_block);
                             // make slot point to new list
                             const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = array_list_start, .tag = .linked_array_list } };
-                            try self.core.seekTo(position);
-                            try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
+                            try writer.seekTo(position);
+                            try writer.interface.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                             return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                         },
                         .linked_array_list => {
                             var reader = self.core.reader();
-                            const writer = self.core.writer();
+                            var writer = self.core.writer();
 
                             var array_list_start = slot_ptr.slot.value;
 
@@ -794,9 +778,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                     array_list_start = try self.core.getSize();
                                     const next_array_list_ptr = array_list_start + byteSizeOf(LinkedArrayListHeader);
                                     header.ptr = next_array_list_ptr;
-                                    try self.core.seekTo(array_list_start);
-                                    try writer.writeInt(LinkedArrayListHeaderInt, @bitCast(header), .big);
-                                    try writer.writeAll(&array_list_index_block);
+                                    try writer.seekTo(array_list_start);
+                                    try writer.interface.writeInt(LinkedArrayListHeaderInt, @bitCast(header), .big);
+                                    try writer.interface.writeAll(&array_list_index_block);
                                 }
                             } else if (self.header.tag == .array_list) {
                                 return error.ExpectedTxStart;
@@ -804,8 +788,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                             // make slot point to list
                             const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = array_list_start, .tag = .linked_array_list } };
-                            try self.core.seekTo(position);
-                            try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
+                            try writer.seekTo(position);
+                            try writer.interface.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                             return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                         },
                         else => return error.UnexpectedTag,
@@ -850,9 +834,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], append_result.slot_ptr.slot_ptr);
 
                     // update header
-                    const writer = self.core.writer();
-                    try self.core.seekTo(next_array_list_start);
-                    try writer.writeInt(LinkedArrayListHeaderInt, @bitCast(append_result.header), .big);
+                    var writer = self.core.writer();
+                    try writer.seekTo(next_array_list_start);
+                    try writer.interface.writeInt(LinkedArrayListHeaderInt, @bitCast(append_result.header), .big);
 
                     return final_slot_ptr;
                 },
@@ -873,9 +857,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], slot_ptr);
 
                     // update header
-                    const writer = self.core.writer();
-                    try self.core.seekTo(next_array_list_start);
-                    try writer.writeInt(LinkedArrayListHeaderInt, @bitCast(slice_header), .big);
+                    var writer = self.core.writer();
+                    try writer.seekTo(next_array_list_start);
+                    try writer.interface.writeInt(LinkedArrayListHeaderInt, @bitCast(slice_header), .big);
 
                     return final_slot_ptr;
                 },
@@ -900,9 +884,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], slot_ptr);
 
                     // update header
-                    const writer = self.core.writer();
-                    try self.core.seekTo(next_array_list_start);
-                    try writer.writeInt(LinkedArrayListHeaderInt, @bitCast(concat_header), .big);
+                    var writer = self.core.writer();
+                    try writer.seekTo(next_array_list_start);
+                    try writer.interface.writeInt(LinkedArrayListHeaderInt, @bitCast(concat_header), .big);
 
                     return final_slot_ptr;
                 },
@@ -944,9 +928,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr.slot_ptr);
 
                     // update header
-                    const writer = self.core.writer();
-                    try self.core.seekTo(next_array_list_start);
-                    try writer.writeInt(LinkedArrayListHeaderInt, @bitCast(concat_header), .big);
+                    var writer = self.core.writer();
+                    try writer.seekTo(next_array_list_start);
+                    try writer.interface.writeInt(LinkedArrayListHeaderInt, @bitCast(concat_header), .big);
 
                     return final_slot_ptr;
                 },
@@ -985,9 +969,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const final_slot_ptr = try self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
 
                     // update header
-                    const writer = self.core.writer();
-                    try self.core.seekTo(next_array_list_start);
-                    try writer.writeInt(LinkedArrayListHeaderInt, @bitCast(concat_header), .big);
+                    var writer = self.core.writer();
+                    try writer.seekTo(next_array_list_start);
+                    try writer.interface.writeInt(LinkedArrayListHeaderInt, @bitCast(concat_header), .big);
 
                     return final_slot_ptr;
                 },
@@ -1000,24 +984,24 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         (if (hash_map_init.set) .hash_set else .hash_map);
 
                     if (is_top_level) {
-                        const writer = self.core.writer();
+                        var writer = self.core.writer();
 
                         // if the top level hash map hasn't been initialized
                         if (self.header.tag == .none) {
-                            try self.core.seekTo(DATABASE_START);
+                            try writer.seekTo(DATABASE_START);
 
                             if (hash_map_init.counted) {
-                                try writer.writeInt(u64, 0, .big);
+                                try writer.interface.writeInt(u64, 0, .big);
                             }
 
                             // write the first block
                             const map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                            try writer.writeAll(&map_index_block);
+                            try writer.interface.writeAll(&map_index_block);
 
                             // update db header
-                            try self.core.seekTo(0);
+                            try writer.seekTo(0);
                             self.header.tag = tag;
-                            try writer.writeInt(DatabaseHeaderInt, @bitCast(self.header), .big);
+                            try writer.interface.writeInt(DatabaseHeaderInt, @bitCast(self.header), .big);
                         }
 
                         var next_slot_ptr = slot_ptr;
@@ -1030,18 +1014,18 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     switch (slot_ptr.slot.tag) {
                         .none => {
                             // if slot was empty, insert the new map
-                            const writer = self.core.writer();
+                            var writer = self.core.writer();
                             const map_start = try self.core.getSize();
-                            try self.core.seekTo(map_start);
+                            try writer.seekTo(map_start);
                             if (hash_map_init.counted) {
-                                try writer.writeInt(u64, 0, .big);
+                                try writer.interface.writeInt(u64, 0, .big);
                             }
                             const map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                            try writer.writeAll(&map_index_block);
+                            try writer.interface.writeAll(&map_index_block);
                             // make slot point to map
                             const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = map_start, .tag = tag } };
-                            try self.core.seekTo(position);
-                            try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
+                            try writer.seekTo(position);
+                            try writer.interface.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                             return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                         },
                         .hash_map, .hash_set, .counted_hash_map, .counted_hash_set => {
@@ -1058,7 +1042,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             }
 
                             var reader = self.core.reader();
-                            const writer = self.core.writer();
+                            var writer = self.core.writer();
 
                             var map_start = slot_ptr.slot.value;
 
@@ -1072,9 +1056,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                     try reader.interface.readSliceAll(&map_index_block);
                                     // copy to the end
                                     map_start = try self.core.getSize();
-                                    try self.core.seekTo(map_start);
-                                    if (map_count_maybe) |map_count| try writer.writeInt(u64, map_count, .big);
-                                    try writer.writeAll(&map_index_block);
+                                    try writer.seekTo(map_start);
+                                    if (map_count_maybe) |map_count| try writer.interface.writeInt(u64, map_count, .big);
+                                    try writer.interface.writeAll(&map_index_block);
                                 }
                             } else if (self.header.tag == .array_list) {
                                 return error.ExpectedTxStart;
@@ -1082,8 +1066,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                             // make slot point to map
                             const next_slot_ptr = SlotPointer{ .position = position, .slot = .{ .value = map_start, .tag = tag } };
-                            try self.core.seekTo(position);
-                            try writer.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
+                            try writer.seekTo(position);
+                            try writer.interface.writeInt(SlotInt, @bitCast(next_slot_ptr.slot), .big);
                             return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
                         },
                         else => return error.UnexpectedTag,
@@ -1108,11 +1092,11 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     if (write_mode == .read_write and counted and res.is_empty) {
                         var reader = self.core.reader();
-                        const writer = self.core.writer();
+                        var writer = self.core.writer();
                         try reader.seekTo(slot_ptr.slot.value);
                         const map_count = try reader.interface.takeInt(u64, .big);
-                        try self.core.seekTo(slot_ptr.slot.value);
-                        try writer.writeInt(u64, map_count + 1, .big);
+                        try writer.seekTo(slot_ptr.slot.value);
+                        try writer.interface.writeInt(u64, map_count + 1, .big);
                     }
 
                     return self.readSlotPointer(write_mode, Ctx, path[1..], res.slot_ptr);
@@ -1138,11 +1122,11 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     if (write_mode == .read_write and counted and key_found) {
                         var reader = self.core.reader();
-                        const writer = self.core.writer();
+                        var writer = self.core.writer();
                         try reader.seekTo(slot_ptr.slot.value);
                         const map_count = try reader.interface.takeInt(u64, .big);
-                        try self.core.seekTo(slot_ptr.slot.value);
-                        try writer.writeInt(u64, map_count - 1, .big);
+                        try writer.seekTo(slot_ptr.slot.value);
+                        try writer.interface.writeInt(u64, map_count - 1, .big);
                     }
 
                     if (!key_found) return error.KeyNotFound;
@@ -1154,7 +1138,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     const position = slot_ptr.position orelse return error.CursorNotWriteable;
 
-                    const core_writer = self.core.writer();
+                    var core_writer = self.core.writer();
 
                     var slot: Slot = write_switch: switch (data) {
                         .slot => |slot_maybe| slot_maybe orelse .{ .tag = .none },
@@ -1191,8 +1175,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         slot.full = true;
                     }
 
-                    try self.core.seekTo(position);
-                    try core_writer.writeInt(SlotInt, @bitCast(slot), .big);
+                    try core_writer.seekTo(position);
+                    try core_writer.interface.writeInt(SlotInt, @bitCast(slot), .big);
 
                     const next_slot_ptr = SlotPointer{ .position = slot_ptr.position, .slot = slot };
                     return self.readSlotPointer(write_mode, Ctx, path[1..], next_slot_ptr);
@@ -1234,7 +1218,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             }
 
             var reader = self.core.reader();
-            const writer = self.core.writer();
+            var writer = self.core.writer();
 
             const i: u4 = @intCast((key_hash >> key_offset * BIT_COUNT) & MASK);
             const slot_pos = index_pos + (byteSizeOf(Slot) * i);
@@ -1258,13 +1242,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 .key_slot = @bitCast(@as(SlotInt, 0)),
                                 .hash = key_hash,
                             };
-                            try self.core.seekTo(hash_pos);
-                            try writer.writeInt(KeyValuePairInt, @bitCast(kv_pair), .big);
+                            try writer.seekTo(hash_pos);
+                            try writer.interface.writeInt(KeyValuePairInt, @bitCast(kv_pair), .big);
 
                             // point slot to hash pos
                             const next_slot = Slot{ .value = hash_pos, .tag = .kv_pair };
-                            try self.core.seekTo(slot_pos);
-                            try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
+                            try writer.seekTo(slot_pos);
+                            try writer.interface.writeInt(SlotInt, @bitCast(next_slot), .big);
 
                             return .{
                                 .slot_ptr = switch (target) {
@@ -1288,11 +1272,11 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 try reader.interface.readSliceAll(&index_block);
                                 // copy it to the end
                                 next_ptr = try self.core.getSize();
-                                try self.core.seekTo(next_ptr);
-                                try writer.writeAll(&index_block);
+                                try writer.seekTo(next_ptr);
+                                try writer.interface.writeAll(&index_block);
                                 // make slot point to block
-                                try self.core.seekTo(slot_pos);
-                                try writer.writeInt(SlotInt, @bitCast(Slot{ .value = next_ptr, .tag = .index }), .big);
+                                try writer.seekTo(slot_pos);
+                                try writer.interface.writeInt(SlotInt, @bitCast(Slot{ .value = next_ptr, .tag = .index }), .big);
                             }
                         } else if (self.header.tag == .array_list) {
                             return error.ExpectedTxStart;
@@ -1312,13 +1296,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                     const hash_pos = try self.core.getSize();
                                     const key_slot_pos = hash_pos + byteSizeOf(HashInt);
                                     const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
-                                    try self.core.seekTo(hash_pos);
-                                    try writer.writeInt(KeyValuePairInt, @bitCast(kv_pair), .big);
+                                    try writer.seekTo(hash_pos);
+                                    try writer.interface.writeInt(KeyValuePairInt, @bitCast(kv_pair), .big);
 
                                     // point slot to hash pos
                                     const next_slot = Slot{ .value = hash_pos, .tag = .kv_pair };
-                                    try self.core.seekTo(slot_pos);
-                                    try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
+                                    try writer.seekTo(slot_pos);
+                                    try writer.interface.writeInt(SlotInt, @bitCast(next_slot), .big);
 
                                     return .{
                                         .slot_ptr = switch (target) {
@@ -1355,13 +1339,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 const next_i: u4 = @intCast((kv_pair.hash >> (key_offset + 1) * BIT_COUNT) & MASK);
                                 const next_index_pos = try self.core.getSize();
                                 var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                                try self.core.seekTo(next_index_pos);
-                                try writer.writeAll(&index_block);
-                                try self.core.seekTo(next_index_pos + (byteSizeOf(Slot) * next_i));
-                                try writer.writeInt(SlotInt, @bitCast(slot), .big);
+                                try writer.seekTo(next_index_pos);
+                                try writer.interface.writeAll(&index_block);
+                                try writer.seekTo(next_index_pos + (byteSizeOf(Slot) * next_i));
+                                try writer.interface.writeInt(SlotInt, @bitCast(slot), .big);
                                 const res = try self.readMapSlot(next_index_pos, key_hash, key_offset + 1, write_mode, is_top_level, target);
-                                try self.core.seekTo(slot_pos);
-                                try writer.writeInt(SlotInt, @bitCast(Slot{ .value = next_index_pos, .tag = .index }), .big);
+                                try writer.seekTo(slot_pos);
+                                try writer.interface.writeInt(SlotInt, @bitCast(Slot{ .value = next_index_pos, .tag = .index }), .big);
                                 return res;
                             },
                         }
@@ -1377,7 +1361,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             }
 
             var reader = self.core.reader();
-            const writer = self.core.writer();
+            var writer = self.core.writer();
 
             // read block
             var slot_block = [_]Slot{.{}} ** SLOT_COUNT;
@@ -1414,8 +1398,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
             // if we're the root node, just write the new slot and finish
             if (key_offset == 0) {
-                try self.core.seekTo(slot_pos);
-                try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
+                try writer.seekTo(slot_pos);
+                try writer.interface.writeInt(SlotInt, @bitCast(next_slot), .big);
                 return .{ .value = index_pos, .tag = .index };
             }
 
@@ -1456,12 +1440,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     if (index_pos < tx_start) {
                         // copy index block to the end
                         const next_index_pos = try self.core.getSize();
-                        try self.core.seekTo(next_index_pos);
-                        try writer.writeAll(&index_block);
+                        try writer.seekTo(next_index_pos);
+                        try writer.interface.writeAll(&index_block);
                         // update the slot
                         const next_slot_pos = next_index_pos + (byteSizeOf(Slot) * i);
-                        try self.core.seekTo(next_slot_pos);
-                        try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
+                        try writer.seekTo(next_slot_pos);
+                        try writer.interface.writeInt(SlotInt, @bitCast(next_slot), .big);
                         return .{ .value = next_index_pos, .tag = .index };
                     }
                 } else if (self.header.tag == .array_list) {
@@ -1469,8 +1453,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 }
             }
 
-            try self.core.seekTo(slot_pos);
-            try writer.writeInt(SlotInt, @bitCast(next_slot), .big);
+            try writer.seekTo(slot_pos);
+            try writer.interface.writeInt(SlotInt, @bitCast(next_slot), .big);
             return .{ .value = index_pos, .tag = .index };
         }
 
@@ -1482,7 +1466,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         };
 
         fn readArrayListSlotAppend(self: *Database(db_kind, HashInt), header: ArrayListHeader, comptime write_mode: WriteMode, is_top_level: bool) !ArrayListAppendResult {
-            const writer = self.core.writer();
+            var writer = self.core.writer();
 
             var index_pos = header.ptr;
 
@@ -1495,10 +1479,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 // root overflow
                 const next_index_pos = try self.core.getSize();
                 var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                try self.core.seekTo(next_index_pos);
-                try writer.writeAll(&index_block);
-                try self.core.seekTo(next_index_pos);
-                try writer.writeInt(SlotInt, @bitCast(Slot{ .value = index_pos, .tag = .index }), .big);
+                try writer.seekTo(next_index_pos);
+                try writer.interface.writeAll(&index_block);
+                try writer.seekTo(next_index_pos);
+                try writer.interface.writeInt(SlotInt, @bitCast(Slot{ .value = index_pos, .tag = .index }), .big);
                 index_pos = next_index_pos;
             }
 
@@ -1535,20 +1519,20 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     switch (write_mode) {
                         .read_only => return error.KeyNotFound,
                         .read_write => {
-                            const writer = self.core.writer();
+                            var writer = self.core.writer();
                             const next_index_pos = try self.core.getSize();
                             var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
-                            try self.core.seekTo(next_index_pos);
-                            try writer.writeAll(&index_block);
+                            try writer.seekTo(next_index_pos);
+                            try writer.interface.writeAll(&index_block);
                             // if top level array list, update the file size in the list
                             // header to prevent truncation from destroying this block
                             if (is_top_level) {
                                 const file_size = try self.core.getSize();
-                                try self.core.seekTo(DATABASE_START + byteSizeOf(ArrayListHeader));
-                                try writer.writeInt(u64, file_size, .big);
+                                try writer.seekTo(DATABASE_START + byteSizeOf(ArrayListHeader));
+                                try writer.interface.writeInt(u64, file_size, .big);
                             }
-                            try self.core.seekTo(slot_pos);
-                            try writer.writeInt(SlotInt, @bitCast(Slot{ .value = next_index_pos, .tag = .index }), .big);
+                            try writer.seekTo(slot_pos);
+                            try writer.interface.writeInt(SlotInt, @bitCast(Slot{ .value = next_index_pos, .tag = .index }), .big);
                             return try self.readArrayListSlot(next_index_pos, key, shift - 1, write_mode, is_top_level);
                         },
                     }
@@ -1563,13 +1547,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                                 try reader.interface.readSliceAll(&index_block);
                                 // copy it to the end
-                                const writer = self.core.writer();
+                                var writer = self.core.writer();
                                 next_ptr = try self.core.getSize();
-                                try self.core.seekTo(next_ptr);
-                                try writer.writeAll(&index_block);
+                                try writer.seekTo(next_ptr);
+                                try writer.interface.writeAll(&index_block);
                                 // make slot point to block
-                                try self.core.seekTo(slot_pos);
-                                try writer.writeInt(SlotInt, @bitCast(Slot{ .value = next_ptr, .tag = .index }), .big);
+                                try writer.seekTo(slot_pos);
+                                try writer.interface.writeInt(SlotInt, @bitCast(Slot{ .value = next_ptr, .tag = .index }), .big);
                             }
                         } else if (self.header.tag == .array_list) {
                             return error.ExpectedTxStart;
@@ -1623,7 +1607,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         };
 
         fn readLinkedArrayListSlotAppend(self: *Database(db_kind, HashInt), header: LinkedArrayListHeader, comptime write_mode: WriteMode, is_top_level: bool) !LinkedArrayListAppendResult {
-            const writer = self.core.writer();
+            var writer = self.core.writer();
 
             var ptr = header.ptr;
             const key = header.size;
@@ -1634,10 +1618,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     // root overflow
                     const next_ptr = try self.core.getSize();
                     var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
-                    try self.core.seekTo(next_ptr);
-                    try writer.writeAll(&index_block);
-                    try self.core.seekTo(next_ptr);
-                    try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{
+                    try writer.seekTo(next_ptr);
+                    try writer.interface.writeAll(&index_block);
+                    try writer.seekTo(next_ptr);
+                    try writer.interface.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{
                         .slot = .{ .value = ptr, .tag = .index, .full = true },
                         .size = header.size,
                     }), .big);
@@ -1653,8 +1637,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             const new_slot = Slot{ .value = 0, .tag = .none, .full = true };
             slot_ptr.slot_ptr.slot = new_slot;
             const position = slot_ptr.slot_ptr.position orelse return error.CursorNotWriteable;
-            try self.core.seekTo(position);
-            try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{ .slot = new_slot, .size = 0 }), .big);
+            try writer.seekTo(position);
+            try writer.interface.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{ .slot = new_slot, .size = 0 }), .big);
             if (header.size < SLOT_COUNT and shift > 0) {
                 return error.MustSetNewSlotsToFull;
             }
@@ -1734,7 +1718,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             if (shift >= MAX_BRANCH_LENGTH) return error.MaxShiftExceeded;
 
             var reader = self.core.reader();
-            const writer = self.core.writer();
+            var writer = self.core.writer();
 
             var slot_block = [_]LinkedArrayListSlot{.{ .slot = .{}, .size = 0 }} ** SLOT_COUNT;
             {
@@ -1770,16 +1754,16 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         .read_write => {
                             const next_index_pos = try self.core.getSize();
                             var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
-                            try self.core.seekTo(next_index_pos);
-                            try writer.writeAll(&index_block);
+                            try writer.seekTo(next_index_pos);
+                            try writer.interface.writeAll(&index_block);
 
                             const next_slot_ptr = try self.readLinkedArrayListSlot(next_index_pos, next_key, shift - 1, write_mode, is_top_level);
 
                             slot_block[i].size = next_slot_ptr.leaf_count;
                             const leaf_count = blockLeafCount(&slot_block, shift, i);
 
-                            try self.core.seekTo(slot_pos);
-                            try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{ .slot = .{ .value = next_index_pos, .tag = .index }, .size = next_slot_ptr.leaf_count }), .big);
+                            try writer.seekTo(slot_pos);
+                            try writer.interface.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{ .slot = .{ .value = next_index_pos, .tag = .index }, .size = next_slot_ptr.leaf_count }), .big);
                             return .{ .slot_ptr = next_slot_ptr.slot_ptr, .leaf_count = leaf_count };
                         },
                     }
@@ -1795,8 +1779,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 try reader.interface.readSliceAll(&index_block);
                                 // copy it to the end
                                 next_ptr = try self.core.getSize();
-                                try self.core.seekTo(next_ptr);
-                                try writer.writeAll(&index_block);
+                                try writer.seekTo(next_ptr);
+                                try writer.interface.writeAll(&index_block);
                             }
                         } else if (self.header.tag == .array_list) {
                             return error.ExpectedTxStart;
@@ -1810,8 +1794,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     if (write_mode == .read_write and !is_top_level) {
                         // make slot point to block
-                        try self.core.seekTo(slot_pos);
-                        try writer.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{ .slot = .{ .value = next_ptr, .tag = .index }, .size = next_slot_ptr.leaf_count }), .big);
+                        try writer.seekTo(slot_pos);
+                        try writer.interface.writeInt(LinkedArrayListSlotInt, @bitCast(LinkedArrayListSlot{ .slot = .{ .value = next_ptr, .tag = .index }, .size = next_slot_ptr.leaf_count }), .big);
                     }
 
                     return .{ .slot_ptr = next_slot_ptr.slot_ptr, .leaf_count = leaf_count };
@@ -1859,7 +1843,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         }
 
         fn readLinkedArrayListSlice(self: *Database(db_kind, HashInt), header: LinkedArrayListHeader, offset: u64, size: u64) !LinkedArrayListHeader {
-            const core_writer = self.core.writer();
+            var core_writer = self.core.writer();
 
             if (offset + size > header.size) {
                 return error.KeyNotFound;
@@ -1976,10 +1960,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         // otherwise make a new block
                         else {
                             const next_ptr = try self.core.getSize();
-                            try self.core.seekTo(next_ptr);
+                            try core_writer.seekTo(next_ptr);
                             var leaf_count: u64 = 0;
                             for (block) |block_slot| {
-                                try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
+                                try core_writer.interface.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
                                 if (is_leaf_node) {
                                     if (!block_slot.slot.empty()) {
                                         leaf_count += 1;
@@ -2017,7 +2001,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         }
 
         fn readLinkedArrayListConcat(self: *Database(db_kind, HashInt), header_a: LinkedArrayListHeader, header_b: LinkedArrayListHeader) !LinkedArrayListHeader {
-            const core_writer = self.core.writer();
+            var core_writer = self.core.writer();
 
             // read the first list's blocks
             var blocks_a = try BoundedArray(LinkedArrayListBlockInfo, MAX_BRANCH_LENGTH).init(0);
@@ -2149,10 +2133,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     // write the block
                     const next_ptr = try self.core.getSize();
-                    try self.core.seekTo(next_ptr);
+                    try core_writer.seekTo(next_ptr);
                     var leaf_count: u64 = 0;
                     for (block) |block_slot| {
-                        try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
+                        try core_writer.interface.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
                         if (is_leaf_node) {
                             if (!block_slot.slot.empty()) {
                                 leaf_count += 1;
@@ -2175,9 +2159,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         block[1] = second_slot;
 
                         // write the root node
-                        const new_ptr = try self.core.getPos();
+                        const new_ptr = core_writer.pos;
                         for (block) |block_slot| {
-                            try core_writer.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
+                            try core_writer.interface.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
                         }
 
                         if (next_shift == MAX_BRANCH_LENGTH) return error.MaxShiftExceeded;
@@ -2324,31 +2308,31 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     format_tag: ?[2]u8,
 
                     pub fn finish(self: *Writer) !void {
-                        const core_writer = self.parent.db.core.writer();
+                        var core_writer = self.parent.db.core.writer();
 
                         if (self.format_tag) |format_tag| {
                             self.slot.full = true; // byte arrays with format tags must have this set to true
                             const format_tag_pos = try self.parent.db.core.getSize();
-                            try self.parent.db.core.seekTo(format_tag_pos);
+                            try core_writer.seekTo(format_tag_pos);
                             if (self.start_position + self.size != format_tag_pos) return error.UnexpectedWriterPosition;
-                            try core_writer.writeAll(&format_tag);
+                            try core_writer.interface.writeAll(&format_tag);
                         }
 
-                        try self.parent.db.core.seekTo(self.slot.value);
-                        try core_writer.writeInt(u64, self.size, .big);
+                        try core_writer.seekTo(self.slot.value);
+                        try core_writer.interface.writeInt(u64, self.size, .big);
 
                         const position = self.parent.slot_ptr.position orelse return error.CursorNotWriteable;
-                        try self.parent.db.core.seekTo(position);
-                        try core_writer.writeInt(SlotInt, @bitCast(self.slot), .big);
+                        try core_writer.seekTo(position);
+                        try core_writer.interface.writeInt(SlotInt, @bitCast(self.slot), .big);
 
                         self.parent.slot_ptr.slot = self.slot;
                     }
 
                     pub fn writeAll(self: *Writer, bytes: []const u8) !void {
                         if (self.size < self.relative_position) return error.EndOfStream;
-                        try self.parent.db.core.seekTo(self.start_position + self.relative_position);
-                        const core_writer = self.parent.db.core.writer();
-                        try core_writer.writeAll(bytes);
+                        var core_writer = self.parent.db.core.writer();
+                        try core_writer.seekTo(self.start_position + self.relative_position);
+                        try core_writer.interface.writeAll(bytes);
                         self.relative_position += @intCast(bytes.len);
                         if (self.relative_position > self.size) {
                             self.size = self.relative_position;
@@ -2357,9 +2341,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     pub fn writeInt(self: *Writer, comptime T: type, value: T, endian: std.builtin.Endian) !void {
                         if (self.size < self.relative_position) return error.EndOfStream;
-                        try self.parent.db.core.seekTo(self.start_position + self.relative_position);
-                        const core_writer = self.parent.db.core.writer();
-                        try core_writer.writeInt(T, value, endian);
+                        var core_writer = self.parent.db.core.writer();
+                        try core_writer.seekTo(self.start_position + self.relative_position);
+                        try core_writer.interface.writeInt(T, value, endian);
                         self.relative_position += byteSizeOf(T);
                         if (self.relative_position > self.size) {
                             self.size = self.relative_position;
@@ -2636,11 +2620,11 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 }
 
                 pub fn writer(self: *Cursor(.read_write)) !Writer {
-                    const core_writer = self.db.core.writer();
+                    var core_writer = self.db.core.writer();
                     const ptr_pos = try self.db.core.getSize();
-                    try self.db.core.seekTo(ptr_pos);
-                    try core_writer.writeInt(u64, 0, .big);
-                    const start_position = try self.db.core.getPos();
+                    try core_writer.seekTo(ptr_pos);
+                    try core_writer.interface.writeInt(u64, 0, .big);
+                    const start_position = core_writer.pos;
 
                     return .{
                         .parent = self,

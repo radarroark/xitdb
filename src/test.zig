@@ -107,10 +107,10 @@ test "low level memory operations" {
     var db = try xitdb.Database(.memory, HashInt).init(.{ .buffer = &buffer, .allocator = allocator, .max_size = 10000 });
 
     var writer = db.core.writer();
-    try db.core.seekTo(0);
-    try writer.writeAll("Hello");
+    try writer.seekTo(0);
+    try writer.interface.writeAll("Hello");
     try std.testing.expectEqualStrings("Hello", db.core.buffer.items[0..5]);
-    try writer.writeInt(u64, 42, .big);
+    try writer.interface.writeInt(u64, 42, .big);
     var bytes = [_]u8{0} ** (@bitSizeOf(u64) / 8);
     std.mem.writeInt(u64, &bytes, 42, .big);
     const hello = try std.fmt.allocPrint(allocator, "Hello{s}", .{bytes});
@@ -526,11 +526,11 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
     // there could be data from a transaction that never
     // completed due to an unclean shutdown.
     {
-        try db.core.seekFromEnd(0);
-        const size_before = try db.core.getPos();
+        const size_before = try db.core.getSize();
 
-        const writer = db.core.writer();
-        try writer.writeAll("this is junk data that will be deleted during init");
+        var writer = db.core.writer();
+        try writer.seekTo(size_before);
+        try writer.interface.writeAll("this is junk data that will be deleted during init");
 
         // no error is thrown if db file is opened in read-only mode
         if (db_kind == .file) {
@@ -541,8 +541,7 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
 
         db = try DB.init(init_opts);
 
-        try db.core.seekFromEnd(0);
-        const size_after = try db.core.getPos();
+        const size_after = try db.core.getSize();
 
         try std.testing.expectEqual(size_before, size_after);
     }
@@ -923,11 +922,11 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
 
         // re-open without error
         var db = try xitdb.Database(db_kind, HashInt).init(init_opts);
-        const writer = db.core.writer();
+        var writer = db.core.writer();
 
         // modify the magic number
-        try db.core.seekTo(0);
-        try writer.writeInt(u8, 'g', .big);
+        try writer.seekTo(0);
+        try writer.interface.writeInt(u8, 'g', .big);
 
         // re-open with error
         {
@@ -940,10 +939,10 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         }
 
         // modify the version
-        try db.core.seekTo(0);
-        try writer.writeInt(u8, 'x', .big);
-        try db.core.seekTo(4);
-        try writer.writeInt(u16, xitdb.VERSION + 1, .big);
+        try writer.seekTo(0);
+        try writer.interface.writeInt(u8, 'x', .big);
+        try writer.seekTo(4);
+        try writer.interface.writeInt(u16, xitdb.VERSION + 1, .big);
 
         // re-open with error
         {
@@ -1103,8 +1102,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
 
         // if error in ctx, db doesn't change
         {
-            try db.core.seekFromEnd(0);
-            const size_before = try db.core.getPos();
+            const size_before = try db.core.getSize();
 
             const Ctx = struct {
                 allocator: std.mem.Allocator,
@@ -1138,8 +1136,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             try std.testing.expectEqualStrings("baz", value);
 
             // verify that the db is properly truncated back to its original size after error
-            try db.core.seekFromEnd(0);
-            const size_after = try db.core.getPos();
+            const size_after = try db.core.getSize();
             try std.testing.expectEqual(size_before, size_after);
         }
 
