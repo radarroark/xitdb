@@ -104,6 +104,10 @@ pub const DatabaseHeader = packed struct {
         return @bitCast(try reader.takeInt(DatabaseHeaderInt, .big));
     }
 
+    pub fn write(self: DatabaseHeader, writer: anytype) !void {
+        try writer.writeInt(DatabaseHeaderInt, @bitCast(self), .big);
+    }
+
     pub fn validate(self: DatabaseHeader) !void {
         if (self.magic_number != MAGIC_NUMBER) {
             return error.InvalidDatabase;
@@ -434,7 +438,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     try self.core.seekTo(0);
                     if (self.core.buffer.items.len == 0) {
-                        self.header = try self.writeHeader(opts.hash_id);
+                        self.header = .{
+                            .hash_id = opts.hash_id,
+                            .hash_size = byteSizeOf(HashInt),
+                        };
+                        const writer = self.core.writer();
+                        try self.header.write(writer);
                     } else {
                         var reader = self.core.reader();
                         self.header = try DatabaseHeader.read(&reader.interface);
@@ -459,7 +468,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     try self.core.seekTo(0);
                     if (size == 0) {
-                        self.header = try self.writeHeader(opts.hash_id);
+                        self.header = .{
+                            .hash_id = opts.hash_id,
+                            .hash_size = byteSizeOf(HashInt),
+                        };
+                        const writer = self.core.writer();
+                        try self.header.write(writer);
                     } else {
                         var reader = self.core.reader();
                         self.header = try DatabaseHeader.read(&reader.interface);
@@ -483,16 +497,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         }
 
         // private
-
-        fn writeHeader(self: *Database(db_kind, HashInt), hash_id: HashId) !DatabaseHeader {
-            const writer = self.core.writer();
-            const header = DatabaseHeader{
-                .hash_id = hash_id,
-                .hash_size = byteSizeOf(HashInt),
-            };
-            try writer.writeInt(DatabaseHeaderInt, @bitCast(header), .big);
-            return header;
-        }
 
         fn truncate(self: *Database(db_kind, HashInt)) !void {
             if (self.header.tag != .array_list) return;
