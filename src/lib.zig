@@ -516,23 +516,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
             switch (db_kind) {
                 .memory => self.core.buffer.shrinkAndFree(self.core.allocator, header_file_size),
-                .file => {
-                    if (.windows != builtin.os.tag) {
-                        // for some reason, calling `setEndPos` on a read-only file
-                        // panics on non-windows systems, so we have to first try
-                        // writing a single byte at the end of the file to test
-                        // if the file is open for writing.
-                        try self.core.seekFromEnd(0);
-                        self.core.file.deprecatedWriter().writeByte(0) catch |err| switch (err) {
-                            error.NotOpenForWriting => return,
-                            else => |e| return e,
-                        };
-                    }
-
-                    self.core.file.setEndPos(header_file_size) catch |err| switch (err) {
-                        error.AccessDenied => return,
-                        else => |e| return e,
-                    };
+                .file => self.core.file.setEndPos(header_file_size) catch |err| switch (err) {
+                    // the file is open in read-only mode.
+                    // on windows, it will return AccessDenied.
+                    // otherwise it will return NonResizable.
+                    error.AccessDenied, error.NonResizable => return,
+                    else => |e| return e,
                 },
             }
         }
