@@ -1358,10 +1358,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             try reader.seekTo(index_pos);
             var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
             try reader.interface.readSliceAll(&index_block);
-            var stream = std.io.fixedBufferStream(&index_block);
-            var block_reader = stream.reader();
+            var block_reader = std.Io.Reader.fixed(&index_block);
             for (&slot_block) |*block_slot| {
-                block_slot.* = @bitCast(try block_reader.readInt(SlotInt, .big));
+                block_slot.* = @bitCast(try block_reader.takeInt(SlotInt, .big));
                 try block_slot.tag.validate();
             }
 
@@ -1716,10 +1715,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                 try reader.interface.readSliceAll(&index_block);
 
-                var stream = std.io.fixedBufferStream(&index_block);
-                var block_reader = stream.reader();
+                var block_reader = std.Io.Reader.fixed(&index_block);
                 for (&slot_block) |*block_slot| {
-                    block_slot.* = @bitCast(try block_reader.readInt(LinkedArrayListSlotInt, .big));
+                    block_slot.* = @bitCast(try block_reader.takeInt(LinkedArrayListSlotInt, .big));
                     try block_slot.slot.tag.validate();
                 }
             }
@@ -1803,10 +1801,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                 try reader.interface.readSliceAll(&index_block);
 
-                var stream = std.io.fixedBufferStream(&index_block);
-                var block_reader = stream.reader();
+                var block_reader = std.Io.Reader.fixed(&index_block);
                 for (&slot_block) |*block_slot| {
-                    block_slot.* = @bitCast(try block_reader.readInt(LinkedArrayListSlotInt, .big));
+                    block_slot.* = @bitCast(try block_reader.takeInt(LinkedArrayListSlotInt, .big));
                     try block_slot.slot.tag.validate();
                 }
             }
@@ -2703,13 +2700,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         // convert the block into slots
                         var index_block = [_]Slot{undefined} ** SLOT_COUNT;
                         {
-                            var stream = std.io.fixedBufferStream(&index_block_bytes);
-                            var block_reader = stream.reader();
+                            var block_reader = std.Io.Reader.fixed(&index_block_bytes);
                             for (&index_block) |*block_slot| {
-                                block_slot.* = @bitCast(try block_reader.readInt(SlotInt, .big));
+                                block_slot.* = @bitCast(try block_reader.takeInt(SlotInt, .big));
                                 try block_slot.tag.validate();
                                 // linked array list has larger slots so we need to skip over the rest
-                                try block_reader.skipBytes((block_size / SLOT_COUNT) - byteSizeOf(Slot), .{});
+                                block_reader.toss((block_size / SLOT_COUNT) - byteSizeOf(Slot));
                             }
                         }
                         // init the stack
@@ -2744,13 +2740,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                     // convert the block into slots
                                     var index_block = [_]Slot{undefined} ** SLOT_COUNT;
                                     {
-                                        var stream = std.io.fixedBufferStream(&index_block_bytes);
-                                        var block_reader = stream.reader();
+                                        var block_reader = std.Io.Reader.fixed(&index_block_bytes);
                                         for (&index_block) |*block_slot| {
-                                            block_slot.* = @bitCast(try block_reader.readInt(SlotInt, .big));
+                                            block_slot.* = @bitCast(try block_reader.takeInt(SlotInt, .big));
                                             try block_slot.tag.validate();
                                             // linked array list has larger slots so we need to skip over the rest
-                                            try block_reader.skipBytes((block_size / SLOT_COUNT) - byteSizeOf(Slot), .{});
+                                            block_reader.toss((block_size / SLOT_COUNT) - byteSizeOf(Slot));
                                         }
                                     }
                                     // append to the stack
