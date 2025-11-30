@@ -262,11 +262,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 }
             },
             .file => struct {
+                io: std.Io,
                 file: std.fs.File,
                 read_buffer: [1024]u8 = [_]u8{0} ** 1024,
 
                 pub fn reader(self: *Core) std.fs.File.Reader {
-                    return self.file.reader(&self.read_buffer);
+                    return self.file.reader(self.io, &self.read_buffer);
                 }
 
                 pub fn writer(self: Core) std.fs.File.Writer {
@@ -410,6 +411,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 hash_id: HashId = .{ .id = 0 },
             },
             .file => struct {
+                io: std.Io,
                 file: std.fs.File,
                 hash_id: HashId = .{ .id = 0 },
             },
@@ -451,7 +453,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 },
                 .file => {
                     var self = Database(db_kind, HashInt){
-                        .core = .{ .file = opts.file },
+                        .core = .{ .io = opts.io, .file = opts.file },
                         .header = undefined,
                         .tx_start = null,
                     };

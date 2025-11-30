@@ -5,6 +5,7 @@ const HashInt = u160;
 const MAX_READ_BYTES = 1024;
 
 test "high level api" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
     var buffer = std.ArrayList(u8){};
@@ -21,10 +22,11 @@ test "high level api" {
         file.close();
         std.fs.cwd().deleteFile("main.db") catch {};
     }
-    try testHighLevelApi(allocator, .file, .{ .file = file });
+    try testHighLevelApi(allocator, .file, .{ .io = io, .file = file });
 }
 
 test "low level api" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
     var buffer = std.ArrayList(u8){};
@@ -41,7 +43,7 @@ test "low level api" {
         file.close();
         std.fs.cwd().deleteFile("main.db") catch {};
     }
-    try testLowLevelApi(allocator, .file, .{ .file = file });
+    try testLowLevelApi(allocator, .file, .{ .io = io, .file = file });
 }
 
 test "not using arraylist at the top level" {
@@ -530,7 +532,7 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         if (db_kind == .file) {
             const file = try std.fs.cwd().openFile("main.db", .{ .mode = .read_only });
             defer file.close();
-            _ = try DB.init(.{ .file = file });
+            _ = try DB.init(.{ .io = init_opts.io, .file = file });
         }
 
         db = try DB.init(init_opts);
