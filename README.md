@@ -19,9 +19,13 @@ The `HashMap` and `ArrayList` are based on the hash array mapped trie from Phil 
 const file = try std.fs.cwd().createFile("main.db", .{ .read = true });
 defer file.close();
 
+// init the buffer (optional, but better for performance)
+var buffer = std.ArrayList(u8){};
+defer buffer.deinit(allocator);
+
 // init the db
-const DB = xitdb.Database(.file, HashInt);
-var db = try DB.init(.{ .file = file });
+const DB = xitdb.Database(.buffered_file, HashInt);
+var db = try DB.init(.{ .buffer = &buffer, .allocator = allocator, .file = file });
 
 // to get the benefits of immutability, the top-level data structure
 // must be an ArrayList, so each transaction is stored as an item in it
@@ -99,3 +103,5 @@ try std.testing.expectEqualStrings("apple", apple_value);
 ```
 
 It is possible to read the database from multiple threads without locks, even while writes are happening. This is a big benefit of immutable databases. However, each thread needs to use its own file handle and Database object. Keep in mind that writes still need to come from a single thread.
+
+In the example above, we initialize a `.buffered_file` database for better performance. It works by using an in-memory buffer to make writes much faster. To disable buffering, just initialize a `.file` database instead.
