@@ -7,10 +7,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-fn byteSizeOf(T: type) u16 {
-    return @bitSizeOf(T) / 8;
-}
-
 const BIT_COUNT = 4;
 pub const SLOT_COUNT = 1 << BIT_COUNT;
 pub const MASK: u64 = SLOT_COUNT - 1;
@@ -101,7 +97,7 @@ pub const DatabaseHeader = packed struct {
     magic_number: u24 = MAGIC_NUMBER,
 
     pub fn read(reader: *std.Io.Reader) !DatabaseHeader {
-        return @bitCast(try reader.takeInt(DatabaseHeaderInt, .big));
+        return @bitCast(try takeInt(reader, DatabaseHeaderInt, .big));
     }
 
     pub fn write(self: DatabaseHeader, writer: *std.Io.Writer) !void {
@@ -140,7 +136,18 @@ pub const WriteMode = enum {
 pub const DatabaseKind = enum {
     memory,
     file,
+    buffered_file,
 };
+
+fn byteSizeOf(T: type) u16 {
+    return @bitSizeOf(T) / 8;
+}
+
+fn takeInt(reader: *std.Io.Reader, comptime T: type, endian: std.builtin.Endian) !T {
+    var buffer: [byteSizeOf(T)]u8 = undefined;
+    try reader.readSliceAll(&buffer);
+    return std.mem.readInt(T, &buffer, endian);
+}
 
 pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
     return struct {
@@ -148,136 +155,302 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         header: DatabaseHeader,
         tx_start: ?u64,
 
-        pub const Core = switch (db_kind) {
-            .memory => struct {
-                buffer: *std.ArrayList(u8),
-                allocator: std.mem.Allocator,
-                max_size: ?u64,
-                read_buffer: [1024]u8 = [_]u8{0} ** 1024,
+        pub const CoreMemory = struct {
+            buffer: *std.ArrayList(u8),
+            allocator: std.mem.Allocator,
+            max_size: ?u64,
 
-                pub const Reader = struct {
-                    parent: *Core,
-                    interface: std.Io.Reader,
-                    pos: u64 = 0,
+            pub const Reader = struct {
+                parent: *CoreMemory,
+                interface: std.Io.Reader,
+                pos: u64 = 0,
 
-                    pub fn seekTo(self: *Reader, offset: u64) !void {
-                        const logical_pos = self.logicalPos();
-                        if (offset < logical_pos or offset >= self.pos) {
-                            self.interface.seek = 0;
-                            self.interface.end = 0;
-                            self.pos = offset;
-                        } else {
-                            const logical_delta: usize = @intCast(offset - logical_pos);
-                            self.interface.seek += logical_delta;
+                pub fn seekTo(self: *Reader, offset: u64) !void {
+                    self.pos = offset;
+                }
+
+                fn stream(io_r: *std.Io.Reader, io_w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+                    const r: *Reader = @alignCast(@fieldParentPtr("interface", io_r));
+
+                    if (r.parent.buffer.items.len == r.pos) return error.EndOfStream;
+
+                    const max_size = @min(@intFromEnum(limit), r.parent.buffer.items.len - r.pos);
+                    if (max_size == 0) return 0;
+
+                    const size = try io_w.write(r.parent.buffer.items[r.pos..(r.pos + max_size)]);
+                    r.pos += size;
+                    return size;
+                }
+            };
+
+            const Writer = struct {
+                parent: *CoreMemory,
+                interface: std.Io.Writer,
+                pos: u64 = 0,
+
+                fn resizeBuffer(self: Writer, new_size: u64) !void {
+                    if (new_size > self.parent.buffer.items.len) {
+                        if (self.parent.max_size) |max_size| {
+                            if (new_size > max_size) {
+                                return error.MaxSizeExceeded;
+                            }
                         }
+                        try self.parent.buffer.ensureTotalCapacityPrecise(self.parent.allocator, new_size);
+                        self.parent.buffer.items.len = new_size;
+                    }
+                }
+
+                pub fn seekTo(self: *Writer, offset: u64) !void {
+                    self.pos = offset;
+                }
+
+                pub fn logicalPos(self: Writer) u64 {
+                    return self.pos;
+                }
+
+                fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+                    const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
+
+                    if (splat != 1) unreachable; // splat isn't supported
+                    if (io_w.buffered().len > 0) unreachable; // buffering isn't supported
+
+                    for (data) |buf| {
+                        const n = buf.len;
+                        if (n == 0) continue;
+                        const new_position = w.pos + @as(u64, @intCast(n));
+                        w.resizeBuffer(new_position) catch return error.WriteFailed;
+                        @memcpy(w.parent.buffer.items[w.pos..new_position], buf);
+                        w.pos = new_position;
+                        return io_w.consume(n);
                     }
 
-                    pub fn logicalPos(self: Reader) u64 {
-                        return self.pos - self.interface.bufferedLen();
-                    }
+                    return error.WriteFailed;
+                }
+            };
 
-                    fn stream(io_r: *std.Io.Reader, io_w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
-                        const r: *Reader = @alignCast(@fieldParentPtr("interface", io_r));
+            pub fn reader(self: *CoreMemory) Reader {
+                return .{
+                    .parent = self,
+                    .interface = .{
+                        .vtable = &.{ .stream = Reader.stream },
+                        .buffer = &.{},
+                        .seek = 0,
+                        .end = 0,
+                    },
+                };
+            }
 
-                        if (r.parent.buffer.items.len == r.pos) return error.EndOfStream;
+            pub fn writer(self: *CoreMemory) Writer {
+                return .{
+                    .parent = self,
+                    .interface = .{
+                        .vtable = &.{ .drain = Writer.drain },
+                        .buffer = &.{},
+                    },
+                };
+            }
 
-                        const max_size = @min(@intFromEnum(limit), r.parent.buffer.items.len - r.pos);
-                        if (max_size == 0) return 0;
+            pub fn getWriterPos(_: *const CoreMemory, w: *const Writer) u64 {
+                return w.pos;
+            }
 
-                        const size = try io_w.write(r.parent.buffer.items[r.pos..(r.pos + max_size)]);
+            pub fn getSize(self: *const CoreMemory) !u64 {
+                return self.buffer.items.len;
+            }
+
+            pub fn setLength(self: *CoreMemory, len: usize) !void {
+                self.buffer.shrinkAndFree(self.allocator, len);
+            }
+
+            pub fn sync(_: *const CoreMemory) !void {}
+
+            pub fn flush(_: *CoreMemory) !void {}
+        };
+
+        pub const CoreFile = struct {
+            file: std.fs.File,
+
+            pub const Reader = std.fs.File.Reader;
+            pub const Writer = std.fs.File.Writer;
+
+            pub fn reader(self: *const CoreFile) Reader {
+                return self.file.reader(&.{});
+            }
+
+            pub fn writer(self: *const CoreFile) Writer {
+                return self.file.writer(&.{});
+            }
+
+            pub fn getWriterPos(_: *const CoreFile, w: *const Writer) u64 {
+                return w.pos;
+            }
+
+            pub fn getSize(self: *const CoreFile) !u64 {
+                try self.file.seekFromEnd(0);
+                return try self.file.getPos();
+            }
+
+            pub fn setLength(self: *const CoreFile, len: usize) !void {
+                self.file.setEndPos(len) catch |err| switch (err) {
+                    // the file is open in read-only mode.
+                    // on windows, it will return AccessDenied.
+                    // otherwise it will return NonResizable.
+                    error.AccessDenied, error.NonResizable => return,
+                    else => |e| return e,
+                };
+            }
+
+            pub fn sync(self: *const CoreFile) !void {
+                try self.file.sync();
+            }
+
+            pub fn flush(_: *const CoreFile) !void {}
+        };
+
+        pub const CoreBufferedFile = struct {
+            memory: CoreMemory,
+            memory_max_size: u64,
+            file: CoreFile,
+            file_pos: u64 = 0,
+            memory_pos: u64 = 0,
+
+            pub const Reader = struct {
+                parent: *CoreBufferedFile,
+                interface: std.Io.Reader,
+                pos: u64 = 0,
+
+                pub fn seekTo(self: *Reader, offset: u64) !void {
+                    self.pos = offset;
+                }
+
+                fn stream(io_r: *std.Io.Reader, io_w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+                    const r: *Reader = @alignCast(@fieldParentPtr("interface", io_r));
+
+                    const dest = limit.slice(try io_w.writableSliceGreedy(1));
+
+                    // read from the in-memory buffer
+                    if (r.pos >= r.parent.file_pos and r.pos < r.parent.file_pos + r.parent.memory.buffer.items.len) {
+                        const mem_pos = r.pos - r.parent.file_pos;
+                        const size = @min(dest.len, r.parent.memory.buffer.items[mem_pos..].len);
+                        @memcpy(dest[0..size], r.parent.memory.buffer.items[mem_pos..][0..size]);
                         r.pos += size;
+                        io_w.advance(size);
                         return size;
                     }
-                };
-
-                const Writer = struct {
-                    parent: *Core,
-                    interface: std.Io.Writer,
-                    pos: u64 = 0,
-
-                    fn resizeBuffer(self: Writer, new_size: u64) !void {
-                        if (new_size > self.parent.buffer.items.len) {
-                            if (self.parent.max_size) |max_size| {
-                                if (new_size > max_size) {
-                                    return error.MaxSizeExceeded;
-                                }
-                            }
-                            try self.parent.buffer.ensureTotalCapacityPrecise(self.parent.allocator, new_size);
-                            self.parent.buffer.expandToCapacity();
-                        }
+                    // read from the disk
+                    else {
+                        var file_reader = r.parent.file.reader();
+                        file_reader.seekTo(r.pos) catch return error.ReadFailed;
+                        const max_size = if (r.pos < r.parent.file_pos) @min(dest.len, r.parent.file_pos - r.pos) else dest.len;
+                        const size = file_reader.interface.readSliceShort(dest[0..max_size]) catch return error.ReadFailed;
+                        r.pos += size;
+                        io_w.advance(size);
+                        return size;
                     }
+                }
+            };
 
-                    pub fn seekTo(self: *Writer, offset: u64) !void {
-                        self.pos = offset;
+            pub const Writer = struct {
+                parent: *CoreBufferedFile,
+                interface: std.Io.Writer,
+
+                pub fn seekTo(self: *Writer, offset: u64) !void {
+                    const file_pos = self.parent.file_pos;
+                    if (offset >= file_pos and offset <= file_pos + self.parent.memory.buffer.items.len) {
+                        self.parent.memory_pos = offset - file_pos;
+                    } else {
+                        try self.parent.flush();
+                        self.parent.file_pos = offset;
                     }
+                }
 
-                    fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
-                        const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
+                fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+                    const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
 
-                        // splat isn't supported for now
-                        if (splat != 1) return error.WriteFailed;
+                    if (splat != 1) unreachable; // splat isn't supported
+                    if (io_w.buffered().len > 0) unreachable; // buffering isn't supported
 
-                        // buffering isn't supported for now
-                        const bytes = io_w.buffered();
-                        if (bytes.len > 0) return error.WriteFailed;
+                    for (data) |buf| {
+                        const n = buf.len;
+                        if (n == 0) continue;
 
-                        for (data) |buf| {
-                            const n = buf.len;
-                            if (n == 0) continue;
-                            const new_position = w.pos + @as(u64, @intCast(n));
-                            w.resizeBuffer(new_position) catch return error.WriteFailed;
-                            @memcpy(w.parent.buffer.items[w.pos..new_position], buf);
-                            w.pos = new_position;
-                            return io_w.consume(n);
+                        if (w.parent.memory_pos + n > w.parent.memory_max_size) {
+                            w.parent.flush() catch return error.WriteFailed;
                         }
 
-                        return error.WriteFailed;
+                        var memory_writer = w.parent.memory.writer();
+                        memory_writer.seekTo(w.parent.memory_pos) catch return error.WriteFailed;
+                        memory_writer.interface.writeAll(buf) catch return error.WriteFailed;
+                        w.parent.memory_pos += n;
+
+                        return io_w.consume(n);
                     }
+
+                    return error.WriteFailed;
+                }
+            };
+
+            pub fn reader(self: *CoreBufferedFile) Reader {
+                return .{
+                    .parent = self,
+                    .interface = .{
+                        .vtable = &.{ .stream = Reader.stream },
+                        .buffer = &.{},
+                        .seek = 0,
+                        .end = 0,
+                    },
                 };
+            }
 
-                pub fn reader(self: *Core) Reader {
-                    return .{
-                        .parent = self,
-                        .interface = .{
-                            .vtable = &.{ .stream = Reader.stream },
-                            .buffer = &self.read_buffer,
-                            .seek = 0,
-                            .end = 0,
-                        },
-                    };
-                }
+            pub fn writer(self: *CoreBufferedFile) Writer {
+                return .{
+                    .parent = self,
+                    .interface = .{
+                        .vtable = &.{ .drain = Writer.drain },
+                        .buffer = &.{},
+                    },
+                };
+            }
 
-                pub fn writer(self: *Core) Writer {
-                    return .{
-                        .parent = self,
-                        .interface = .{
-                            .vtable = &.{ .drain = Writer.drain },
-                            .buffer = &.{},
-                        },
-                    };
-                }
+            pub fn getWriterPos(self: *const CoreBufferedFile, _: *const Writer) u64 {
+                return self.file_pos + self.memory_pos;
+            }
 
-                pub fn getSize(self: Core) !u64 {
-                    return self.buffer.items.len;
-                }
-            },
-            .file => struct {
-                file: std.fs.File,
-                read_buffer: [1024]u8 = [_]u8{0} ** 1024,
+            pub fn getSize(self: *const CoreBufferedFile) !u64 {
+                return @max(self.file_pos + self.memory.buffer.items.len, try self.file.getSize());
+            }
 
-                pub fn reader(self: *Core) std.fs.File.Reader {
-                    return self.file.reader(&self.read_buffer);
-                }
+            pub fn setLength(self: *CoreBufferedFile, len: usize) !void {
+                try self.flush();
+                try self.file.setLength(len);
+                self.file_pos = @min(self.file_pos, len);
+            }
 
-                pub fn writer(self: Core) std.fs.File.Writer {
-                    return self.file.writer(&.{});
-                }
+            pub fn sync(self: *CoreBufferedFile) !void {
+                try self.flush();
+                try self.file.sync();
+            }
 
-                pub fn getSize(self: Core) !u64 {
-                    try self.file.seekFromEnd(0);
-                    return @intCast(try self.file.getPos());
+            pub fn flush(self: *CoreBufferedFile) !void {
+                if (self.memory.buffer.items.len > 0) {
+                    const file_pos = self.file_pos;
+
+                    var file_writer = self.file.file.writer(&.{});
+                    try file_writer.seekTo(file_pos);
+                    try file_writer.interface.writeAll(self.memory.buffer.items);
+
+                    self.file_pos = file_pos + self.memory_pos;
+                    self.memory.buffer.clearRetainingCapacity();
+
+                    self.memory_pos = 0;
                 }
-            },
+            }
+        };
+
+        pub const Core = switch (db_kind) {
+            .memory => CoreMemory,
+            .file => CoreFile,
+            .buffered_file => CoreBufferedFile,
         };
 
         // internal constants
@@ -413,74 +586,71 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 file: std.fs.File,
                 hash_id: HashId = .{ .id = 0 },
             },
+            .buffered_file => struct {
+                buffer: *std.ArrayList(u8),
+                allocator: std.mem.Allocator,
+                max_size: u64 = 2 * 1024 * 1024, // flushes when the memory is >= this size
+                file: std.fs.File,
+                hash_id: HashId = .{ .id = 0 },
+            },
         };
 
         pub fn init(opts: InitOpts) !Database(db_kind, HashInt) {
-            switch (db_kind) {
-                .memory => {
-                    var self = Database(db_kind, HashInt){
-                        .core = .{
+            var self: Database(db_kind, HashInt) = switch (db_kind) {
+                .memory => .{
+                    .core = .{
+                        .buffer = opts.buffer,
+                        .allocator = opts.allocator,
+                        .max_size = opts.max_size,
+                    },
+                    .header = undefined,
+                    .tx_start = null,
+                },
+                .file => .{
+                    .core = .{
+                        .file = opts.file,
+                    },
+                    .header = undefined,
+                    .tx_start = null,
+                },
+                .buffered_file => .{
+                    .core = .{
+                        .memory = .{
                             .buffer = opts.buffer,
                             .allocator = opts.allocator,
-                            .max_size = opts.max_size,
+                            .max_size = null,
                         },
-                        .header = undefined,
-                        .tx_start = null,
-                    };
-
-                    if (self.core.buffer.items.len == 0) {
-                        self.header = .{
-                            .hash_id = opts.hash_id,
-                            .hash_size = byteSizeOf(HashInt),
-                        };
-                        var writer = self.core.writer();
-                        try writer.seekTo(0);
-                        try self.header.write(&writer.interface);
-                    } else {
-                        var reader = self.core.reader();
-                        try reader.seekTo(0);
-                        self.header = try DatabaseHeader.read(&reader.interface);
-                        try self.header.validate();
-                        if (self.header.hash_size != byteSizeOf(HashInt)) {
-                            return error.InvalidHashSize;
-                        }
-                        try self.truncate();
-                    }
-
-                    return self;
+                        .memory_max_size = opts.max_size,
+                        .file = .{
+                            .file = opts.file,
+                        },
+                    },
+                    .header = undefined,
+                    .tx_start = null,
                 },
-                .file => {
-                    var self = Database(db_kind, HashInt){
-                        .core = .{ .file = opts.file },
-                        .header = undefined,
-                        .tx_start = null,
-                    };
+            };
 
-                    const stat = try self.core.file.stat();
-                    const size = stat.size;
-
-                    if (size == 0) {
-                        self.header = .{
-                            .hash_id = opts.hash_id,
-                            .hash_size = byteSizeOf(HashInt),
-                        };
-                        var writer = self.core.writer();
-                        try writer.seekTo(0);
-                        try self.header.write(&writer.interface);
-                    } else {
-                        var reader = self.core.reader();
-                        try reader.seekTo(0);
-                        self.header = try DatabaseHeader.read(&reader.interface);
-                        try self.header.validate();
-                        if (self.header.hash_size != byteSizeOf(HashInt)) {
-                            return error.InvalidHashSize;
-                        }
-                        try self.truncate();
-                    }
-
-                    return self;
-                },
+            if (try self.core.getSize() == 0) {
+                self.header = .{
+                    .hash_id = opts.hash_id,
+                    .hash_size = byteSizeOf(HashInt),
+                };
+                var writer = self.core.writer();
+                try writer.seekTo(0);
+                try self.header.write(&writer.interface);
+                try self.core.flush();
+            } else {
+                var reader = self.core.reader();
+                try reader.seekTo(0);
+                self.header = try DatabaseHeader.read(&reader.interface);
+                try self.header.validate();
+                if (self.header.hash_size != byteSizeOf(HashInt)) {
+                    return error.InvalidHashSize;
+                }
+                try self.truncate();
             }
+
+            return self;
         }
 
         pub fn rootCursor(self: *Database(db_kind, HashInt)) Cursor(.read_write) {
@@ -502,7 +672,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
             var core_reader = self.core.reader();
             try core_reader.seekTo(DATABASE_START + byteSizeOf(ArrayListHeader));
-            const header_file_size = try core_reader.interface.takeInt(u64, .big);
+            const header_file_size = try takeInt(&core_reader.interface, u64, .big);
 
             if (header_file_size == 0) return;
 
@@ -510,16 +680,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
             if (file_size == header_file_size) return;
 
-            switch (db_kind) {
-                .memory => self.core.buffer.shrinkAndFree(self.core.allocator, header_file_size),
-                .file => self.core.file.setEndPos(header_file_size) catch |err| switch (err) {
-                    // the file is open in read-only mode.
-                    // on windows, it will return AccessDenied.
-                    // otherwise it will return NonResizable.
-                    error.AccessDenied, error.NonResizable => return,
-                    else => |e| return e,
-                },
-            }
+            try self.core.setLength(header_file_size);
         }
 
         fn readSlotPointer(self: *Database(db_kind, HashInt), comptime write_mode: WriteMode, comptime Ctx: type, path: []const PathPart(Ctx), slot_ptr: SlotPointer) !SlotPointer {
@@ -609,7 +770,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 if (array_list_start < tx_start) {
                                     // read existing block
                                     try reader.seekTo(array_list_start);
-                                    var header: ArrayListHeader = @bitCast(try reader.interface.takeInt(ArrayListHeaderInt, .big));
+                                    var header: ArrayListHeader = @bitCast(try takeInt(&reader.interface, ArrayListHeaderInt, .big));
                                     try reader.seekTo(header.ptr);
                                     var array_list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                                     try reader.interface.readSliceAll(&array_list_index_block);
@@ -646,7 +807,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     var reader = self.core.reader();
                     try reader.seekTo(next_array_list_start);
-                    const header: ArrayListHeader = @bitCast(try reader.interface.takeInt(ArrayListHeaderInt, .big));
+                    const header: ArrayListHeader = @bitCast(try takeInt(&reader.interface, ArrayListHeaderInt, .big));
                     if (index >= header.size or index < -@as(i65, header.size)) {
                         return error.KeyNotFound;
                     }
@@ -672,7 +833,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     // read header
                     try reader.seekTo(next_array_list_start);
-                    const orig_header: ArrayListHeader = @bitCast(try reader.interface.takeInt(ArrayListHeaderInt, .big));
+                    const orig_header: ArrayListHeader = @bitCast(try takeInt(&reader.interface, ArrayListHeaderInt, .big));
 
                     // append
                     const append_result = try self.readArrayListSlotAppend(orig_header, write_mode, is_top_level);
@@ -709,7 +870,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     // read header
                     try reader.seekTo(next_array_list_start);
-                    const orig_header: ArrayListHeader = @bitCast(try reader.interface.takeInt(ArrayListHeaderInt, .big));
+                    const orig_header: ArrayListHeader = @bitCast(try takeInt(&reader.interface, ArrayListHeaderInt, .big));
 
                     // slice
                     const slice_header = try self.readArrayListSlice(orig_header, array_list_slice.size);
@@ -760,7 +921,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 if (array_list_start < tx_start) {
                                     // read existing block
                                     try reader.seekTo(array_list_start);
-                                    var header: LinkedArrayListHeader = @bitCast(try reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
+                                    var header: LinkedArrayListHeader = @bitCast(try takeInt(&reader.interface, LinkedArrayListHeaderInt, .big));
                                     try reader.seekTo(header.ptr);
                                     var array_list_index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                                     try reader.interface.readSliceAll(&array_list_index_block);
@@ -794,7 +955,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     var reader = self.core.reader();
                     try reader.seekTo(slot_ptr.slot.value);
-                    const header: LinkedArrayListHeader = @bitCast(try reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
+                    const header: LinkedArrayListHeader = @bitCast(try takeInt(&reader.interface, LinkedArrayListHeaderInt, .big));
                     if (index >= header.size or index < -@as(i65, header.size)) {
                         return error.KeyNotFound;
                     }
@@ -817,7 +978,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     // read header
                     try reader.seekTo(next_array_list_start);
-                    const orig_header: LinkedArrayListHeader = @bitCast(try reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
+                    const orig_header: LinkedArrayListHeader = @bitCast(try takeInt(&reader.interface, LinkedArrayListHeaderInt, .big));
 
                     // append
                     const append_result = try self.readLinkedArrayListSlotAppend(orig_header, write_mode, is_top_level);
@@ -840,7 +1001,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     // read header
                     try reader.seekTo(next_array_list_start);
-                    const orig_header: LinkedArrayListHeader = @bitCast(try reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
+                    const orig_header: LinkedArrayListHeader = @bitCast(try takeInt(&reader.interface, LinkedArrayListHeaderInt, .big));
 
                     // slice
                     const slice_header = try self.readLinkedArrayListSlice(orig_header, linked_array_list_slice.offset, linked_array_list_slice.size);
@@ -865,9 +1026,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     // read headers
                     try reader.seekTo(next_array_list_start);
-                    const header_a: LinkedArrayListHeader = @bitCast(try reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
+                    const header_a: LinkedArrayListHeader = @bitCast(try takeInt(&reader.interface, LinkedArrayListHeaderInt, .big));
                     try reader.seekTo(linked_array_list_concat.list.value);
-                    const header_b: LinkedArrayListHeader = @bitCast(try reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
+                    const header_b: LinkedArrayListHeader = @bitCast(try takeInt(&reader.interface, LinkedArrayListHeaderInt, .big));
 
                     // concat
                     const concat_header = try self.readLinkedArrayListConcat(header_a, header_b);
@@ -890,7 +1051,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     // read header
                     try reader.seekTo(next_array_list_start);
-                    const orig_header: LinkedArrayListHeader = @bitCast(try reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
+                    const orig_header: LinkedArrayListHeader = @bitCast(try takeInt(&reader.interface, LinkedArrayListHeaderInt, .big));
 
                     // get the key
                     if (index >= orig_header.size or index < -@as(i65, orig_header.size)) {
@@ -934,7 +1095,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     // read header
                     try reader.seekTo(next_array_list_start);
-                    const orig_header: LinkedArrayListHeader = @bitCast(try reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
+                    const orig_header: LinkedArrayListHeader = @bitCast(try takeInt(&reader.interface, LinkedArrayListHeaderInt, .big));
 
                     // get the key
                     if (index >= orig_header.size or index < -@as(i65, orig_header.size)) {
@@ -1041,7 +1202,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 if (map_start < tx_start) {
                                     // read existing block
                                     try reader.seekTo(map_start);
-                                    const map_count_maybe = if (hash_map_init.counted) try reader.interface.takeInt(u64, .big) else null;
+                                    const map_count_maybe = if (hash_map_init.counted) try takeInt(&reader.interface, u64, .big) else null;
                                     var map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                                     try reader.interface.readSliceAll(&map_index_block);
                                     // copy to the end
@@ -1084,7 +1245,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         var reader = self.core.reader();
                         var writer = self.core.writer();
                         try reader.seekTo(slot_ptr.slot.value);
-                        const map_count = try reader.interface.takeInt(u64, .big);
+                        const map_count = try takeInt(&reader.interface, u64, .big);
                         try writer.seekTo(slot_ptr.slot.value);
                         try writer.interface.writeInt(u64, map_count + 1, .big);
                     }
@@ -1114,7 +1275,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         var reader = self.core.reader();
                         var writer = self.core.writer();
                         try reader.seekTo(slot_ptr.slot.value);
-                        const map_count = try reader.interface.takeInt(u64, .big);
+                        const map_count = try takeInt(&reader.interface, u64, .big);
                         try writer.seekTo(slot_ptr.slot.value);
                         try writer.interface.writeInt(u64, map_count - 1, .big);
                     }
@@ -1150,7 +1311,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                     .slot_ptr = slot_ptr,
                                     .db = self,
                                 };
-                                var writer = try next_cursor.writer();
+                                var writer = try next_cursor.writer(&.{});
                                 writer.format_tag = bytes.format_tag; // the writer will write the format tag when finish is called
                                 try writer.interface.writeAll(bytes.value);
                                 try writer.finish();
@@ -1213,7 +1374,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             const i: u4 = @intCast((key_hash >> key_offset * BIT_COUNT) & MASK);
             const slot_pos = index_pos + (byteSizeOf(Slot) * i);
             try reader.seekTo(slot_pos);
-            const slot: Slot = @bitCast(try reader.interface.takeInt(SlotInt, .big));
+            const slot: Slot = @bitCast(try takeInt(&reader.interface, SlotInt, .big));
             try slot.tag.validate();
 
             const ptr = slot.value;
@@ -1276,7 +1437,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 },
                 .kv_pair => {
                     try reader.seekTo(ptr);
-                    const kv_pair: KeyValuePair = @bitCast(try reader.interface.takeInt(KeyValuePairInt, .big));
+                    const kv_pair: KeyValuePair = @bitCast(try takeInt(&reader.interface, KeyValuePairInt, .big));
 
                     if (kv_pair.hash == key_hash) {
                         if (write_mode == .read_write and !is_top_level) {
@@ -1360,7 +1521,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             try reader.interface.readSliceAll(&index_block);
             var block_reader = std.Io.Reader.fixed(&index_block);
             for (&slot_block) |*block_slot| {
-                block_slot.* = @bitCast(try block_reader.takeInt(SlotInt, .big));
+                block_slot.* = @bitCast(try takeInt(&block_reader, SlotInt, .big));
                 try block_slot.tag.validate();
             }
 
@@ -1375,7 +1536,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 .index => try self.removeMapSlot(slot.value, key_hash, key_offset + 1, is_top_level),
                 .kv_pair => blk: {
                     try reader.seekTo(slot.value);
-                    const kv_pair: KeyValuePair = @bitCast(try reader.interface.takeInt(KeyValuePairInt, .big));
+                    const kv_pair: KeyValuePair = @bitCast(try takeInt(&reader.interface, KeyValuePairInt, .big));
                     if (kv_pair.hash == key_hash) {
                         break :blk .{ .tag = .none };
                     } else {
@@ -1494,7 +1655,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             const i: u4 = @intCast(key >> (shift * BIT_COUNT) & MASK);
             const slot_pos = index_pos + (byteSizeOf(Slot) * i);
             try reader.seekTo(slot_pos);
-            const slot: Slot = @bitCast(try reader.interface.takeInt(SlotInt, .big));
+            const slot: Slot = @bitCast(try takeInt(&reader.interface, SlotInt, .big));
             try slot.tag.validate();
 
             if (shift == 0) {
@@ -1576,7 +1737,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 var index_pos = header.ptr;
                 while (shift > next_shift) {
                     try core_reader.seekTo(index_pos);
-                    const slot: Slot = @bitCast(try core_reader.interface.takeInt(SlotInt, .big));
+                    const slot: Slot = @bitCast(try takeInt(&core_reader.interface, SlotInt, .big));
                     try slot.tag.validate();
                     shift -= 1;
                     index_pos = slot.value;
@@ -1717,7 +1878,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                 var block_reader = std.Io.Reader.fixed(&index_block);
                 for (&slot_block) |*block_slot| {
-                    block_slot.* = @bitCast(try block_reader.takeInt(LinkedArrayListSlotInt, .big));
+                    block_slot.* = @bitCast(try takeInt(&block_reader, LinkedArrayListSlotInt, .big));
                     try block_slot.slot.tag.validate();
                 }
             }
@@ -1803,7 +1964,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                 var block_reader = std.Io.Reader.fixed(&index_block);
                 for (&slot_block) |*block_slot| {
-                    block_slot.* = @bitCast(try block_reader.takeInt(LinkedArrayListSlotInt, .big));
+                    block_slot.* = @bitCast(try takeInt(&block_reader, LinkedArrayListSlotInt, .big));
                     try block_slot.slot.tag.validate();
                 }
             }
@@ -2146,7 +2307,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         block[1] = second_slot;
 
                         // write the root node
-                        const new_ptr = core_writer.pos;
+                        const new_ptr = self.core.getWriterPos(&core_writer);
                         for (block) |block_slot| {
                             try core_writer.interface.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
                         }
@@ -2188,7 +2349,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             return struct {
                 slot_ptr: SlotPointer,
                 db: *Database(db_kind, HashInt),
-                read_buffer: [1024]u8 = [_]u8{0} ** 1024,
 
                 pub const Reader = struct {
                     parent: *Cursor(write_mode),
@@ -2240,6 +2400,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     format_tag: ?[2]u8,
 
                     pub fn finish(self: *Writer) !void {
+                        try self.interface.flush();
+
                         var core_writer = self.parent.db.core.writer();
 
                         if (self.format_tag) |format_tag| {
@@ -2261,37 +2423,42 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     }
 
                     pub fn seekTo(self: *Writer, offset: u64) !void {
+                        try self.interface.flush();
                         self.pos = offset;
                     }
 
                     fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
                         const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
 
-                        // splat isn't supported for now
-                        if (splat != 1) return error.WriteFailed;
+                        if (splat != 1) unreachable; // splat isn't supported
 
-                        // buffering isn't supported for now
                         const bytes = io_w.buffered();
-                        if (bytes.len > 0) return error.WriteFailed;
+                        if (bytes.len > 0) {
+                            return try w.writeAll(bytes);
+                        }
 
                         for (data) |buf| {
-                            const n = buf.len;
-                            if (n == 0) continue;
-
-                            var core_writer = w.parent.db.core.writer();
-                            core_writer.seekTo(w.start_position + w.pos) catch return error.WriteFailed;
-                            try core_writer.interface.writeAll(buf);
-
-                            const new_position = w.pos + @as(u64, @intCast(n));
-                            w.pos = new_position;
-                            if (w.pos > w.size) {
-                                w.size = w.pos;
-                            }
-
-                            return io_w.consume(n);
+                            if (buf.len == 0) continue;
+                            return try w.writeAll(buf);
                         }
 
                         return error.WriteFailed;
+                    }
+
+                    fn writeAll(self: *Writer, bytes: []const u8) std.Io.Writer.Error!usize {
+                        const n = bytes.len;
+
+                        var core_writer = self.parent.db.core.writer();
+                        core_writer.seekTo(self.start_position + self.pos) catch return error.WriteFailed;
+                        try core_writer.interface.writeAll(bytes);
+
+                        const new_position = self.pos + @as(u64, @intCast(n));
+                        self.pos = new_position;
+                        if (self.pos > self.size) {
+                            self.size = self.pos;
+                        }
+
+                        return self.interface.consume(n);
                     }
                 };
 
@@ -2331,6 +2498,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                 pub fn writePath(self: Cursor(.read_write), comptime Ctx: type, path: []const PathPart(Ctx)) !Cursor(.read_write) {
                     const slot_ptr = try self.db.readSlotPointer(.read_write, Ctx, path, self.slot_ptr);
+                    if (self.db.tx_start == null) {
+                        try self.db.core.sync();
+                    }
                     return .{
                         .slot_ptr = slot_ptr,
                         .db = self.db,
@@ -2373,7 +2543,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         .none => return .{ .value = try allocator.alloc(u8, 0) },
                         .bytes => {
                             try core_reader.seekTo(self.slot_ptr.slot.value);
-                            const value_size = try core_reader.interface.takeInt(u64, .big);
+                            const value_size = try takeInt(&core_reader.interface, u64, .big);
 
                             if (max_size_maybe) |max_size| {
                                 if (value_size > max_size) {
@@ -2381,7 +2551,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 }
                             }
 
-                            const start_position = core_reader.logicalPos();
+                            const start_position = core_reader.pos;
 
                             const value = try allocator.alloc(u8, value_size);
                             errdefer allocator.free(value);
@@ -2432,13 +2602,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         .none => return if (buffer.len == 0) .{ .value = buffer } else error.EndOfStream,
                         .bytes => {
                             try core_reader.seekTo(self.slot_ptr.slot.value);
-                            const value_size = try core_reader.interface.takeInt(u64, .big);
+                            const value_size = try takeInt(&core_reader.interface, u64, .big);
 
                             if (value_size > buffer.len) {
                                 return error.StreamTooLong;
                             }
 
-                            const start_position = core_reader.logicalPos();
+                            const start_position = core_reader.pos;
 
                             try core_reader.interface.readSliceAll(buffer[0..value_size]);
                             const value = buffer[0..value_size];
@@ -2485,7 +2655,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     }
 
                     try core_reader.seekTo(self.slot_ptr.slot.value);
-                    const kv_pair: KeyValuePair = @bitCast(try core_reader.interface.takeInt(KeyValuePairInt, .big));
+                    const kv_pair: KeyValuePair = @bitCast(try takeInt(&core_reader.interface, KeyValuePairInt, .big));
 
                     try kv_pair.key_slot.tag.validate();
                     try kv_pair.value_slot.tag.validate();
@@ -2511,19 +2681,19 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     }
                 }
 
-                pub fn reader(self: *Cursor(write_mode)) !Reader {
+                pub fn reader(self: *Cursor(write_mode), buffer: []u8) !Reader {
                     var core_reader = self.db.core.reader();
 
                     switch (self.slot_ptr.slot.tag) {
                         .bytes => {
                             try core_reader.seekTo(self.slot_ptr.slot.value);
-                            const size: u64 = @intCast(try core_reader.interface.takeInt(u64, .big));
-                            const start_position = core_reader.logicalPos();
+                            const size: u64 = @intCast(try takeInt(&core_reader.interface, u64, .big));
+                            const start_position = core_reader.pos;
                             return .{
                                 .parent = self,
                                 .interface = .{
                                     .vtable = &.{ .stream = Reader.stream },
-                                    .buffer = &self.read_buffer,
+                                    .buffer = buffer,
                                     .seek = 0,
                                     .end = 0,
                                 },
@@ -2541,7 +2711,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 .parent = self,
                                 .interface = .{
                                     .vtable = &.{ .stream = Reader.stream },
-                                    .buffer = &self.read_buffer,
+                                    .buffer = buffer,
                                     .seek = 0,
                                     .end = 0,
                                 },
@@ -2555,18 +2725,18 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     }
                 }
 
-                pub fn writer(self: *Cursor(.read_write)) !Writer {
+                pub fn writer(self: *Cursor(.read_write), buffer: []u8) !Writer {
                     var core_writer = self.db.core.writer();
                     const ptr_pos = try self.db.core.getSize();
                     try core_writer.seekTo(ptr_pos);
                     try core_writer.interface.writeInt(u64, 0, .big);
-                    const start_position = core_writer.pos;
+                    const start_position = self.db.core.getWriterPos(&core_writer);
 
                     return .{
                         .parent = self,
                         .interface = .{
                             .vtable = &.{ .drain = Writer.drain },
-                            .buffer = &.{},
+                            .buffer = buffer,
                         },
                         .size = 0,
                         .slot = .{ .value = ptr_pos, .tag = .bytes },
@@ -2586,17 +2756,17 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         .none => return 0,
                         .array_list => {
                             try core_reader.seekTo(self.slot_ptr.slot.value);
-                            const header: ArrayListHeader = @bitCast(try core_reader.interface.takeInt(ArrayListHeaderInt, .big));
+                            const header: ArrayListHeader = @bitCast(try takeInt(&core_reader.interface, ArrayListHeaderInt, .big));
                             return header.size;
                         },
                         .linked_array_list => {
                             try core_reader.seekTo(self.slot_ptr.slot.value);
-                            const header: LinkedArrayListHeader = @bitCast(try core_reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
+                            const header: LinkedArrayListHeader = @bitCast(try takeInt(&core_reader.interface, LinkedArrayListHeaderInt, .big));
                             return header.size;
                         },
                         .bytes => {
                             try core_reader.seekTo(self.slot_ptr.slot.value);
-                            return try core_reader.interface.takeInt(u64, .big);
+                            return try takeInt(&core_reader.interface, u64, .big);
                         },
                         .short_bytes => {
                             var bytes = [_]u8{0} ** byteSizeOf(u64);
@@ -2606,7 +2776,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         },
                         .counted_hash_map, .counted_hash_set => {
                             try core_reader.seekTo(self.slot_ptr.slot.value);
-                            return try core_reader.interface.takeInt(u64, .big);
+                            return try takeInt(&core_reader.interface, u64, .big);
                         },
                         else => return error.UnexpectedTag,
                     }
@@ -2639,7 +2809,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                     const position = cursor.slot_ptr.slot.value;
                                     var core_reader = cursor.db.core.reader();
                                     try core_reader.seekTo(position);
-                                    const header: ArrayListHeader = @bitCast(try core_reader.interface.takeInt(ArrayListHeaderInt, .big));
+                                    const header: ArrayListHeader = @bitCast(try takeInt(&core_reader.interface, ArrayListHeaderInt, .big));
                                     break :blk .{
                                         .size = try cursor.count(),
                                         .index = 0,
@@ -2650,7 +2820,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                     const position = cursor.slot_ptr.slot.value;
                                     var core_reader = cursor.db.core.reader();
                                     try core_reader.seekTo(position);
-                                    const header: LinkedArrayListHeader = @bitCast(try core_reader.interface.takeInt(LinkedArrayListHeaderInt, .big));
+                                    const header: LinkedArrayListHeader = @bitCast(try takeInt(&core_reader.interface, LinkedArrayListHeaderInt, .big));
                                     break :blk .{
                                         .size = try cursor.count(),
                                         .index = 0,
@@ -2702,7 +2872,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         {
                             var block_reader = std.Io.Reader.fixed(&index_block_bytes);
                             for (&index_block) |*block_slot| {
-                                block_slot.* = @bitCast(try block_reader.takeInt(SlotInt, .big));
+                                block_slot.* = @bitCast(try takeInt(&block_reader, SlotInt, .big));
                                 try block_slot.tag.validate();
                                 // linked array list has larger slots so we need to skip over the rest
                                 block_reader.toss((block_size / SLOT_COUNT) - byteSizeOf(Slot));
@@ -2742,7 +2912,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                     {
                                         var block_reader = std.Io.Reader.fixed(&index_block_bytes);
                                         for (&index_block) |*block_slot| {
-                                            block_slot.* = @bitCast(try block_reader.takeInt(SlotInt, .big));
+                                            block_slot.* = @bitCast(try takeInt(&block_reader, SlotInt, .big));
                                             try block_slot.tag.validate();
                                             // linked array list has larger slots so we need to skip over the rest
                                             block_reader.toss((block_size / SLOT_COUNT) - byteSizeOf(Slot));
@@ -3135,10 +3305,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         .{ .write = data },
                         .{ .ctx = ctx },
                     });
-                    // flush all writes from the transaction to disk
-                    if (db_kind == .file) {
-                        try self.cursor.db.core.file.sync();
-                    }
                 }
 
                 pub fn slice(self: ArrayList(.read_write), size: u64) !void {

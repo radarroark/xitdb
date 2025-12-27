@@ -7,41 +7,61 @@ const MAX_READ_BYTES = 1024;
 test "high level api" {
     const allocator = std.testing.allocator;
 
-    var buffer = std.ArrayList(u8){};
-    defer buffer.deinit(allocator);
-    try testHighLevelApi(allocator, .memory, .{ .buffer = &buffer, .allocator = allocator, .max_size = 50_000 });
-
-    if (std.fs.cwd().openFile("main.db", .{})) |file| {
-        file.close();
-        try std.fs.cwd().deleteFile("main.db");
-    } else |_| {}
-
-    const file = try std.fs.cwd().createFile("main.db", .{ .read = true });
-    defer {
-        file.close();
-        std.fs.cwd().deleteFile("main.db") catch {};
+    {
+        var buffer = std.ArrayList(u8){};
+        defer buffer.deinit(allocator);
+        try testHighLevelApi(allocator, .memory, .{ .buffer = &buffer, .allocator = allocator, .max_size = 50_000 });
     }
-    try testHighLevelApi(allocator, .file, .{ .file = file });
+
+    {
+        const file = try std.fs.cwd().createFile("main.db", .{ .read = true, .truncate = true });
+        defer {
+            file.close();
+            std.fs.cwd().deleteFile("main.db") catch {};
+        }
+        try testHighLevelApi(allocator, .file, .{ .file = file });
+    }
+
+    {
+        var buffer = std.ArrayList(u8){};
+        defer buffer.deinit(allocator);
+        const file = try std.fs.cwd().createFile("main.db", .{ .read = true, .truncate = true });
+        defer {
+            file.close();
+            std.fs.cwd().deleteFile("main.db") catch {};
+        }
+        try testHighLevelApi(allocator, .buffered_file, .{ .buffer = &buffer, .allocator = allocator, .file = file });
+    }
 }
 
 test "low level api" {
     const allocator = std.testing.allocator;
 
-    var buffer = std.ArrayList(u8){};
-    defer buffer.deinit(allocator);
-    try testLowLevelApi(allocator, .memory, .{ .buffer = &buffer, .allocator = allocator, .max_size = 50_000_000 });
-
-    if (std.fs.cwd().openFile("main.db", .{})) |file| {
-        file.close();
-        try std.fs.cwd().deleteFile("main.db");
-    } else |_| {}
-
-    const file = try std.fs.cwd().createFile("main.db", .{ .read = true });
-    defer {
-        file.close();
-        std.fs.cwd().deleteFile("main.db") catch {};
+    {
+        var buffer = std.ArrayList(u8){};
+        defer buffer.deinit(allocator);
+        try testLowLevelApi(allocator, .memory, .{ .buffer = &buffer, .allocator = allocator, .max_size = 50_000_000 });
     }
-    try testLowLevelApi(allocator, .file, .{ .file = file });
+
+    {
+        const file = try std.fs.cwd().createFile("main.db", .{ .read = true, .truncate = true });
+        defer {
+            file.close();
+            std.fs.cwd().deleteFile("main.db") catch {};
+        }
+        try testLowLevelApi(allocator, .file, .{ .file = file });
+    }
+
+    {
+        var buffer = std.ArrayList(u8){};
+        defer buffer.deinit(allocator);
+        const file = try std.fs.cwd().createFile("main.db", .{ .read = true, .truncate = true });
+        defer {
+            file.close();
+            std.fs.cwd().deleteFile("main.db") catch {};
+        }
+        try testLowLevelApi(allocator, .buffered_file, .{ .buffer = &buffer, .allocator = allocator, .file = file });
+    }
 }
 
 test "not using arraylist at the top level" {
@@ -116,7 +136,7 @@ test "low level memory operations" {
     var block = [_]u8{0} ** 5;
     try reader.interface.readSliceAll(&block);
     try std.testing.expectEqualStrings("Hello", &block);
-    try std.testing.expectEqual(42, try reader.interface.takeInt(u64, .big));
+    try std.testing.expectEqual(42, try takeInt(&reader.interface, u64, .big));
 }
 
 test "validate tag" {
@@ -135,6 +155,12 @@ fn hashInt(buffer: []const u8) HashInt {
     h.update(buffer);
     h.final(&hash);
     return std.mem.readInt(HashInt, &hash, .big);
+}
+
+fn takeInt(reader: *std.Io.Reader, comptime T: type, endian: std.builtin.Endian) !T {
+    var buffer: [@bitSizeOf(T) / 8]u8 = undefined;
+    try reader.readSliceAll(&buffer);
+    return std.mem.readInt(T, &buffer, endian);
 }
 
 fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, HashInt).InitOpts) !void {
@@ -525,12 +551,26 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         var writer = db.core.writer();
         try writer.seekTo(size_before);
         try writer.interface.writeAll("this is junk data that will be deleted during init");
+        try db.core.flush();
 
         // no error is thrown if db file is opened in read-only mode
-        if (db_kind == .file) {
-            const file = try std.fs.cwd().openFile("main.db", .{ .mode = .read_only });
-            defer file.close();
-            _ = try DB.init(.{ .file = file });
+        switch (db_kind) {
+            .memory => {},
+            .file => {
+                const file = try std.fs.cwd().openFile("main.db", .{ .mode = .read_only });
+                defer file.close();
+                var new_init_opts = init_opts;
+                new_init_opts.file = file;
+                _ = try DB.init(new_init_opts);
+            },
+            .buffered_file => {
+                const file = try std.fs.cwd().openFile("main.db", .{ .mode = .read_only });
+                defer file.close();
+                var new_init_opts = init_opts;
+                new_init_opts.file = file;
+                new_init_opts.buffer.clearAndFree(new_init_opts.allocator);
+                _ = try DB.init(new_init_opts);
+            },
         }
 
         db = try DB.init(init_opts);
@@ -543,11 +583,15 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
 
 fn clearStorage(comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, HashInt).InitOpts) !void {
     switch (db_kind) {
+        .memory => {
+            init_opts.buffer.clearAndFree(init_opts.allocator);
+        },
         .file => {
             try init_opts.file.setEndPos(0);
         },
-        .memory => {
+        .buffered_file => {
             init_opts.buffer.clearAndFree(init_opts.allocator);
+            try init_opts.file.setEndPos(0);
         },
     }
 }
@@ -921,6 +965,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         // modify the magic number
         try writer.seekTo(0);
         try writer.interface.writeInt(u8, 'g', .big);
+        try db.core.flush();
 
         // re-open with error
         {
@@ -937,6 +982,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
         try writer.interface.writeInt(u8, 'x', .big);
         try writer.seekTo(4);
         try writer.interface.writeInt(u16, xitdb.VERSION + 1, .big);
+        try db.core.flush();
 
         // re-open with error
         {
@@ -974,7 +1020,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             const Ctx = struct {
                 pub fn run(_: @This(), cursor: *xitdb.Database(db_kind, HashInt).Cursor(.read_write)) !void {
                     try std.testing.expect(cursor.slot().tag == .none);
-                    var writer = try cursor.writer();
+                    var writer = try cursor.writer(&.{});
                     try writer.interface.writeAll("bar");
                     try writer.finish();
                 }
@@ -1009,19 +1055,19 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, HashInt).Cursor(.read_write)) !void {
                     try std.testing.expect(cursor.slot().tag != .none);
 
-                    if (true) return;
                     const value = try cursor.readBytesAlloc(self.allocator, MAX_READ_BYTES);
                     defer self.allocator.free(value);
                     try std.testing.expectEqualStrings("bar", value);
 
-                    var bar_reader = try cursor.reader();
+                    var read_buffer: [1024]u8 = undefined;
+                    var bar_reader = try cursor.reader(&read_buffer);
 
                     // read into buffer
                     var bar_bytes = [_]u8{0} ** 10;
-                    try bar_reader.readNoEof(bar_bytes[0..3]);
+                    try bar_reader.interface.readSliceAll(bar_bytes[0..3]);
                     try std.testing.expectEqualStrings("bar", bar_bytes[0..3]);
                     try bar_reader.seekTo(0);
-                    try std.testing.expectEqual(3, try bar_reader.read(&bar_bytes));
+                    try std.testing.expectEqual(3, try bar_reader.interface.readSliceShort(&bar_bytes));
                     try std.testing.expectEqualStrings("bar", bar_bytes[0..3]);
 
                     // read one char at a time
@@ -1029,23 +1075,22 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                         var char = [_]u8{0} ** 1;
                         try bar_reader.seekTo(0);
 
-                        try bar_reader.readNoEof(&char);
+                        try bar_reader.interface.readSliceAll(&char);
                         try std.testing.expectEqualStrings("b", &char);
 
-                        try bar_reader.readNoEof(&char);
+                        try bar_reader.interface.readSliceAll(&char);
                         try std.testing.expectEqualStrings("a", &char);
 
-                        try bar_reader.readNoEof(&char);
+                        try bar_reader.interface.readSliceAll(&char);
                         try std.testing.expectEqualStrings("r", &char);
 
-                        try std.testing.expectEqual(error.EndOfStream, bar_reader.readNoEof(&char));
+                        try std.testing.expectEqual(error.EndOfStream, bar_reader.interface.readSliceAll(&char));
 
-                        try bar_reader.seekTo(2);
-                        try bar_reader.seekBy(-1);
-                        try std.testing.expectEqual('a', try bar_reader.readInt(u8, .big));
+                        try bar_reader.seekTo(1);
+                        try std.testing.expectEqual('a', try bar_reader.interface.takeInt(u8, .big));
 
-                        try bar_reader.seekFromEnd(-3);
-                        try std.testing.expectEqual('b', try bar_reader.readInt(u8, .big));
+                        try bar_reader.seekTo(0);
+                        try std.testing.expectEqual('b', try bar_reader.interface.takeInt(u8, .big));
                     }
                 }
             };
@@ -1067,7 +1112,8 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 pub fn run(self: @This(), cursor: *xitdb.Database(db_kind, HashInt).Cursor(.read_write)) !void {
                     try std.testing.expect(cursor.slot().tag != .none);
 
-                    var writer = try cursor.writer();
+                    var write_buffer: [1024]u8 = undefined;
+                    var writer = try cursor.writer(&write_buffer);
                     try writer.interface.writeAll("x");
                     try writer.interface.writeAll("x");
                     try writer.interface.writeAll("x");
@@ -1102,7 +1148,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 allocator: std.mem.Allocator,
 
                 pub fn run(_: @This(), cursor: *xitdb.Database(db_kind, HashInt).Cursor(.read_write)) !void {
-                    var writer = try cursor.writer();
+                    var writer = try cursor.writer(&.{});
                     try writer.interface.writeAll("this value won't be visible");
                     try writer.finish();
                     return error.CancelTransaction;
@@ -1203,7 +1249,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             try std.testing.expectEqual(8, try bar_cursor.count());
 
             // make sure .short_bytes can be read with a reader
-            var bar_reader = try bar_cursor.reader();
+            var bar_reader = try bar_cursor.reader(&.{});
             const bar_value = try bar_reader.interface.allocRemaining(allocator, @enumFromInt(MAX_READ_BYTES));
             defer allocator.free(bar_value);
             try std.testing.expectEqualStrings("shortstr", bar_value);
@@ -1237,7 +1283,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 try std.testing.expectEqualStrings("st", &bytes.format_tag.?);
 
                 // make sure .bytes can be read with a reader
-                var bar_reader = try bar_cursor.reader();
+                var bar_reader = try bar_cursor.reader(&.{});
                 const bar_value = try bar_reader.interface.allocRemaining(allocator, @enumFromInt(MAX_READ_BYTES));
                 defer allocator.free(bar_value);
                 try std.testing.expectEqualStrings("shortstr", bar_value);
@@ -1269,7 +1315,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 try std.testing.expectEqualStrings("st", &bytes.format_tag.?);
 
                 // make sure .short_bytes can be read with a reader
-                var bar_reader = try bar_cursor.reader();
+                var bar_reader = try bar_cursor.reader(&.{});
                 const bar_value = try bar_reader.interface.allocRemaining(allocator, @enumFromInt(MAX_READ_BYTES));
                 defer allocator.free(bar_value);
                 try std.testing.expectEqualStrings("shorts", bar_value);
@@ -1301,7 +1347,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 try std.testing.expectEqualStrings("st", &bytes.format_tag.?);
 
                 // make sure .short_bytes can be read with a reader
-                var bar_reader = try bar_cursor.reader();
+                var bar_reader = try bar_cursor.reader(&.{});
                 const bar_value = try bar_reader.interface.allocRemaining(allocator, @enumFromInt(MAX_READ_BYTES));
                 defer allocator.free(bar_value);
                 try std.testing.expectEqualStrings("short", bar_value);
@@ -1446,7 +1492,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 const i: u4 = @intCast(foo_key & xitdb.MASK);
                 const slot_pos = index_pos + (slot_size * i);
                 try reader.seekTo(slot_pos);
-                const slot: xitdb.Slot = @bitCast(try reader.interface.takeInt(u72, .big));
+                const slot: xitdb.Slot = @bitCast(try takeInt(&reader.interface, u72, .big));
 
                 try std.testing.expectEqual(.index, slot.tag);
             }
@@ -1492,7 +1538,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 const i: u4 = @intCast(foo_key & xitdb.MASK);
                 const slot_pos = index_pos + (slot_size * i);
                 try reader.seekTo(slot_pos);
-                const slot: xitdb.Slot = @bitCast(try reader.interface.takeInt(u72, .big));
+                const slot: xitdb.Slot = @bitCast(try takeInt(&reader.interface, u72, .big));
 
                 try std.testing.expectEqual(.index, slot.tag);
             }
@@ -1530,7 +1576,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
                 const i: u4 = @intCast(foo_key & xitdb.MASK);
                 const slot_pos = index_pos + (slot_size * i);
                 try reader.seekTo(slot_pos);
-                const slot: xitdb.Slot = @bitCast(try reader.interface.takeInt(u72, .big));
+                const slot: xitdb.Slot = @bitCast(try takeInt(&reader.interface, u72, .big));
 
                 try std.testing.expectEqual(.kv_pair, slot.tag);
             }
