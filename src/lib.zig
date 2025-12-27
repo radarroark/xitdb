@@ -250,10 +250,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 };
             }
 
-            pub fn getWriterPos(_: *const CoreMemory, w: *const Writer) u64 {
-                return w.pos;
-            }
-
             pub fn getSize(self: *const CoreMemory) !u64 {
                 return self.buffer.items.len;
             }
@@ -281,10 +277,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 return self.file.writer(&.{});
             }
 
-            pub fn getWriterPos(_: *const CoreFile, w: *const Writer) u64 {
-                return w.pos;
-            }
-
             pub fn getSize(self: *const CoreFile) !u64 {
                 try self.file.seekFromEnd(0);
                 return try self.file.getPos();
@@ -310,9 +302,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
         pub const CoreBufferedFile = struct {
             memory: CoreMemory,
             memory_max_size: u64,
-            file: CoreFile,
-            file_pos: u64 = 0,
             memory_pos: u64 = 0,
+            file: CoreFile,
 
             pub const Reader = struct {
                 parent: *CoreBufferedFile,
@@ -329,8 +320,8 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const dest = limit.slice(try io_w.writableSliceGreedy(1));
 
                     // read from the in-memory buffer
-                    if (r.pos >= r.parent.file_pos and r.pos < r.parent.file_pos + r.parent.memory.buffer.items.len) {
-                        const mem_pos = r.pos - r.parent.file_pos;
+                    if (r.pos >= r.parent.memory_pos and r.pos < r.parent.memory_pos + r.parent.memory.buffer.items.len) {
+                        const mem_pos = r.pos - r.parent.memory_pos;
                         const size = @min(dest.len, r.parent.memory.buffer.items[mem_pos..].len);
                         @memcpy(dest[0..size], r.parent.memory.buffer.items[mem_pos..][0..size]);
                         r.pos += size;
@@ -341,7 +332,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     else {
                         var file_reader = r.parent.file.reader();
                         file_reader.seekTo(r.pos) catch return error.ReadFailed;
-                        const max_size = if (r.pos < r.parent.file_pos) @min(dest.len, r.parent.file_pos - r.pos) else dest.len;
+                        const max_size = if (r.pos < r.parent.memory_pos) @min(dest.len, r.parent.memory_pos - r.pos) else dest.len;
                         const size = file_reader.interface.readSliceShort(dest[0..max_size]) catch return error.ReadFailed;
                         r.pos += size;
                         io_w.advance(size);
@@ -353,14 +344,19 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             pub const Writer = struct {
                 parent: *CoreBufferedFile,
                 interface: std.Io.Writer,
+                pos: u64 = 0,
 
                 pub fn seekTo(self: *Writer, offset: u64) !void {
-                    const file_pos = self.parent.file_pos;
-                    if (offset >= file_pos and offset <= file_pos + self.parent.memory.buffer.items.len) {
-                        self.parent.memory_pos = offset - file_pos;
-                    } else {
+                    // flush if we are going past the end of the in-memory buffer
+                    if (offset > self.parent.memory_pos + self.parent.memory.buffer.items.len) {
                         try self.parent.flush();
-                        self.parent.file_pos = offset;
+                    }
+
+                    self.pos = offset;
+
+                    // if the buffer is empty, set its position to this offset as well
+                    if (self.parent.memory.buffer.items.len == 0) {
+                        self.parent.memory_pos = offset;
                     }
                 }
 
@@ -374,15 +370,24 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         const n = buf.len;
                         if (n == 0) continue;
 
-                        if (w.parent.memory_pos + n > w.parent.memory_max_size) {
+                        if (w.parent.memory.buffer.items.len + n > w.parent.memory_max_size) {
                             w.parent.flush() catch return error.WriteFailed;
                         }
 
-                        var memory_writer = w.parent.memory.writer();
-                        memory_writer.seekTo(w.parent.memory_pos) catch return error.WriteFailed;
-                        memory_writer.interface.writeAll(buf) catch return error.WriteFailed;
-                        w.parent.memory_pos += n;
+                        // write to the in-memory buffer
+                        if (w.pos >= w.parent.memory_pos and w.pos <= w.parent.memory_pos + w.parent.memory.buffer.items.len) {
+                            var memory_writer = w.parent.memory.writer();
+                            memory_writer.seekTo(w.pos - w.parent.memory_pos) catch return error.WriteFailed;
+                            memory_writer.interface.writeAll(buf) catch return error.WriteFailed;
+                        }
+                        // write to the disk
+                        else {
+                            var file_writer = w.parent.file.writer();
+                            file_writer.seekTo(w.pos) catch return error.WriteFailed;
+                            file_writer.interface.writeAll(buf) catch return error.WriteFailed;
+                        }
 
+                        w.pos += n;
                         return io_w.consume(n);
                     }
 
@@ -412,18 +417,13 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 };
             }
 
-            pub fn getWriterPos(self: *const CoreBufferedFile, _: *const Writer) u64 {
-                return self.file_pos + self.memory_pos;
-            }
-
             pub fn getSize(self: *const CoreBufferedFile) !u64 {
-                return @max(self.file_pos + self.memory.buffer.items.len, try self.file.getSize());
+                return @max(self.memory_pos + self.memory.buffer.items.len, try self.file.getSize());
             }
 
             pub fn setLength(self: *CoreBufferedFile, len: usize) !void {
                 try self.flush();
                 try self.file.setLength(len);
-                self.file_pos = @min(self.file_pos, len);
             }
 
             pub fn sync(self: *CoreBufferedFile) !void {
@@ -433,16 +433,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
             pub fn flush(self: *CoreBufferedFile) !void {
                 if (self.memory.buffer.items.len > 0) {
-                    const file_pos = self.file_pos;
-
                     var file_writer = self.file.file.writer(&.{});
-                    try file_writer.seekTo(file_pos);
+                    try file_writer.seekTo(self.memory_pos);
                     try file_writer.interface.writeAll(self.memory.buffer.items);
 
-                    self.file_pos = file_pos + self.memory_pos;
-                    self.memory.buffer.clearRetainingCapacity();
-
                     self.memory_pos = 0;
+                    self.memory.buffer.clearRetainingCapacity();
                 }
             }
         };
@@ -843,6 +839,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                     // if top level array list, put the file size in the header
                     if (is_top_level) {
+                        // it is very important that we flush before updating the header,
+                        // because updating the header is what completes the transaction
+                        try self.core.flush();
+
                         const file_size = try self.core.getSize();
                         const header = TopLevelArrayListHeader{
                             .file_size = file_size,
@@ -2307,7 +2307,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         block[1] = second_slot;
 
                         // write the root node
-                        const new_ptr = self.core.getWriterPos(&core_writer);
+                        const new_ptr = core_writer.pos;
                         for (block) |block_slot| {
                             try core_writer.interface.writeInt(LinkedArrayListSlotInt, @bitCast(block_slot), .big);
                         }
@@ -2730,7 +2730,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     const ptr_pos = try self.db.core.getSize();
                     try core_writer.seekTo(ptr_pos);
                     try core_writer.interface.writeInt(u64, 0, .big);
-                    const start_position = self.db.core.getWriterPos(&core_writer);
+                    const start_position = core_writer.pos;
 
                     return .{
                         .parent = self,
