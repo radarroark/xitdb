@@ -42,7 +42,7 @@ pub const Slot = packed struct {
     }
 };
 
-const SlotPointer = struct {
+pub const SlotPointer = struct {
     position: ?u64,
     slot: Slot,
 };
@@ -72,6 +72,7 @@ pub const Tag = enum(u7) {
 const DATABASE_START = byteSizeOf(DatabaseHeader);
 const MAGIC_NUMBER: u24 = std.mem.readInt(u24, "xit", .big);
 pub const VERSION: u16 = 0;
+
 const DatabaseHeaderInt = u96;
 pub const DatabaseHeader = packed struct {
     // id of the hash algorithm being used. xitdb never looks at
@@ -114,6 +115,7 @@ pub const DatabaseHeader = packed struct {
         }
     }
 };
+
 pub const HashId = packed struct(u32) {
     id: u32,
 
@@ -139,309 +141,11 @@ pub const DatabaseKind = enum {
     buffered_file,
 };
 
-fn byteSizeOf(T: type) u16 {
-    return @bitSizeOf(T) / 8;
-}
-
-fn takeInt(reader: *std.Io.Reader, comptime T: type, endian: std.builtin.Endian) !T {
-    var buffer: [byteSizeOf(T)]u8 = undefined;
-    try reader.readSliceAll(&buffer);
-    return std.mem.readInt(T, &buffer, endian);
-}
-
 pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
     return struct {
         core: Core,
         header: DatabaseHeader,
         tx_start: ?u64,
-
-        pub const CoreMemory = struct {
-            buffer: *std.ArrayList(u8),
-            allocator: std.mem.Allocator,
-            max_size: ?u64,
-
-            pub const Reader = struct {
-                parent: *CoreMemory,
-                interface: std.Io.Reader,
-                pos: u64 = 0,
-
-                pub fn seekTo(self: *Reader, offset: u64) !void {
-                    self.pos = offset;
-                }
-
-                fn stream(io_r: *std.Io.Reader, io_w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
-                    const r: *Reader = @alignCast(@fieldParentPtr("interface", io_r));
-
-                    if (r.parent.buffer.items.len == r.pos) return error.EndOfStream;
-
-                    const max_size = @min(@intFromEnum(limit), r.parent.buffer.items.len - r.pos);
-                    if (max_size == 0) return 0;
-
-                    const size = try io_w.write(r.parent.buffer.items[r.pos..(r.pos + max_size)]);
-                    r.pos += size;
-                    return size;
-                }
-            };
-
-            const Writer = struct {
-                parent: *CoreMemory,
-                interface: std.Io.Writer,
-                pos: u64 = 0,
-
-                fn resizeBuffer(self: Writer, new_size: u64) !void {
-                    if (new_size > self.parent.buffer.items.len) {
-                        if (self.parent.max_size) |max_size| {
-                            if (new_size > max_size) {
-                                return error.MaxSizeExceeded;
-                            }
-                        }
-                        try self.parent.buffer.ensureTotalCapacityPrecise(self.parent.allocator, new_size);
-                        self.parent.buffer.items.len = new_size;
-                    }
-                }
-
-                pub fn seekTo(self: *Writer, offset: u64) !void {
-                    self.pos = offset;
-                }
-
-                pub fn logicalPos(self: Writer) u64 {
-                    return self.pos;
-                }
-
-                fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
-                    const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
-
-                    if (splat != 1) unreachable; // splat isn't supported
-                    if (io_w.buffered().len > 0) unreachable; // buffering isn't supported
-
-                    for (data) |buf| {
-                        const n = buf.len;
-                        if (n == 0) continue;
-                        const new_position = w.pos + @as(u64, @intCast(n));
-                        w.resizeBuffer(new_position) catch return error.WriteFailed;
-                        @memcpy(w.parent.buffer.items[w.pos..new_position], buf);
-                        w.pos = new_position;
-                        return io_w.consume(n);
-                    }
-
-                    return error.WriteFailed;
-                }
-            };
-
-            pub fn reader(self: *CoreMemory) Reader {
-                return .{
-                    .parent = self,
-                    .interface = .{
-                        .vtable = &.{ .stream = Reader.stream },
-                        .buffer = &.{},
-                        .seek = 0,
-                        .end = 0,
-                    },
-                };
-            }
-
-            pub fn writer(self: *CoreMemory) Writer {
-                return .{
-                    .parent = self,
-                    .interface = .{
-                        .vtable = &.{ .drain = Writer.drain },
-                        .buffer = &.{},
-                    },
-                };
-            }
-
-            pub fn getSize(self: *const CoreMemory) !u64 {
-                return self.buffer.items.len;
-            }
-
-            pub fn setLength(self: *CoreMemory, len: usize) !void {
-                self.buffer.shrinkAndFree(self.allocator, len);
-            }
-
-            pub fn sync(_: *const CoreMemory) !void {}
-
-            pub fn flush(_: *CoreMemory) !void {}
-        };
-
-        pub const CoreFile = struct {
-            file: std.fs.File,
-
-            pub const Reader = std.fs.File.Reader;
-            pub const Writer = std.fs.File.Writer;
-
-            pub fn reader(self: *const CoreFile) Reader {
-                return self.file.reader(&.{});
-            }
-
-            pub fn writer(self: *const CoreFile) Writer {
-                return self.file.writer(&.{});
-            }
-
-            pub fn getSize(self: *const CoreFile) !u64 {
-                try self.file.seekFromEnd(0);
-                return try self.file.getPos();
-            }
-
-            pub fn setLength(self: *const CoreFile, len: usize) !void {
-                self.file.setEndPos(len) catch |err| switch (err) {
-                    // the file is open in read-only mode.
-                    // on windows, it will return AccessDenied.
-                    // otherwise it will return NonResizable.
-                    error.AccessDenied, error.NonResizable => return,
-                    else => |e| return e,
-                };
-            }
-
-            pub fn sync(self: *const CoreFile) !void {
-                try self.file.sync();
-            }
-
-            pub fn flush(_: *const CoreFile) !void {}
-        };
-
-        pub const CoreBufferedFile = struct {
-            memory: CoreMemory,
-            memory_max_size: u64,
-            memory_pos: u64 = 0,
-            file: CoreFile,
-
-            pub const Reader = struct {
-                parent: *CoreBufferedFile,
-                interface: std.Io.Reader,
-                pos: u64 = 0,
-
-                pub fn seekTo(self: *Reader, offset: u64) !void {
-                    self.pos = offset;
-                }
-
-                fn stream(io_r: *std.Io.Reader, io_w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
-                    const r: *Reader = @alignCast(@fieldParentPtr("interface", io_r));
-
-                    const dest = limit.slice(try io_w.writableSliceGreedy(1));
-
-                    // read from the in-memory buffer
-                    if (r.pos >= r.parent.memory_pos and r.pos < r.parent.memory_pos + r.parent.memory.buffer.items.len) {
-                        const mem_pos = r.pos - r.parent.memory_pos;
-                        const size = @min(dest.len, r.parent.memory.buffer.items[mem_pos..].len);
-                        @memcpy(dest[0..size], r.parent.memory.buffer.items[mem_pos..][0..size]);
-                        r.pos += size;
-                        io_w.advance(size);
-                        return size;
-                    }
-                    // read from the disk
-                    else {
-                        var file_reader = r.parent.file.reader();
-                        file_reader.seekTo(r.pos) catch return error.ReadFailed;
-                        const max_size = if (r.pos < r.parent.memory_pos) @min(dest.len, r.parent.memory_pos - r.pos) else dest.len;
-                        const size = file_reader.interface.readSliceShort(dest[0..max_size]) catch return error.ReadFailed;
-                        r.pos += size;
-                        io_w.advance(size);
-                        return size;
-                    }
-                }
-            };
-
-            pub const Writer = struct {
-                parent: *CoreBufferedFile,
-                interface: std.Io.Writer,
-                pos: u64 = 0,
-
-                pub fn seekTo(self: *Writer, offset: u64) !void {
-                    // flush if we are going past the end of the in-memory buffer
-                    if (offset > self.parent.memory_pos + self.parent.memory.buffer.items.len) {
-                        try self.parent.flush();
-                    }
-
-                    self.pos = offset;
-
-                    // if the buffer is empty, set its position to this offset as well
-                    if (self.parent.memory.buffer.items.len == 0) {
-                        self.parent.memory_pos = offset;
-                    }
-                }
-
-                fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
-                    const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
-
-                    if (splat != 1) unreachable; // splat isn't supported
-                    if (io_w.buffered().len > 0) unreachable; // buffering isn't supported
-
-                    for (data) |buf| {
-                        const n = buf.len;
-                        if (n == 0) continue;
-
-                        if (w.parent.memory.buffer.items.len + n > w.parent.memory_max_size) {
-                            w.parent.flush() catch return error.WriteFailed;
-                        }
-
-                        // write to the in-memory buffer
-                        if (w.pos >= w.parent.memory_pos and w.pos <= w.parent.memory_pos + w.parent.memory.buffer.items.len) {
-                            var memory_writer = w.parent.memory.writer();
-                            memory_writer.seekTo(w.pos - w.parent.memory_pos) catch return error.WriteFailed;
-                            memory_writer.interface.writeAll(buf) catch return error.WriteFailed;
-                        }
-                        // write to the disk
-                        else {
-                            var file_writer = w.parent.file.writer();
-                            file_writer.seekTo(w.pos) catch return error.WriteFailed;
-                            file_writer.interface.writeAll(buf) catch return error.WriteFailed;
-                        }
-
-                        w.pos += n;
-                        return io_w.consume(n);
-                    }
-
-                    return error.WriteFailed;
-                }
-            };
-
-            pub fn reader(self: *CoreBufferedFile) Reader {
-                return .{
-                    .parent = self,
-                    .interface = .{
-                        .vtable = &.{ .stream = Reader.stream },
-                        .buffer = &.{},
-                        .seek = 0,
-                        .end = 0,
-                    },
-                };
-            }
-
-            pub fn writer(self: *CoreBufferedFile) Writer {
-                return .{
-                    .parent = self,
-                    .interface = .{
-                        .vtable = &.{ .drain = Writer.drain },
-                        .buffer = &.{},
-                    },
-                };
-            }
-
-            pub fn getSize(self: *const CoreBufferedFile) !u64 {
-                return @max(self.memory_pos + self.memory.buffer.items.len, try self.file.getSize());
-            }
-
-            pub fn setLength(self: *CoreBufferedFile, len: usize) !void {
-                try self.flush();
-                try self.file.setLength(len);
-            }
-
-            pub fn sync(self: *CoreBufferedFile) !void {
-                try self.flush();
-                try self.file.sync();
-            }
-
-            pub fn flush(self: *CoreBufferedFile) !void {
-                if (self.memory.buffer.items.len > 0) {
-                    var file_writer = self.file.file.writer(&.{});
-                    try file_writer.seekTo(self.memory_pos);
-                    try file_writer.interface.writeAll(self.memory.buffer.items);
-
-                    self.memory_pos = 0;
-                    self.memory.buffer.clearRetainingCapacity();
-                }
-            }
-        };
 
         pub const Core = switch (db_kind) {
             .memory => CoreMemory,
@@ -3414,6 +3118,304 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             };
         }
     };
+}
+
+const CoreMemory = struct {
+    buffer: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    max_size: ?u64,
+
+    pub const Reader = struct {
+        parent: *CoreMemory,
+        interface: std.Io.Reader,
+        pos: u64 = 0,
+
+        pub fn seekTo(self: *Reader, offset: u64) !void {
+            self.pos = offset;
+        }
+
+        fn stream(io_r: *std.Io.Reader, io_w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+            const r: *Reader = @alignCast(@fieldParentPtr("interface", io_r));
+
+            if (r.parent.buffer.items.len == r.pos) return error.EndOfStream;
+
+            const max_size = @min(@intFromEnum(limit), r.parent.buffer.items.len - r.pos);
+            if (max_size == 0) return 0;
+
+            const size = try io_w.write(r.parent.buffer.items[r.pos..(r.pos + max_size)]);
+            r.pos += size;
+            return size;
+        }
+    };
+
+    const Writer = struct {
+        parent: *CoreMemory,
+        interface: std.Io.Writer,
+        pos: u64 = 0,
+
+        fn resizeBuffer(self: Writer, new_size: u64) !void {
+            if (new_size > self.parent.buffer.items.len) {
+                if (self.parent.max_size) |max_size| {
+                    if (new_size > max_size) {
+                        return error.MaxSizeExceeded;
+                    }
+                }
+                try self.parent.buffer.ensureTotalCapacityPrecise(self.parent.allocator, new_size);
+                self.parent.buffer.items.len = new_size;
+            }
+        }
+
+        pub fn seekTo(self: *Writer, offset: u64) !void {
+            self.pos = offset;
+        }
+
+        pub fn logicalPos(self: Writer) u64 {
+            return self.pos;
+        }
+
+        fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+            const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
+
+            if (splat != 1) unreachable; // splat isn't supported
+            if (io_w.buffered().len > 0) unreachable; // buffering isn't supported
+
+            for (data) |buf| {
+                const n = buf.len;
+                if (n == 0) continue;
+                const new_position = w.pos + @as(u64, @intCast(n));
+                w.resizeBuffer(new_position) catch return error.WriteFailed;
+                @memcpy(w.parent.buffer.items[w.pos..new_position], buf);
+                w.pos = new_position;
+                return io_w.consume(n);
+            }
+
+            return error.WriteFailed;
+        }
+    };
+
+    pub fn reader(self: *CoreMemory) Reader {
+        return .{
+            .parent = self,
+            .interface = .{
+                .vtable = &.{ .stream = Reader.stream },
+                .buffer = &.{},
+                .seek = 0,
+                .end = 0,
+            },
+        };
+    }
+
+    pub fn writer(self: *CoreMemory) Writer {
+        return .{
+            .parent = self,
+            .interface = .{
+                .vtable = &.{ .drain = Writer.drain },
+                .buffer = &.{},
+            },
+        };
+    }
+
+    pub fn getSize(self: *const CoreMemory) !u64 {
+        return self.buffer.items.len;
+    }
+
+    pub fn setLength(self: *CoreMemory, len: usize) !void {
+        self.buffer.shrinkAndFree(self.allocator, len);
+    }
+
+    pub fn sync(_: *const CoreMemory) !void {}
+
+    pub fn flush(_: *CoreMemory) !void {}
+};
+
+const CoreFile = struct {
+    file: std.fs.File,
+
+    pub const Reader = std.fs.File.Reader;
+    pub const Writer = std.fs.File.Writer;
+
+    pub fn reader(self: *const CoreFile) Reader {
+        return self.file.reader(&.{});
+    }
+
+    pub fn writer(self: *const CoreFile) Writer {
+        return self.file.writer(&.{});
+    }
+
+    pub fn getSize(self: *const CoreFile) !u64 {
+        try self.file.seekFromEnd(0);
+        return try self.file.getPos();
+    }
+
+    pub fn setLength(self: *const CoreFile, len: usize) !void {
+        self.file.setEndPos(len) catch |err| switch (err) {
+            // the file is open in read-only mode.
+            // on windows, it will return AccessDenied.
+            // otherwise it will return NonResizable.
+            error.AccessDenied, error.NonResizable => return,
+            else => |e| return e,
+        };
+    }
+
+    pub fn sync(self: *const CoreFile) !void {
+        try self.file.sync();
+    }
+
+    pub fn flush(_: *const CoreFile) !void {}
+};
+
+const CoreBufferedFile = struct {
+    memory: CoreMemory,
+    memory_max_size: u64,
+    memory_pos: u64 = 0,
+    file: CoreFile,
+
+    pub const Reader = struct {
+        parent: *CoreBufferedFile,
+        interface: std.Io.Reader,
+        pos: u64 = 0,
+
+        pub fn seekTo(self: *Reader, offset: u64) !void {
+            self.pos = offset;
+        }
+
+        fn stream(io_r: *std.Io.Reader, io_w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+            const r: *Reader = @alignCast(@fieldParentPtr("interface", io_r));
+
+            const dest = limit.slice(try io_w.writableSliceGreedy(1));
+
+            // read from the in-memory buffer
+            if (r.pos >= r.parent.memory_pos and r.pos < r.parent.memory_pos + r.parent.memory.buffer.items.len) {
+                const mem_pos = r.pos - r.parent.memory_pos;
+                const size = @min(dest.len, r.parent.memory.buffer.items[mem_pos..].len);
+                @memcpy(dest[0..size], r.parent.memory.buffer.items[mem_pos..][0..size]);
+                r.pos += size;
+                io_w.advance(size);
+                return size;
+            }
+            // read from the disk
+            else {
+                var file_reader = r.parent.file.reader();
+                file_reader.seekTo(r.pos) catch return error.ReadFailed;
+                const max_size = if (r.pos < r.parent.memory_pos) @min(dest.len, r.parent.memory_pos - r.pos) else dest.len;
+                const size = file_reader.interface.readSliceShort(dest[0..max_size]) catch return error.ReadFailed;
+                r.pos += size;
+                io_w.advance(size);
+                return size;
+            }
+        }
+    };
+
+    pub const Writer = struct {
+        parent: *CoreBufferedFile,
+        interface: std.Io.Writer,
+        pos: u64 = 0,
+
+        pub fn seekTo(self: *Writer, offset: u64) !void {
+            // flush if we are going past the end of the in-memory buffer
+            if (offset > self.parent.memory_pos + self.parent.memory.buffer.items.len) {
+                try self.parent.flush();
+            }
+
+            self.pos = offset;
+
+            // if the buffer is empty, set its position to this offset as well
+            if (self.parent.memory.buffer.items.len == 0) {
+                self.parent.memory_pos = offset;
+            }
+        }
+
+        fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+            const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
+
+            if (splat != 1) unreachable; // splat isn't supported
+            if (io_w.buffered().len > 0) unreachable; // buffering isn't supported
+
+            for (data) |buf| {
+                const n = buf.len;
+                if (n == 0) continue;
+
+                if (w.parent.memory.buffer.items.len + n > w.parent.memory_max_size) {
+                    w.parent.flush() catch return error.WriteFailed;
+                }
+
+                // write to the in-memory buffer
+                if (w.pos >= w.parent.memory_pos and w.pos <= w.parent.memory_pos + w.parent.memory.buffer.items.len) {
+                    var memory_writer = w.parent.memory.writer();
+                    memory_writer.seekTo(w.pos - w.parent.memory_pos) catch return error.WriteFailed;
+                    memory_writer.interface.writeAll(buf) catch return error.WriteFailed;
+                }
+                // write to the disk
+                else {
+                    var file_writer = w.parent.file.writer();
+                    file_writer.seekTo(w.pos) catch return error.WriteFailed;
+                    file_writer.interface.writeAll(buf) catch return error.WriteFailed;
+                }
+
+                w.pos += n;
+                return io_w.consume(n);
+            }
+
+            return error.WriteFailed;
+        }
+    };
+
+    pub fn reader(self: *CoreBufferedFile) Reader {
+        return .{
+            .parent = self,
+            .interface = .{
+                .vtable = &.{ .stream = Reader.stream },
+                .buffer = &.{},
+                .seek = 0,
+                .end = 0,
+            },
+        };
+    }
+
+    pub fn writer(self: *CoreBufferedFile) Writer {
+        return .{
+            .parent = self,
+            .interface = .{
+                .vtable = &.{ .drain = Writer.drain },
+                .buffer = &.{},
+            },
+        };
+    }
+
+    pub fn getSize(self: *const CoreBufferedFile) !u64 {
+        return @max(self.memory_pos + self.memory.buffer.items.len, try self.file.getSize());
+    }
+
+    pub fn setLength(self: *CoreBufferedFile, len: usize) !void {
+        try self.flush();
+        try self.file.setLength(len);
+    }
+
+    pub fn sync(self: *CoreBufferedFile) !void {
+        try self.flush();
+        try self.file.sync();
+    }
+
+    pub fn flush(self: *CoreBufferedFile) !void {
+        if (self.memory.buffer.items.len > 0) {
+            var file_writer = self.file.file.writer(&.{});
+            try file_writer.seekTo(self.memory_pos);
+            try file_writer.interface.writeAll(self.memory.buffer.items);
+
+            self.memory_pos = 0;
+            self.memory.buffer.clearRetainingCapacity();
+        }
+    }
+};
+
+fn byteSizeOf(T: type) u16 {
+    return @bitSizeOf(T) / 8;
+}
+
+fn takeInt(reader: *std.Io.Reader, comptime T: type, endian: std.builtin.Endian) !T {
+    var buffer: [byteSizeOf(T)]u8 = undefined;
+    try reader.readSliceAll(&buffer);
+    return std.mem.readInt(T, &buffer, endian);
 }
 
 fn BoundedArray(comptime T: type, comptime buffer_capacity: usize) type {
