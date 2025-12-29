@@ -20,12 +20,12 @@ const file = try std.fs.cwd().createFile("main.db", .{ .read = true });
 defer file.close();
 
 // init the buffer (optional, but better for performance)
-var buffer = std.ArrayList(u8){};
-defer buffer.deinit(allocator);
+var buffer = std.Io.Writer.Allocating.init(allocator);
+defer buffer.deinit();
 
 // init the db
 const DB = xitdb.Database(.buffered_file, HashInt);
-var db = try DB.init(.{ .buffer = &buffer, .allocator = allocator, .file = file });
+var db = try DB.init(.{ .file = file, .buffer = &buffer });
 
 // to get the benefits of immutability, the top-level data structure
 // must be an ArrayList, so each transaction is stored as an item in it

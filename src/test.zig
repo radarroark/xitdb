@@ -8,9 +8,9 @@ test "high level api" {
     const allocator = std.testing.allocator;
 
     {
-        var buffer = std.ArrayList(u8){};
-        defer buffer.deinit(allocator);
-        try testHighLevelApi(allocator, .memory, .{ .buffer = &buffer, .allocator = allocator, .max_size = 50_000 });
+        var buffer = std.Io.Writer.Allocating.init(allocator);
+        defer buffer.deinit();
+        try testHighLevelApi(allocator, .memory, .{ .buffer = &buffer, .max_size = 50_000 });
     }
 
     {
@@ -23,14 +23,14 @@ test "high level api" {
     }
 
     {
-        var buffer = std.ArrayList(u8){};
-        defer buffer.deinit(allocator);
+        var buffer = std.Io.Writer.Allocating.init(allocator);
+        defer buffer.deinit();
         const file = try std.fs.cwd().createFile("main.db", .{ .read = true, .truncate = true });
         defer {
             file.close();
             std.fs.cwd().deleteFile("main.db") catch {};
         }
-        try testHighLevelApi(allocator, .buffered_file, .{ .buffer = &buffer, .allocator = allocator, .file = file });
+        try testHighLevelApi(allocator, .buffered_file, .{ .file = file, .buffer = &buffer });
     }
 }
 
@@ -38,9 +38,9 @@ test "low level api" {
     const allocator = std.testing.allocator;
 
     {
-        var buffer = std.ArrayList(u8){};
-        defer buffer.deinit(allocator);
-        try testLowLevelApi(allocator, .memory, .{ .buffer = &buffer, .allocator = allocator, .max_size = 50_000_000 });
+        var buffer = std.Io.Writer.Allocating.init(allocator);
+        defer buffer.deinit();
+        try testLowLevelApi(allocator, .memory, .{ .buffer = &buffer, .max_size = 50_000_000 });
     }
 
     {
@@ -53,14 +53,14 @@ test "low level api" {
     }
 
     {
-        var buffer = std.ArrayList(u8){};
-        defer buffer.deinit(allocator);
+        var buffer = std.Io.Writer.Allocating.init(allocator);
+        defer buffer.deinit();
         const file = try std.fs.cwd().createFile("main.db", .{ .read = true, .truncate = true });
         defer {
             file.close();
             std.fs.cwd().deleteFile("main.db") catch {};
         }
-        try testLowLevelApi(allocator, .buffered_file, .{ .buffer = &buffer, .allocator = allocator, .file = file });
+        try testLowLevelApi(allocator, .buffered_file, .{ .file = file, .buffer = &buffer });
     }
 }
 
@@ -76,11 +76,11 @@ test "not using arraylist at the top level" {
 
     // hash map
     {
-        var buffer = std.ArrayList(u8){};
-        defer buffer.deinit(allocator);
+        var buffer = std.Io.Writer.Allocating.init(allocator);
+        defer buffer.deinit();
 
         const DB = xitdb.Database(.memory, HashInt);
-        var db = try DB.init(.{ .buffer = &buffer, .allocator = allocator, .max_size = 50000 });
+        var db = try DB.init(.{ .buffer = &buffer, .max_size = 50000 });
 
         const map = try DB.HashMap(.read_write).init(db.rootCursor());
         try map.put(hashInt("foo"), .{ .bytes = "foo" });
@@ -103,11 +103,11 @@ test "not using arraylist at the top level" {
 
     // linked array list is not currently allowed at the top level
     {
-        var buffer = std.ArrayList(u8){};
-        defer buffer.deinit(allocator);
+        var buffer = std.Io.Writer.Allocating.init(allocator);
+        defer buffer.deinit();
 
         const DB = xitdb.Database(.memory, HashInt);
-        var db = try DB.init(.{ .buffer = &buffer, .allocator = allocator, .max_size = 50000 });
+        var db = try DB.init(.{ .buffer = &buffer, .max_size = 50000 });
 
         try std.testing.expectError(error.InvalidTopLevelType, DB.LinkedArrayList(.read_write).init(db.rootCursor()));
     }
@@ -116,20 +116,20 @@ test "not using arraylist at the top level" {
 test "low level memory operations" {
     const allocator = std.testing.allocator;
 
-    var buffer = std.ArrayList(u8){};
-    defer buffer.deinit(allocator);
-    var db = try xitdb.Database(.memory, HashInt).init(.{ .buffer = &buffer, .allocator = allocator, .max_size = 10000 });
+    var buffer = std.Io.Writer.Allocating.init(allocator);
+    defer buffer.deinit();
+    var db = try xitdb.Database(.memory, HashInt).init(.{ .buffer = &buffer, .max_size = 10000 });
 
     var writer = db.core.writer();
     try writer.seekTo(0);
     try writer.interface.writeAll("Hello");
-    try std.testing.expectEqualStrings("Hello", db.core.buffer.items[0..5]);
+    try std.testing.expectEqualStrings("Hello", db.core.buffer.written()[0..5]);
     try writer.interface.writeInt(u64, 42, .big);
     var bytes = [_]u8{0} ** (@bitSizeOf(u64) / 8);
     std.mem.writeInt(u64, &bytes, 42, .big);
     const hello = try std.fmt.allocPrint(allocator, "Hello{s}", .{bytes});
     defer allocator.free(hello);
-    try std.testing.expectEqualStrings(hello, db.core.buffer.items[0..13]);
+    try std.testing.expectEqualStrings(hello, db.core.buffer.written()[0..13]);
 
     var reader = db.core.reader();
     try reader.seekTo(0);
@@ -161,6 +161,21 @@ fn takeInt(reader: *std.Io.Reader, comptime T: type, endian: std.builtin.Endian)
     var buffer: [@bitSizeOf(T) / 8]u8 = undefined;
     try reader.readSliceAll(&buffer);
     return std.mem.readInt(T, &buffer, endian);
+}
+
+fn clearStorage(comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, HashInt).InitOpts) !void {
+    switch (db_kind) {
+        .memory => {
+            init_opts.buffer.shrinkRetainingCapacity(0);
+        },
+        .file => {
+            try init_opts.file.setEndPos(0);
+        },
+        .buffered_file => {
+            init_opts.buffer.shrinkRetainingCapacity(0);
+            try init_opts.file.setEndPos(0);
+        },
+    }
 }
 
 fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, HashInt).InitOpts) !void {
@@ -568,7 +583,7 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
                 defer file.close();
                 var new_init_opts = init_opts;
                 new_init_opts.file = file;
-                new_init_opts.buffer.clearAndFree(new_init_opts.allocator);
+                new_init_opts.buffer.shrinkRetainingCapacity(0);
                 _ = try DB.init(new_init_opts);
             },
         }
@@ -578,21 +593,6 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         const size_after = try db.core.getSize();
 
         try std.testing.expectEqual(size_before, size_after);
-    }
-}
-
-fn clearStorage(comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, HashInt).InitOpts) !void {
-    switch (db_kind) {
-        .memory => {
-            init_opts.buffer.clearAndFree(init_opts.allocator);
-        },
-        .file => {
-            try init_opts.file.setEndPos(0);
-        },
-        .buffered_file => {
-            init_opts.buffer.clearAndFree(init_opts.allocator);
-            try init_opts.file.setEndPos(0);
-        },
     }
 }
 

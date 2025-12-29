@@ -277,8 +277,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
         pub const InitOpts = switch (db_kind) {
             .memory => struct {
-                buffer: *std.ArrayList(u8),
-                allocator: std.mem.Allocator,
+                buffer: *std.Io.Writer.Allocating,
                 max_size: ?u64 = null,
                 hash_id: HashId = .{ .id = 0 },
             },
@@ -287,10 +286,9 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 hash_id: HashId = .{ .id = 0 },
             },
             .buffered_file => struct {
-                buffer: *std.ArrayList(u8),
-                allocator: std.mem.Allocator,
-                max_size: u64 = 2 * 1024 * 1024, // flushes when the memory is >= this size
                 file: std.fs.File,
+                buffer: *std.Io.Writer.Allocating,
+                max_size: u64 = 2 * 1024 * 1024, // flushes when the memory is >= this size
                 hash_id: HashId = .{ .id = 0 },
             },
         };
@@ -300,7 +298,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 .memory => .{
                     .core = .{
                         .buffer = opts.buffer,
-                        .allocator = opts.allocator,
                         .max_size = opts.max_size,
                     },
                     .header = undefined,
@@ -317,7 +314,6 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     .core = .{
                         .memory = .{
                             .buffer = opts.buffer,
-                            .allocator = opts.allocator,
                             .max_size = null,
                         },
                         .memory_max_size = opts.max_size,
@@ -3121,8 +3117,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 }
 
 const CoreMemory = struct {
-    buffer: *std.ArrayList(u8),
-    allocator: std.mem.Allocator,
+    buffer: *std.Io.Writer.Allocating,
     max_size: ?u64,
 
     pub const Reader = struct {
@@ -3137,12 +3132,12 @@ const CoreMemory = struct {
         fn stream(io_r: *std.Io.Reader, io_w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
             const r: *Reader = @alignCast(@fieldParentPtr("interface", io_r));
 
-            if (r.parent.buffer.items.len == r.pos) return error.EndOfStream;
+            if (r.parent.buffer.written().len == r.pos) return error.EndOfStream;
 
-            const max_size = @min(@intFromEnum(limit), r.parent.buffer.items.len - r.pos);
+            const max_size = @min(@intFromEnum(limit), r.parent.buffer.written().len - r.pos);
             if (max_size == 0) return 0;
 
-            const size = try io_w.write(r.parent.buffer.items[r.pos..(r.pos + max_size)]);
+            const size = try io_w.write(r.parent.buffer.written()[r.pos..(r.pos + max_size)]);
             r.pos += size;
             return size;
         }
@@ -3154,14 +3149,16 @@ const CoreMemory = struct {
         pos: u64 = 0,
 
         fn resizeBuffer(self: Writer, new_size: u64) !void {
-            if (new_size > self.parent.buffer.items.len) {
+            if (new_size > self.parent.buffer.written().len) {
                 if (self.parent.max_size) |max_size| {
                     if (new_size > max_size) {
                         return error.MaxSizeExceeded;
                     }
                 }
-                try self.parent.buffer.ensureTotalCapacityPrecise(self.parent.allocator, new_size);
-                self.parent.buffer.items.len = new_size;
+                var arr = self.parent.buffer.toArrayList();
+                try arr.ensureTotalCapacityPrecise(self.parent.buffer.allocator, new_size);
+                arr.items.len = new_size;
+                self.parent.buffer.* = std.Io.Writer.Allocating.fromArrayList(self.parent.buffer.allocator, &arr);
             }
         }
 
@@ -3184,7 +3181,7 @@ const CoreMemory = struct {
                 if (n == 0) continue;
                 const new_position = w.pos + @as(u64, @intCast(n));
                 w.resizeBuffer(new_position) catch return error.WriteFailed;
-                @memcpy(w.parent.buffer.items[w.pos..new_position], buf);
+                @memcpy(w.parent.buffer.written()[w.pos..new_position], buf);
                 w.pos = new_position;
                 return io_w.consume(n);
             }
@@ -3216,11 +3213,13 @@ const CoreMemory = struct {
     }
 
     pub fn getSize(self: *const CoreMemory) !u64 {
-        return self.buffer.items.len;
+        return self.buffer.written().len;
     }
 
     pub fn setLength(self: *CoreMemory, len: usize) !void {
-        self.buffer.shrinkAndFree(self.allocator, len);
+        var arr = self.buffer.toArrayList();
+        arr.shrinkAndFree(self.buffer.allocator, len);
+        self.buffer.* = std.Io.Writer.Allocating.fromArrayList(self.buffer.allocator, &arr);
     }
 
     pub fn sync(_: *const CoreMemory) !void {}
@@ -3285,10 +3284,10 @@ const CoreBufferedFile = struct {
             const dest = limit.slice(try io_w.writableSliceGreedy(1));
 
             // read from the in-memory buffer
-            if (r.pos >= r.parent.memory_pos and r.pos < r.parent.memory_pos + r.parent.memory.buffer.items.len) {
+            if (r.pos >= r.parent.memory_pos and r.pos < r.parent.memory_pos + r.parent.memory.buffer.written().len) {
                 const mem_pos = r.pos - r.parent.memory_pos;
-                const size = @min(dest.len, r.parent.memory.buffer.items[mem_pos..].len);
-                @memcpy(dest[0..size], r.parent.memory.buffer.items[mem_pos..][0..size]);
+                const size = @min(dest.len, r.parent.memory.buffer.written()[mem_pos..].len);
+                @memcpy(dest[0..size], r.parent.memory.buffer.written()[mem_pos..][0..size]);
                 r.pos += size;
                 io_w.advance(size);
                 return size;
@@ -3313,14 +3312,14 @@ const CoreBufferedFile = struct {
 
         pub fn seekTo(self: *Writer, offset: u64) !void {
             // flush if we are going past the end of the in-memory buffer
-            if (offset > self.parent.memory_pos + self.parent.memory.buffer.items.len) {
+            if (offset > self.parent.memory_pos + self.parent.memory.buffer.written().len) {
                 try self.parent.flush();
             }
 
             self.pos = offset;
 
             // if the buffer is empty, set its position to this offset as well
-            if (self.parent.memory.buffer.items.len == 0) {
+            if (self.parent.memory.buffer.written().len == 0) {
                 self.parent.memory_pos = offset;
             }
         }
@@ -3335,12 +3334,12 @@ const CoreBufferedFile = struct {
                 const n = buf.len;
                 if (n == 0) continue;
 
-                if (w.parent.memory.buffer.items.len + n > w.parent.memory_max_size) {
+                if (w.parent.memory.buffer.written().len + n > w.parent.memory_max_size) {
                     w.parent.flush() catch return error.WriteFailed;
                 }
 
                 // write to the in-memory buffer
-                if (w.pos >= w.parent.memory_pos and w.pos <= w.parent.memory_pos + w.parent.memory.buffer.items.len) {
+                if (w.pos >= w.parent.memory_pos and w.pos <= w.parent.memory_pos + w.parent.memory.buffer.written().len) {
                     var memory_writer = w.parent.memory.writer();
                     memory_writer.seekTo(w.pos - w.parent.memory_pos) catch return error.WriteFailed;
                     memory_writer.interface.writeAll(buf) catch return error.WriteFailed;
@@ -3383,7 +3382,7 @@ const CoreBufferedFile = struct {
     }
 
     pub fn getSize(self: *const CoreBufferedFile) !u64 {
-        return @max(self.memory_pos + self.memory.buffer.items.len, try self.file.getSize());
+        return @max(self.memory_pos + self.memory.buffer.written().len, try self.file.getSize());
     }
 
     pub fn setLength(self: *CoreBufferedFile, len: usize) !void {
@@ -3397,10 +3396,10 @@ const CoreBufferedFile = struct {
     }
 
     pub fn flush(self: *CoreBufferedFile) !void {
-        if (self.memory.buffer.items.len > 0) {
+        if (self.memory.buffer.written().len > 0) {
             var file_writer = self.file.file.writer(&.{});
             try file_writer.seekTo(self.memory_pos);
-            try file_writer.interface.writeAll(self.memory.buffer.items);
+            try file_writer.interface.writeAll(self.memory.buffer.written());
 
             self.memory_pos = 0;
             self.memory.buffer.clearRetainingCapacity();
