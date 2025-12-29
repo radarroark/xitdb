@@ -282,10 +282,12 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 hash_id: HashId = .{ .id = 0 },
             },
             .file => struct {
+                io: std.Io,
                 file: std.fs.File,
                 hash_id: HashId = .{ .id = 0 },
             },
             .buffered_file => struct {
+                io: std.Io,
                 file: std.fs.File,
                 buffer: *std.Io.Writer.Allocating,
                 max_size: u64 = 2 * 1024 * 1024, // flushes when the memory is >= this size
@@ -305,6 +307,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 },
                 .file => .{
                     .core = .{
+                        .io = opts.io,
                         .file = opts.file,
                     },
                     .header = undefined,
@@ -318,6 +321,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         },
                         .memory_max_size = opts.max_size,
                         .file = .{
+                            .io = opts.io,
                             .file = opts.file,
                         },
                     },
@@ -3260,13 +3264,14 @@ const CoreMemory = struct {
 };
 
 const CoreFile = struct {
+    io: std.Io,
     file: std.fs.File,
 
     pub const Reader = std.fs.File.Reader;
     pub const Writer = std.fs.File.Writer;
 
     pub fn reader(self: *const CoreFile) Reader {
-        return self.file.reader(&.{});
+        return self.file.reader(self.io, &.{});
     }
 
     pub fn writer(self: *const CoreFile) Writer {

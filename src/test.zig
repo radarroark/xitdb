@@ -5,6 +5,7 @@ const HashInt = u160;
 const MAX_READ_BYTES = 1024;
 
 test "high level api" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
     {
@@ -19,7 +20,7 @@ test "high level api" {
             file.close();
             std.fs.cwd().deleteFile("main.db") catch {};
         }
-        try testHighLevelApi(allocator, .file, .{ .file = file });
+        try testHighLevelApi(allocator, .file, .{ .io = io, .file = file });
     }
 
     {
@@ -30,11 +31,12 @@ test "high level api" {
             file.close();
             std.fs.cwd().deleteFile("main.db") catch {};
         }
-        try testHighLevelApi(allocator, .buffered_file, .{ .file = file, .buffer = &buffer });
+        try testHighLevelApi(allocator, .buffered_file, .{ .io = io, .file = file, .buffer = &buffer });
     }
 }
 
 test "low level api" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
     {
@@ -49,7 +51,7 @@ test "low level api" {
             file.close();
             std.fs.cwd().deleteFile("main.db") catch {};
         }
-        try testLowLevelApi(allocator, .file, .{ .file = file });
+        try testLowLevelApi(allocator, .file, .{ .io = io, .file = file });
     }
 
     {
@@ -60,7 +62,7 @@ test "low level api" {
             file.close();
             std.fs.cwd().deleteFile("main.db") catch {};
         }
-        try testLowLevelApi(allocator, .buffered_file, .{ .file = file, .buffer = &buffer });
+        try testLowLevelApi(allocator, .buffered_file, .{ .io = io, .file = file, .buffer = &buffer });
     }
 }
 
