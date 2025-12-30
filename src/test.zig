@@ -15,10 +15,10 @@ test "high level api" {
     }
 
     {
-        const file = try std.fs.cwd().createFile("main.db", .{ .read = true, .truncate = true });
+        const file = try std.Io.Dir.cwd().createFile(io, "main.db", .{ .read = true, .truncate = true });
         defer {
-            file.close();
-            std.fs.cwd().deleteFile("main.db") catch {};
+            file.close(io);
+            std.Io.Dir.cwd().deleteFile(io, "main.db") catch {};
         }
         try testHighLevelApi(allocator, .file, .{ .io = io, .file = file });
     }
@@ -26,10 +26,10 @@ test "high level api" {
     {
         var buffer = std.Io.Writer.Allocating.init(allocator);
         defer buffer.deinit();
-        const file = try std.fs.cwd().createFile("main.db", .{ .read = true, .truncate = true });
+        const file = try std.Io.Dir.cwd().createFile(io, "main.db", .{ .read = true, .truncate = true });
         defer {
-            file.close();
-            std.fs.cwd().deleteFile("main.db") catch {};
+            file.close(io);
+            std.Io.Dir.cwd().deleteFile(io, "main.db") catch {};
         }
         try testHighLevelApi(allocator, .buffered_file, .{ .io = io, .file = file, .buffer = &buffer });
     }
@@ -46,10 +46,10 @@ test "low level api" {
     }
 
     {
-        const file = try std.fs.cwd().createFile("main.db", .{ .read = true, .truncate = true });
+        const file = try std.Io.Dir.cwd().createFile(io, "main.db", .{ .read = true, .truncate = true });
         defer {
-            file.close();
-            std.fs.cwd().deleteFile("main.db") catch {};
+            file.close(io);
+            std.Io.Dir.cwd().deleteFile(io, "main.db") catch {};
         }
         try testLowLevelApi(allocator, .file, .{ .io = io, .file = file });
     }
@@ -57,10 +57,10 @@ test "low level api" {
     {
         var buffer = std.Io.Writer.Allocating.init(allocator);
         defer buffer.deinit();
-        const file = try std.fs.cwd().createFile("main.db", .{ .read = true, .truncate = true });
+        const file = try std.Io.Dir.cwd().createFile(io, "main.db", .{ .read = true, .truncate = true });
         defer {
-            file.close();
-            std.fs.cwd().deleteFile("main.db") catch {};
+            file.close(io);
+            std.Io.Dir.cwd().deleteFile(io, "main.db") catch {};
         }
         try testLowLevelApi(allocator, .buffered_file, .{ .io = io, .file = file, .buffer = &buffer });
     }
@@ -171,11 +171,11 @@ fn clearStorage(comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(
             init_opts.buffer.shrinkRetainingCapacity(0);
         },
         .file => {
-            try init_opts.file.setEndPos(0);
+            try init_opts.file.setLength(init_opts.io, 0);
         },
         .buffered_file => {
             init_opts.buffer.shrinkRetainingCapacity(0);
-            try init_opts.file.setEndPos(0);
+            try init_opts.file.setLength(init_opts.io, 0);
         },
     }
 }
@@ -583,15 +583,15 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         switch (db_kind) {
             .memory => {},
             .file => {
-                const file = try std.fs.cwd().openFile("main.db", .{ .mode = .read_only });
-                defer file.close();
+                const file = try std.Io.Dir.cwd().openFile(init_opts.io, "main.db", .{ .mode = .read_only });
+                defer file.close(init_opts.io);
                 var new_init_opts = init_opts;
                 new_init_opts.file = file;
                 _ = try DB.init(new_init_opts);
             },
             .buffered_file => {
-                const file = try std.fs.cwd().openFile("main.db", .{ .mode = .read_only });
-                defer file.close();
+                const file = try std.Io.Dir.cwd().openFile(init_opts.io, "main.db", .{ .mode = .read_only });
+                defer file.close(init_opts.io);
                 var new_init_opts = init_opts;
                 new_init_opts.file = file;
                 new_init_opts.buffer.shrinkRetainingCapacity(0);
