@@ -8,11 +8,9 @@ xitdb is an immutable database written in Zig.
 
 This database was originally made for the [xit version control system](https://github.com/radarroark/xit), but I bet it has a lot of potential for other projects. The combination of being immutable and having an API similar to in-memory data structures is pretty powerful. Consider using it instead of SQLite for your Zig projects: it's simpler, it's pure Zig, and it creates no impedence mismatch with your program the way SQL databases do.
 
-Usually, you want to use a top-level `ArrayList` like in the example below, because that allows you to store a reference to each copy of the database (which I call a "moment"). This is how it supports transactions, despite not having any rollback journal or write-ahead log. It's an append-only database, so the data you are writing is invisible to any reader until the very last step, when the top-level list's header is updated.
+## Example
 
-You can also use a top-level `HashMap`, which is useful for ephemeral databases where immutability or transaction safety isn't necessary. Since xitdb supports in-memory databases, you could use it as an over-the-wire serialization format. Much like "Cap'n Proto", xitdb has no encoding/decoding step: you just give the buffer to xitdb and it can immediately read from it.
-
-The `HashMap` and `ArrayList` are based on the hash array mapped trie from Phil Bagwell. There is also a `LinkedArrayList`, which is based on the RRB tree, also from Phil Bagwell. It is similar to an `ArrayList`, except it can be efficiently sliced and concatenated. If you need a `HashMap` that maintains a count of its contents, there is a `CountedHashMap`. Lastly, there is a `HashSet` and `CountedHashSet` which work like a `HashMap` that only sets its keys. Check out the example below and the tests.
+In this example, we create a new database, write some data in a transaction, and read the data afterwards.
 
 ```zig
 // create db file
@@ -102,6 +100,59 @@ defer allocator.free(apple_value);
 try std.testing.expectEqualStrings("apple", apple_value);
 ```
 
-It is possible to read the database from multiple threads without locks, even while writes are happening. This is a big benefit of immutable databases. However, each thread needs to use its own file handle and Database object. Keep in mind that writes still need to come from a single thread.
+## Initializing a Database
 
-In the example above, we initialize a `.buffered_file` database for better performance. It works by using an in-memory buffer to make writes much faster. To disable buffering, just initialize a `.file` database instead.
+There are three kinds of `Database` you can create: `.buffered_file`, `.file`, and `.memory`.
+
+* `.buffered_file` databases, like in the example above, write to a file while using an in-memory buffer to dramatically improve performance. This is highly recommended if you want to create a file-based database.
+* `.file` databases use no buffering when reading and writing data. You can initialize it like in the example above, except without providing a buffer. This is almost never necessary but it's useful as a benchmark comparison with `.buffered_file` databases.
+* `.memory` databases work completely in memory. You can initialize it like in the example above, except without providing a file.
+
+Usually, you want to use a top-level `ArrayList` like in the example above, because that allows you to store a reference to each copy of the database (which I call a "moment"). This is how it supports transactions, despite not having any rollback journal or write-ahead log. It's an append-only database, so the data you are writing is invisible to any reader until the very last step, when the top-level list's header is updated.
+
+You can also use a top-level `HashMap`, which is useful for ephemeral databases where immutability or transaction safety isn't necessary. Since xitdb supports in-memory databases, you could use it as an over-the-wire serialization format. Much like "Cap'n Proto", xitdb has no encoding/decoding step: you just give the buffer to xitdb and it can immediately read from it.
+
+## Types
+
+In xitdb there are a variety of immutable data structures that you can nest arbitrarily:
+
+* `HashMap` contains key-value pairs stored with a hash
+* `HashSet` is like a `HashMap` that only sets the keys; it is useful when only checking for membership
+* `CountedHashMap` and `CountedHashSet` are just a `HashMap` and `HashSet` that maintain a count of their contents
+* `ArrayList` is a growable array
+* `LinkedArrayList` is like an `ArrayList` that can also be efficiently sliced and concatenated
+
+All data structures use the hash array mapped trie, invented by Phil Bagwell. The `LinkedArrayList` is based on his later work on RRB trees. These data structures were originally made immutable and widely available by Rich Hickey in Clojure. To my knowledge, they haven't been available in any open source database until xitdb.
+
+There are also scalar types you can store in the above-mentioned data structures:
+
+* `.bytes` is a byte array
+* `.uint` is an unsigned 64-bit int
+* `.int` is a signed 64-bit int
+* `.float` is a 64-bit float
+
+You may also want to define custom types. For example, you may want to store a big integer that can't fit in 64 bits. You could just store this with `.bytes`, but when reading the byte array there wouldn't be any indication that it should be interpreted as a big integer.
+
+In xitdb, you can optionally store a format tag with a byte array. A format tag is a 2 byte tag that is stored alongside the byte array. Readers can use it to decide how to interpret the byte array. Here's an example of storing a random 256-bit number with `bi` as the format tag:
+
+```zig
+var random_number_buffer: [32]u8 = undefined;
+std.mem.writeInt(u256, &random_number_buffer, std.crypto.random.int(u256), .big);
+try moment.put(hashInt("random-number"), .{ .bytes_object = .{ .value = &random_number_buffer, .format_tag = "bi".* } });
+```
+
+Then, you can read it like this:
+
+```zig
+const random_number_cursor = (try moment.getCursor(hashInt("random-number"))).?;
+var random_number_buffer: [32]u8 = undefined;
+const random_number = try random_number_cursor.readBytesObject(&random_number_buffer);
+try std.testing.expectEqualStrings("bi", &random_number.format_tag.?);
+const random_number_int = std.mem.readInt(u256, &random_number_buffer, .big);
+```
+
+There are many types you may want to store this way. Maybe an ISO-8601 date like `2026-01-01T18:55:48Z` could be stored with `dt` as the format tag. It's also great for storing custom structs. Just define the struct, serialize it as a byte array using whatever mechanism you wish, and store it with a format tag. Keep in mind that format tags can be *any* 2 bytes, so there are 65536 possible format tags.
+
+## Thread Safety
+
+It is possible to read a database from multiple threads without locks, even while writes are happening. This is a big benefit of immutable databases. However, each thread needs to use its own `Database` instance. Also, keep in mind that writes still need to come from one thread at a time.

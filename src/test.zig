@@ -251,6 +251,10 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
                 try letters_counted_set.put(hashInt("a"), .{ .bytes = "a" });
                 try letters_counted_set.put(hashInt("a"), .{ .bytes = "a" });
                 try letters_counted_set.put(hashInt("c"), .{ .bytes = "c" });
+
+                var random_number_buffer: [32]u8 = undefined;
+                std.mem.writeInt(u256, &random_number_buffer, std.crypto.random.int(u256), .big);
+                try moment.put(hashInt("random-number"), .{ .bytes_object = .{ .value = &random_number_buffer, .format_tag = "bi".* } });
             }
         };
         try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
@@ -357,6 +361,11 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
             }
             try std.testing.expectEqual(2, count);
         }
+
+        const random_number_cursor = (try moment.getCursor(hashInt("random-number"))).?;
+        var random_number_buffer: [32]u8 = undefined;
+        const random_number = try random_number_cursor.readBytesObject(&random_number_buffer);
+        try std.testing.expectEqualStrings("bi", &random_number.format_tag.?);
     }
 
     // make a new transaction and change the data
