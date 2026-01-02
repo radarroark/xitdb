@@ -603,6 +603,128 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
 
         try std.testing.expectEqual(size_before, size_after);
     }
+
+    // cloning
+    {
+        const history = try DB.ArrayList(.read_write).init(db.rootCursor());
+
+        const Ctx = struct {
+            pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
+                const moment = try DB.HashMap(.read_write).init(cursor.*);
+
+                const fruits_cursor = (try moment.getCursor(hashInt("fruits"))).?;
+                const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
+
+                // create a new key called "food" whose initial value is
+                // based on the "fruits" list
+                var food_cursor = try moment.putCursor(hashInt("food"));
+                try food_cursor.write(.{ .slot = fruits.slot() });
+
+                const food = try DB.ArrayList(.read_write).init(food_cursor);
+                try food.append(.{ .bytes = "eggs" });
+                try food.append(.{ .bytes = "rice" });
+                try food.append(.{ .bytes = "fish" });
+            }
+        };
+        try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
+
+        const moment_cursor = (try history.getCursor(-1)).?;
+        const moment = try DB.HashMap(.read_only).init(moment_cursor);
+
+        // the food list includes the fruits
+        const food_cursor = (try moment.getCursor(hashInt("food"))).?;
+        const food = try DB.ArrayList(.read_only).init(food_cursor);
+        try std.testing.expectEqual(6, try food.count());
+
+        // ...but the fruits list hasn't been changed
+        const fruits_cursor = (try moment.getCursor(hashInt("fruits"))).?;
+        const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
+        try std.testing.expectEqual(3, try fruits.count());
+    }
+
+    // accidental mutation when cloning inside a transaction
+    {
+        const history = try DB.ArrayList(.read_write).init(db.rootCursor());
+
+        const Ctx = struct {
+            pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
+                const moment = try DB.HashMap(.read_write).init(cursor.*);
+
+                const big_cities_cursor = try moment.putCursor(hashInt("big-cities"));
+                const big_cities = try DB.ArrayList(.read_write).init(big_cities_cursor);
+                try big_cities.append(.{ .bytes = "New York, NY" });
+                try big_cities.append(.{ .bytes = "Los Angeles, CA" });
+
+                // create a new key called "cities" whose initial value is
+                // based on the "big-cities" list
+                var cities_cursor = try moment.putCursor(hashInt("cities"));
+                try cities_cursor.write(.{ .slot = big_cities.slot() });
+
+                const cities = try DB.ArrayList(.read_write).init(cities_cursor);
+                try cities.append(.{ .bytes = "Charleston, SC" });
+                try cities.append(.{ .bytes = "Louisville, KY" });
+            }
+        };
+        try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
+
+        const moment_cursor = (try history.getCursor(-1)).?;
+        const moment = try DB.HashMap(.read_only).init(moment_cursor);
+
+        // the cities list contains all four
+        const cities_cursor = (try moment.getCursor(hashInt("cities"))).?;
+        const cities = try DB.ArrayList(.read_only).init(cities_cursor);
+        try std.testing.expectEqual(4, try cities.count());
+
+        // ..but so does big-cities! we did not intend to mutate this
+        const big_cities_cursor = (try moment.getCursor(hashInt("big-cities"))).?;
+        const big_cities = try DB.ArrayList(.read_only).init(big_cities_cursor);
+        try std.testing.expectEqual(4, try big_cities.count());
+
+        // revert that change
+        try history.append(.{ .slot = try history.getSlot(-2) });
+    }
+
+    // preventing accidental mutation with freezing
+    {
+        const history = try DB.ArrayList(.read_write).init(db.rootCursor());
+
+        const Ctx = struct {
+            pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
+                const moment = try DB.HashMap(.read_write).init(cursor.*);
+
+                const big_cities_cursor = try moment.putCursor(hashInt("big-cities"));
+                const big_cities = try DB.ArrayList(.read_write).init(big_cities_cursor);
+                try big_cities.append(.{ .bytes = "New York, NY" });
+                try big_cities.append(.{ .bytes = "Los Angeles, CA" });
+
+                // freeze here, so big-cities won't be mutated
+                try cursor.db.freeze();
+
+                // create a new key called "cities" whose initial value is
+                // based on the "big-cities" list
+                var cities_cursor = try moment.putCursor(hashInt("cities"));
+                try cities_cursor.write(.{ .slot = big_cities.slot() });
+
+                const cities = try DB.ArrayList(.read_write).init(cities_cursor);
+                try cities.append(.{ .bytes = "Charleston, SC" });
+                try cities.append(.{ .bytes = "Louisville, KY" });
+            }
+        };
+        try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
+
+        const moment_cursor = (try history.getCursor(-1)).?;
+        const moment = try DB.HashMap(.read_only).init(moment_cursor);
+
+        // the cities list contains all four
+        const cities_cursor = (try moment.getCursor(hashInt("cities"))).?;
+        const cities = try DB.ArrayList(.read_only).init(cities_cursor);
+        try std.testing.expectEqual(4, try cities.count());
+
+        // and big-cities only contains the original two
+        const big_cities_cursor = (try moment.getCursor(hashInt("big-cities"))).?;
+        const big_cities = try DB.ArrayList(.read_only).init(big_cities_cursor);
+        try std.testing.expectEqual(2, try big_cities.count());
+    }
 }
 
 fn testSlice(allocator: std.mem.Allocator, comptime db_kind: xitdb.DatabaseKind, init_opts: xitdb.Database(db_kind, HashInt).InitOpts, comptime original_size: usize, comptime slice_offset: u64, comptime slice_size: u64) !void {

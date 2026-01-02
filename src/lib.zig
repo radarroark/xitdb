@@ -356,6 +356,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             };
         }
 
+        pub fn freeze(self: *Database(db_kind, HashInt)) !void {
+            if (self.tx_start != null) {
+                self.tx_start = try self.core.length();
+            } else {
+                return error.ExpectedTxStart;
+            }
+        }
+
         // private
 
         fn truncate(self: *Database(db_kind, HashInt)) !void {
@@ -2674,6 +2682,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     return .{ .cursor = self.cursor.readOnly() };
                 }
 
+                pub fn slot(self: HashMap(write_mode)) Slot {
+                    return self.cursor.slot();
+                }
+
                 pub fn iterator(self: HashMap(write_mode)) !Cursor(write_mode).Iter {
                     return try self.cursor.iterator();
                 }
@@ -2769,6 +2781,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     return .{ .map = self.map.readOnly() };
                 }
 
+                pub fn slot(self: CountedHashMap(write_mode)) Slot {
+                    return self.map.cursor.slot();
+                }
+
                 pub fn count(self: CountedHashMap(write_mode)) !u64 {
                     return try self.map.cursor.count();
                 }
@@ -2839,6 +2855,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     return .{ .cursor = self.cursor.readOnly() };
                 }
 
+                pub fn slot(self: HashSet(write_mode)) Slot {
+                    return self.cursor.slot();
+                }
+
                 pub fn iterator(self: HashSet(write_mode)) !Cursor(write_mode).Iter {
                     return try self.cursor.iterator();
                 }
@@ -2902,6 +2922,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     return .{ .set = self.set.readOnly() };
                 }
 
+                pub fn slot(self: CountedHashSet(write_mode)) Slot {
+                    return self.set.cursor.slot();
+                }
+
                 pub fn count(self: CountedHashSet(write_mode)) !u64 {
                     return try self.set.cursor.count();
                 }
@@ -2950,6 +2974,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                 pub fn readOnly(self: ArrayList(.read_write)) ArrayList(.read_only) {
                     return .{ .cursor = self.cursor.readOnly() };
+                }
+
+                pub fn slot(self: ArrayList(write_mode)) Slot {
+                    return self.cursor.slot();
                 }
 
                 pub fn count(self: ArrayList(write_mode)) !u64 {
@@ -3033,6 +3061,10 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                 pub fn readOnly(self: LinkedArrayList(.read_write)) LinkedArrayList(.read_only) {
                     return .{ .cursor = self.cursor.readOnly() };
+                }
+
+                pub fn slot(self: LinkedArrayList(write_mode)) Slot {
+                    return self.cursor.slot();
                 }
 
                 pub fn count(self: LinkedArrayList(write_mode)) !u64 {

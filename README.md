@@ -153,6 +153,132 @@ const random_number_int = std.mem.readInt(u256, &random_number_buffer, .big);
 
 There are many types you may want to store this way. Maybe an ISO-8601 date like `2026-01-01T18:55:48Z` could be stored with `dt` as the format tag. It's also great for storing custom structs. Just define the struct, serialize it as a byte array using whatever mechanism you wish, and store it with a format tag. Keep in mind that format tags can be *any* 2 bytes, so there are 65536 possible format tags.
 
+## Cloning and Undoing
+
+A powerful feature of immutable data is fast cloning. Any data structure can be instantly cloned and changed without affecting the original. Starting with the example code above, we can make a new transaction that creates a "food" list based on the existing "fruits" list:
+
+```zig
+const Ctx = struct {
+    pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
+        const moment = try DB.HashMap(.read_write).init(cursor.*);
+
+        const fruits_cursor = (try moment.getCursor(hashInt("fruits"))).?;
+        const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
+
+        // create a new key called "food" whose initial value is
+        // based on the "fruits" list
+        var food_cursor = try moment.putCursor(hashInt("food"));
+        try food_cursor.write(.{ .slot = fruits.slot() });
+
+        const food = try DB.ArrayList(.read_write).init(food_cursor);
+        try food.append(.{ .bytes = "eggs" });
+        try food.append(.{ .bytes = "rice" });
+        try food.append(.{ .bytes = "fish" });
+    }
+};
+try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
+
+const moment_cursor = (try history.getCursor(-1)).?;
+const moment = try DB.HashMap(.read_only).init(moment_cursor);
+
+// the food list includes the fruits
+const food_cursor = (try moment.getCursor(hashInt("food"))).?;
+const food = try DB.ArrayList(.read_only).init(food_cursor);
+try std.testing.expectEqual(6, try food.count());
+
+// ...but the fruits list hasn't been changed
+const fruits_cursor = (try moment.getCursor(hashInt("fruits"))).?;
+const fruits = try DB.ArrayList(.read_only).init(fruits_cursor);
+try std.testing.expectEqual(3, try fruits.count());
+```
+
+There's one catch, though. If we try cloning a data structure that was created in the same transaction, it doesn't seem to work:
+
+```zig
+const Ctx = struct {
+    pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
+        const moment = try DB.HashMap(.read_write).init(cursor.*);
+
+        const big_cities_cursor = try moment.putCursor(hashInt("big-cities"));
+        const big_cities = try DB.ArrayList(.read_write).init(big_cities_cursor);
+        try big_cities.append(.{ .bytes = "New York, NY" });
+        try big_cities.append(.{ .bytes = "Los Angeles, CA" });
+
+        // create a new key called "cities" whose initial value is
+        // based on the "big-cities" list
+        var cities_cursor = try moment.putCursor(hashInt("cities"));
+        try cities_cursor.write(.{ .slot = big_cities.slot() });
+
+        const cities = try DB.ArrayList(.read_write).init(cities_cursor);
+        try cities.append(.{ .bytes = "Charleston, SC" });
+        try cities.append(.{ .bytes = "Louisville, KY" });
+    }
+};
+try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
+
+const moment_cursor = (try history.getCursor(-1)).?;
+const moment = try DB.HashMap(.read_only).init(moment_cursor);
+
+// the cities list contains all four
+const cities_cursor = (try moment.getCursor(hashInt("cities"))).?;
+const cities = try DB.ArrayList(.read_only).init(cities_cursor);
+try std.testing.expectEqual(4, try cities.count());
+
+// ..but so does big-cities! we did not intend to mutate this
+const big_cities_cursor = (try moment.getCursor(hashInt("big-cities"))).?;
+const big_cities = try DB.ArrayList(.read_only).init(big_cities_cursor);
+try std.testing.expectEqual(4, try big_cities.count());
+```
+
+The reason that `big-cities` was mutated is because all data in a given transaction is temporarily mutable. This is a very important optimization, but in this case, it's not what we want.
+
+To show how to fix this, let's first undo the transaction we just made. Here we add a new value to the history that uses the slot from two transactions ago, which effectively reverts the last transaction:
+
+```zig
+try history.append(.{ .slot = try history.getSlot(-2) });
+```
+
+This time, after making the "big cities" list, we call `freeze`, which tells xitdb to consider all data made so far in the transaction to be immutable. After that, we can clone it into the "cities" list and it will work the way we wanted:
+
+```zig
+const Ctx = struct {
+    pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
+        const moment = try DB.HashMap(.read_write).init(cursor.*);
+
+        const big_cities_cursor = try moment.putCursor(hashInt("big-cities"));
+        const big_cities = try DB.ArrayList(.read_write).init(big_cities_cursor);
+        try big_cities.append(.{ .bytes = "New York, NY" });
+        try big_cities.append(.{ .bytes = "Los Angeles, CA" });
+
+        // freeze here, so big-cities won't be mutated
+        try cursor.db.freeze();
+
+        // create a new key called "cities" whose initial value is
+        // based on the "big-cities" list
+        var cities_cursor = try moment.putCursor(hashInt("cities"));
+        try cities_cursor.write(.{ .slot = big_cities.slot() });
+
+        const cities = try DB.ArrayList(.read_write).init(cities_cursor);
+        try cities.append(.{ .bytes = "Charleston, SC" });
+        try cities.append(.{ .bytes = "Louisville, KY" });
+    }
+};
+try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
+
+const moment_cursor = (try history.getCursor(-1)).?;
+const moment = try DB.HashMap(.read_only).init(moment_cursor);
+
+// the cities list contains all four
+const cities_cursor = (try moment.getCursor(hashInt("cities"))).?;
+const cities = try DB.ArrayList(.read_only).init(cities_cursor);
+try std.testing.expectEqual(4, try cities.count());
+
+// and big-cities only contains the original two
+const big_cities_cursor = (try moment.getCursor(hashInt("big-cities"))).?;
+const big_cities = try DB.ArrayList(.read_only).init(big_cities_cursor);
+try std.testing.expectEqual(2, try big_cities.count());
+```
+
 ## Thread Safety
 
 It is possible to read a database from multiple threads without locks, even while writes are happening. This is a big benefit of immutable databases. However, each thread needs to use its own `Database` instance. Also, keep in mind that writes still need to come from one thread at a time.
