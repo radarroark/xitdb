@@ -326,7 +326,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 },
             };
 
-            if (try self.core.getSize() == 0) {
+            if (try self.core.length() == 0) {
                 self.header = .{
                     .hash_id = opts.hash_id,
                     .hash_size = byteSizeOf(HashInt),
@@ -372,7 +372,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
             if (header_file_size == 0) return;
 
-            const file_size = try self.core.getSize();
+            const file_size = try self.core.length();
 
             if (file_size == header_file_size) return;
 
@@ -391,7 +391,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
             const is_tx_start = is_top_level and self.header.tag == .array_list and self.tx_start == null;
             if (is_tx_start) {
-                self.tx_start = try self.core.getSize();
+                self.tx_start = try self.core.length();
             }
             defer {
                 if (is_tx_start) {
@@ -440,7 +440,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         .none => {
                             // if slot was empty, insert the new list
                             var writer = self.core.writer();
-                            const array_list_start = try self.core.getSize();
+                            const array_list_start = try self.core.length();
                             const array_list_ptr = array_list_start + byteSizeOf(ArrayListHeader);
                             try writer.seekTo(array_list_start);
                             try writer.interface.writeInt(ArrayListHeaderInt, @bitCast(ArrayListHeader{
@@ -471,7 +471,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                     var array_list_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                                     try reader.interface.readSliceAll(&array_list_index_block);
                                     // copy to the end
-                                    array_list_start = try self.core.getSize();
+                                    array_list_start = try self.core.length();
                                     const next_array_list_ptr = array_list_start + byteSizeOf(ArrayListHeader);
                                     header.ptr = next_array_list_ptr;
                                     try writer.seekTo(array_list_start);
@@ -543,7 +543,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         // because updating the header is what completes the transaction
                         try self.core.flush();
 
-                        const file_size = try self.core.getSize();
+                        const file_size = try self.core.length();
                         const header = TopLevelArrayListHeader{
                             .file_size = file_size,
                             .parent = append_result.header,
@@ -594,7 +594,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         .none => {
                             // if slot was empty, insert the new list
                             var writer = self.core.writer();
-                            const array_list_start = try self.core.getSize();
+                            const array_list_start = try self.core.length();
                             const array_list_ptr = array_list_start + byteSizeOf(LinkedArrayListHeader);
                             try writer.seekTo(array_list_start);
                             try writer.interface.writeInt(LinkedArrayListHeaderInt, @bitCast(LinkedArrayListHeader{
@@ -626,7 +626,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                     var array_list_index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                                     try reader.interface.readSliceAll(&array_list_index_block);
                                     // copy to the end
-                                    array_list_start = try self.core.getSize();
+                                    array_list_start = try self.core.length();
                                     const next_array_list_ptr = array_list_start + byteSizeOf(LinkedArrayListHeader);
                                     header.ptr = next_array_list_ptr;
                                     try writer.seekTo(array_list_start);
@@ -866,7 +866,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         .none => {
                             // if slot was empty, insert the new map
                             var writer = self.core.writer();
-                            const map_start = try self.core.getSize();
+                            const map_start = try self.core.length();
                             try writer.seekTo(map_start);
                             if (hash_map_init.counted) {
                                 try writer.interface.writeInt(u64, 0, .big);
@@ -906,7 +906,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                     var map_index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                                     try reader.interface.readSliceAll(&map_index_block);
                                     // copy to the end
-                                    map_start = try self.core.getSize();
+                                    map_start = try self.core.length();
                                     try writer.seekTo(map_start);
                                     if (map_count_maybe) |map_count| try writer.interface.writeInt(u64, map_count, .big);
                                     try writer.interface.writeAll(&map_index_block);
@@ -1085,7 +1085,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         .read_only => return error.KeyNotFound,
                         .read_write => {
                             // write hash and key/val slots
-                            const hash_pos = try self.core.getSize();
+                            const hash_pos = try self.core.length();
                             const key_slot_pos = hash_pos + byteSizeOf(HashInt);
                             const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
                             const kv_pair = KeyValuePair{
@@ -1122,7 +1122,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                                 try reader.interface.readSliceAll(&index_block);
                                 // copy it to the end
-                                next_ptr = try self.core.getSize();
+                                next_ptr = try self.core.length();
                                 try writer.seekTo(next_ptr);
                                 try writer.interface.writeAll(&index_block);
                                 // make slot point to block
@@ -1144,7 +1144,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                             if (self.tx_start) |tx_start| {
                                 if (ptr < tx_start) {
                                     // write hash and key/val slots
-                                    const hash_pos = try self.core.getSize();
+                                    const hash_pos = try self.core.length();
                                     const key_slot_pos = hash_pos + byteSizeOf(HashInt);
                                     const value_slot_pos = key_slot_pos + byteSizeOf(Slot);
                                     try writer.seekTo(hash_pos);
@@ -1188,7 +1188,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                     return error.KeyOffsetExceeded;
                                 }
                                 const next_i: u4 = @intCast((kv_pair.hash >> (key_offset + 1) * BIT_COUNT) & MASK);
-                                const next_index_pos = try self.core.getSize();
+                                const next_index_pos = try self.core.length();
                                 var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                                 try writer.seekTo(next_index_pos);
                                 try writer.interface.writeAll(&index_block);
@@ -1289,7 +1289,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                 if (self.tx_start) |tx_start| {
                     if (index_pos < tx_start) {
                         // copy index block to the end
-                        const next_index_pos = try self.core.getSize();
+                        const next_index_pos = try self.core.length();
                         try writer.seekTo(next_index_pos);
                         try writer.interface.writeAll(&index_block);
                         // update the slot
@@ -1327,7 +1327,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
             if (prev_shift != next_shift) {
                 // root overflow
-                const next_index_pos = try self.core.getSize();
+                const next_index_pos = try self.core.length();
                 var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                 try writer.seekTo(next_index_pos);
                 try writer.interface.writeAll(&index_block);
@@ -1370,14 +1370,14 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         .read_only => return error.KeyNotFound,
                         .read_write => {
                             var writer = self.core.writer();
-                            const next_index_pos = try self.core.getSize();
+                            const next_index_pos = try self.core.length();
                             var index_block = [_]u8{0} ** INDEX_BLOCK_SIZE;
                             try writer.seekTo(next_index_pos);
                             try writer.interface.writeAll(&index_block);
                             // if top level array list, update the file size in the list
                             // header to prevent truncation from destroying this block
                             if (is_top_level) {
-                                const file_size = try self.core.getSize();
+                                const file_size = try self.core.length();
                                 try writer.seekTo(DATABASE_START + byteSizeOf(ArrayListHeader));
                                 try writer.interface.writeInt(u64, file_size, .big);
                             }
@@ -1398,7 +1398,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 try reader.interface.readSliceAll(&index_block);
                                 // copy it to the end
                                 var writer = self.core.writer();
-                                next_ptr = try self.core.getSize();
+                                next_ptr = try self.core.length();
                                 try writer.seekTo(next_ptr);
                                 try writer.interface.writeAll(&index_block);
                                 // make slot point to block
@@ -1466,7 +1466,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
             var slot_ptr = self.readLinkedArrayListSlot(ptr, key, shift, write_mode, is_top_level) catch |err| switch (err) {
                 error.NoAvailableSlots => blk: {
                     // root overflow
-                    const next_ptr = try self.core.getSize();
+                    const next_ptr = try self.core.length();
                     var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                     try writer.seekTo(next_ptr);
                     try writer.interface.writeAll(&index_block);
@@ -1601,7 +1601,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     switch (write_mode) {
                         .read_only => return error.KeyNotFound,
                         .read_write => {
-                            const next_index_pos = try self.core.getSize();
+                            const next_index_pos = try self.core.length();
                             var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                             try writer.seekTo(next_index_pos);
                             try writer.interface.writeAll(&index_block);
@@ -1627,7 +1627,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                                 var index_block = [_]u8{0} ** LINKED_ARRAY_LIST_INDEX_BLOCK_SIZE;
                                 try reader.interface.readSliceAll(&index_block);
                                 // copy it to the end
-                                next_ptr = try self.core.getSize();
+                                next_ptr = try self.core.length();
                                 try writer.seekTo(next_ptr);
                                 try writer.interface.writeAll(&index_block);
                             }
@@ -1807,7 +1807,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                         }
                         // otherwise make a new block
                         else {
-                            const next_ptr = try self.core.getSize();
+                            const next_ptr = try self.core.length();
                             try core_writer.seekTo(next_ptr);
                             var leaf_count: u64 = 0;
                             for (block) |block_slot| {
@@ -1980,7 +1980,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
                     }
 
                     // write the block
-                    const next_ptr = try self.core.getSize();
+                    const next_ptr = try self.core.length();
                     try core_writer.seekTo(next_ptr);
                     var leaf_count: u64 = 0;
                     for (block) |block_slot| {
@@ -2106,7 +2106,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                         if (self.format_tag) |format_tag| {
                             self.slot.full = true; // byte arrays with format tags must have this set to true
-                            const format_tag_pos = try self.parent.db.core.getSize();
+                            const format_tag_pos = try self.parent.db.core.length();
                             try core_writer.seekTo(format_tag_pos);
                             if (self.start_position + self.size != format_tag_pos) return error.UnexpectedWriterPosition;
                             try core_writer.interface.writeAll(&format_tag);
@@ -2427,7 +2427,7 @@ pub fn Database(comptime db_kind: DatabaseKind, comptime HashInt: type) type {
 
                 pub fn writer(self: *Cursor(.read_write), buffer: []u8) !Writer {
                     var core_writer = self.db.core.writer();
-                    const ptr_pos = try self.db.core.getSize();
+                    const ptr_pos = try self.db.core.length();
                     try core_writer.seekTo(ptr_pos);
                     try core_writer.interface.writeInt(u64, 0, .big);
                     const start_position = core_writer.pos;
@@ -3212,7 +3212,7 @@ const CoreMemory = struct {
         };
     }
 
-    pub fn getSize(self: *const CoreMemory) !u64 {
+    pub fn length(self: *const CoreMemory) !u64 {
         return self.buffer.written().len;
     }
 
@@ -3241,7 +3241,7 @@ const CoreFile = struct {
         return self.file.writer(&.{});
     }
 
-    pub fn getSize(self: *const CoreFile) !u64 {
+    pub fn length(self: *const CoreFile) !u64 {
         try self.file.seekFromEnd(0);
         return try self.file.getPos();
     }
@@ -3381,8 +3381,8 @@ const CoreBufferedFile = struct {
         };
     }
 
-    pub fn getSize(self: *const CoreBufferedFile) !u64 {
-        return @max(self.memory_pos + self.memory.buffer.written().len, try self.file.getSize());
+    pub fn length(self: *const CoreBufferedFile) !u64 {
+        return @max(self.memory_pos + self.memory.buffer.written().len, try self.file.length());
     }
 
     pub fn setLength(self: *CoreBufferedFile, len: usize) !void {

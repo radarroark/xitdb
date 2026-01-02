@@ -570,7 +570,7 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
     // there could be data from a transaction that never
     // completed due to an unclean shutdown.
     {
-        const size_before = try db.core.getSize();
+        const size_before = try db.core.length();
 
         var writer = db.core.writer();
         try writer.seekTo(size_before);
@@ -599,7 +599,7 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
 
         db = try DB.init(init_opts);
 
-        const size_after = try db.core.getSize();
+        const size_after = try db.core.length();
 
         try std.testing.expectEqual(size_before, size_after);
     }
@@ -1151,7 +1151,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
 
         // if error in ctx, db doesn't change
         {
-            const size_before = try db.core.getSize();
+            const size_before = try db.core.length();
 
             const Ctx = struct {
                 allocator: std.mem.Allocator,
@@ -1185,7 +1185,7 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
             try std.testing.expectEqualStrings("baz", value);
 
             // verify that the db is properly truncated back to its original size after error
-            const size_after = try db.core.getSize();
+            const size_after = try db.core.length();
             try std.testing.expectEqual(size_before, size_after);
         }
 
