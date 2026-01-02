@@ -14,8 +14,8 @@ In this example, we create a new database, write some data in a transaction, and
 
 ```zig
 // create db file
-const file = try std.fs.cwd().createFile("main.db", .{ .read = true });
-defer file.close();
+const file = try std.fs.cwd().createFile(io, "main.db", .{ .read = true });
+defer file.close(io);
 
 // init the buffer (optional, but better for performance)
 var buffer = std.Io.Writer.Allocating.init(allocator);
@@ -23,7 +23,7 @@ defer buffer.deinit();
 
 // init the db
 const DB = xitdb.Database(.buffered_file, HashInt);
-var db = try DB.init(.{ .file = file, .buffer = &buffer });
+var db = try DB.init(.{ .io = io, .file = file, .buffer = &buffer });
 
 // to get the benefits of immutability, the top-level data structure
 // must be an ArrayList, so each transaction is stored as an item in it
