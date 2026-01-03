@@ -8,6 +8,12 @@ xitdb is an immutable database written in Zig.
 
 This database was originally made for the [xit version control system](https://github.com/radarroark/xit), but I bet it has a lot of potential for other projects. The combination of being immutable and having an API similar to in-memory data structures is pretty powerful. Consider using it instead of SQLite for your Zig projects: it's simpler, it's pure Zig, and it creates no impedence mismatch with your program the way SQL databases do.
 
+* [Example](#example)
+* [Initializing a Database](#initializing-a-database)
+* [Types](#types)
+* [Cloning and Undoing](#cloning-and-undoing)
+* [Thread Safety](#thread-safety)
+
 ## Example
 
 In this example, we create a new database, write some data in a transaction, and read the data afterwards.
