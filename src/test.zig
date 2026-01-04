@@ -212,12 +212,16 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
 
                 const alice_cursor = try people.appendCursor();
                 const alice = try DB.HashMap(.read_write).init(alice_cursor);
+                try alice.putKey(hashInt("name"), .{ .bytes = "name" });
                 try alice.put(hashInt("name"), .{ .bytes = "Alice" });
+                try alice.putKey(hashInt("age"), .{ .bytes = "age" });
                 try alice.put(hashInt("age"), .{ .uint = 25 });
 
                 const bob_cursor = try people.appendCursor();
                 const bob = try DB.HashMap(.read_write).init(bob_cursor);
+                try bob.putKey(hashInt("name"), .{ .bytes = "name" });
                 try bob.put(hashInt("name"), .{ .bytes = "Bob" });
+                try bob.putKey(hashInt("age"), .{ .bytes = "age" });
                 try bob.put(hashInt("age"), .{ .uint = 42 });
 
                 const todos_cursor = try moment.putCursor(hashInt("todos"));
@@ -255,6 +259,14 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
                 var random_number_buffer: [32]u8 = undefined;
                 std.mem.writeInt(u256, &random_number_buffer, std.crypto.random.int(u256), .big);
                 try moment.put(hashInt("random-number"), .{ .bytes_object = .{ .value = &random_number_buffer, .format_tag = "bi".* } });
+
+                var long_text_cursor = try moment.putCursor(hashInt("long-text"));
+                var write_buffer: [1024]u8 = undefined;
+                var writer = try long_text_cursor.writer(&write_buffer);
+                for (0..50) |_| {
+                    try writer.interface.writeAll("hello, world!\n");
+                }
+                try writer.finish();
             }
         };
         try history.appendContext(.{ .slot = try history.getSlot(-1) }, Ctx{});
@@ -304,12 +316,31 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         defer allocator.free(todo_value);
         try std.testing.expectEqualStrings("Pay the bills", todo_value);
 
+        var fruits_iter = try fruits.iterator();
+        while (try fruits_iter.next()) |fruit_cursor| {
+            var buffer: [100]u8 = undefined;
+            _ = try fruit_cursor.readBytes(&buffer);
+        }
+
         var people_iter = try people.iterator();
         while (try people_iter.next()) |person_cursor| {
             const person = try DB.HashMap(.read_only).init(person_cursor);
             var person_iter = try person.iterator();
             while (try person_iter.next()) |kv_pair_cursor| {
-                _ = try kv_pair_cursor.readKeyValuePair();
+                const kv_pair = try kv_pair_cursor.readKeyValuePair();
+                var key_buffer: [100]u8 = undefined;
+                _ = try kv_pair.key_cursor.readBytes(&key_buffer);
+
+                switch (kv_pair.value_cursor.slot().tag) {
+                    .short_bytes, .bytes => {
+                        var val_buffer: [100]u8 = undefined;
+                        _ = try kv_pair.value_cursor.readBytes(&val_buffer);
+                    },
+                    .uint => _ = try kv_pair.value_cursor.readUint(),
+                    .int => _ = try kv_pair.value_cursor.readInt(),
+                    .float => _ = try kv_pair.value_cursor.readFloat(),
+                    else => return error.UnexpectedTagType,
+                }
             }
         }
 
@@ -362,10 +393,26 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
             try std.testing.expectEqual(2, count);
         }
 
-        const random_number_cursor = (try moment.getCursor(hashInt("random-number"))).?;
-        var random_number_buffer: [32]u8 = undefined;
-        const random_number = try random_number_cursor.readBytesObject(&random_number_buffer);
-        try std.testing.expectEqualStrings("bi", &random_number.format_tag.?);
+        {
+            const random_number_cursor = (try moment.getCursor(hashInt("random-number"))).?;
+            var random_number_buffer: [32]u8 = undefined;
+            const random_number = try random_number_cursor.readBytesObject(&random_number_buffer);
+            try std.testing.expectEqualStrings("bi", &random_number.format_tag.?);
+        }
+
+        {
+            var long_text_cursor = (try moment.getCursor(hashInt("long-text"))).?;
+            var read_buffer: [1024]u8 = undefined;
+            var reader = try long_text_cursor.reader(&read_buffer);
+            var count: usize = 0;
+            while (reader.interface.takeDelimiterInclusive('\n')) |_| {
+                count += 1;
+            } else |err| switch (err) {
+                error.EndOfStream => {},
+                else => |e| return e,
+            }
+            try std.testing.expectEqual(50, count);
+        }
     }
 
     // make a new transaction and change the data

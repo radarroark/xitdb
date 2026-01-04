@@ -6,12 +6,14 @@ xitdb is an immutable database written in Zig.
 * No dependencies besides the Zig standard library (requires version 0.15.1).
 * There is also a [Java port](https://github.com/radarroark/xitdb-java) of this library.
 
-This database was originally made for the [xit version control system](https://github.com/radarroark/xit), but I bet it has a lot of potential for other projects. The combination of being immutable and having an API similar to in-memory data structures is pretty powerful. Consider using it instead of SQLite for your Zig projects: it's simpler, it's pure Zig, and it creates no impedence mismatch with your program the way SQL databases do.
+This database was originally made for the [xit version control system](https://github.com/radarroark/xit), but I bet it has a lot of potential for other projects. The combination of being immutable and having an API similar to in-memory data structures is pretty powerful. Consider using it instead of SQLite for your Zig projects: it's simpler, it's pure Zig, and it creates no impedance mismatch with your program the way SQL databases do.
 
 * [Example](#example)
 * [Initializing a Database](#initializing-a-database)
 * [Types](#types)
 * [Cloning and Undoing](#cloning-and-undoing)
+* [Large Byte Arrays](#large-byte-arrays)
+* [Iterators](#iterators)
 * [Thread Safety](#thread-safety)
 
 ## Example
@@ -284,6 +286,73 @@ const big_cities_cursor = (try moment.getCursor(hashInt("big-cities"))).?;
 const big_cities = try DB.ArrayList(.read_only).init(big_cities_cursor);
 try std.testing.expectEqual(2, try big_cities.count());
 ```
+
+## Large Byte Arrays
+
+When reading and writing large byte arrays, you probably don't want to have all of their contents in memory at once. To incrementally write to a byte array, just get a writer from a cursor:
+
+```zig
+var long_text_cursor = try moment.putCursor(hashInt("long-text"));
+var write_buffer: [1024]u8 = undefined;
+var writer = try long_text_cursor.writer(&write_buffer);
+for (0..50) |_| {
+    try writer.interface.writeAll("hello, world!\n");
+}
+try writer.finish(); // remember to call this!
+```
+
+...and to read it incrementally, get a reader from a cursor:
+
+```zig
+var long_text_cursor = (try moment.getCursor(hashInt("long-text"))).?;
+var read_buffer: [1024]u8 = undefined;
+var reader = try long_text_cursor.reader(&read_buffer);
+var count: usize = 0;
+while (reader.interface.takeDelimiterInclusive('\n')) |_| {
+    count += 1;
+} else |err| switch (err) {
+    error.EndOfStream => {},
+    else => |e| return e,
+}
+try std.testing.expectEqual(50, count);
+```
+
+## Iterators
+
+All data structures support iteration. Here's an example of iterating over an `ArrayList` and printing all of the keys and values of each `HashMap` contained in it:
+
+```zig
+const people_cursor = (try moment.getCursor(hashInt("people"))).?;
+const people = try DB.ArrayList(.read_only).init(people_cursor);
+
+var people_iter = try people.iterator();
+while (try people_iter.next()) |person_cursor| {
+    const person = try DB.HashMap(.read_only).init(person_cursor);
+    var person_iter = try person.iterator();
+    while (try person_iter.next()) |kv_pair_cursor| {
+        const kv_pair = try kv_pair_cursor.readKeyValuePair();
+
+        var key_buffer: [100]u8 = undefined;
+        const key = try kv_pair.key_cursor.readBytes(&key_buffer);
+
+        switch (kv_pair.value_cursor.slot().tag) {
+            .short_bytes, .bytes => {
+                var val_buffer: [100]u8 = undefined;
+                const val = try kv_pair.value_cursor.readBytes(&val_buffer);
+                std.debug.print("{s}: {s}\n", .{ key, val });
+            },
+            .uint => std.debug.print("{s}: {}\n", .{ key, try kv_pair.value_cursor.readUint() }),
+            .int => std.debug.print("{s}: {}\n", .{ key, _ = try kv_pair.value_cursor.readInt() }),
+            .float => std.debug.print("{s}: {}\n", .{ key, _ = try kv_pair.value_cursor.readFloat() }),
+            else => return error.UnexpectedTagType,
+        }
+    }
+}
+```
+
+The above code iterates over `people`, which is an `ArrayList`, and for each person (which is a `HashMap`), it iterates over each of its key-value pairs.
+
+The iteration of the `HashMap` looks the same with `HashSet`, `CountedHashMap`, and `CountedHashSet`. When iterating, you call `readKeyValuePair` on the cursor and can read the `key_cursor` and `value_cursor` from it. In maps, `put` sets the value `putKey` sets the key (see the tests for examples). In sets, there is only `put` and it sets the key; the value will always have a tag type of `.none`.
 
 ## Thread Safety
 
