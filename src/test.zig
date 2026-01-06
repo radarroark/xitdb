@@ -405,11 +405,8 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
             var read_buffer: [1024]u8 = undefined;
             var reader = try long_text_cursor.reader(&read_buffer);
             var count: usize = 0;
-            while (reader.interface.takeDelimiterInclusive('\n')) |_| {
+            while (try reader.interface.takeDelimiter('\n')) |_| {
                 count += 1;
-            } else |err| switch (err) {
-                error.EndOfStream => {},
-                else => |e| return e,
             }
             try std.testing.expectEqual(50, count);
         }
