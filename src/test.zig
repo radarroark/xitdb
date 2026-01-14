@@ -1173,14 +1173,38 @@ fn testLowLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databas
     // save hash id in header
     {
         var init_opts_with_hash_id = init_opts;
-        init_opts_with_hash_id.hash_id = xitdb.HashId.fromBytes("sha1");
+        init_opts_with_hash_id.hash_id = .fromBytes("sha1");
 
         // make empty database
         try clearStorage(db_kind, init_opts);
-        const db = try xitdb.Database(db_kind, HashInt).init(init_opts_with_hash_id);
+        _ = try xitdb.Database(db_kind, HashInt).init(init_opts_with_hash_id);
 
-        try std.testing.expectEqual(xitdb.HashId.fromBytes("sha1").id, db.header.hash_id.id);
-        try std.testing.expectEqualStrings("sha1", &db.header.hash_id.toBytes());
+        // read header without initializing database
+        const header = blk: switch (db_kind) {
+            .memory => {
+                var reader = std.Io.Reader.fixed(init_opts.buffer.written());
+                break :blk try xitdb.DatabaseHeader.read(&reader);
+            },
+            .file, .buffered_file => {
+                var reader = init_opts.file.reader(&.{});
+                break :blk try xitdb.DatabaseHeader.read(&reader.interface);
+            },
+        };
+        try std.testing.expectEqual(20, header.hash_size);
+        try std.testing.expectEqualStrings("sha1", &header.hash_id.toBytes());
+
+        // determine the hashing algorithm
+        const HashAlgo = enum { sha1, sha256, sha512 };
+        const hash_algo: HashAlgo = switch (header.hash_id.id) {
+            xitdb.HashId.fromBytes("sha1").id => .sha1,
+            xitdb.HashId.fromBytes("sha2").id => switch (header.hash_size) {
+                32 => .sha256,
+                64 => .sha512,
+                else => return error.InvalidHashSize,
+            },
+            else => return error.InvalidHashAlgo,
+        };
+        try std.testing.expectEqual(.sha1, hash_algo);
     }
 
     // array_list of hash_maps

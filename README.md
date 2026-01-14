@@ -14,6 +14,7 @@ This database was originally made for the [xit version control system](https://g
 * [Cloning and Undoing](#cloning-and-undoing)
 * [Large Byte Arrays](#large-byte-arrays)
 * [Iterators](#iterators)
+* [Hashing](#hashing)
 * [Thread Safety](#thread-safety)
 
 ## Example
@@ -350,6 +351,68 @@ while (try people_iter.next()) |person_cursor| {
 The above code iterates over `people`, which is an `ArrayList`, and for each person (which is a `HashMap`), it iterates over each of its key-value pairs.
 
 The iteration of the `HashMap` looks the same with `HashSet`, `CountedHashMap`, and `CountedHashSet`. When iterating, you call `readKeyValuePair` on the cursor and can read the `key_cursor` and `value_cursor` from it. In maps, `put` sets the value `putKey` sets the key (see the tests for examples). In sets, there is only `put` and it sets the key; the value will always have a tag type of `.none`.
+
+## Hashing
+
+Hashing is never done by xitdb itself. The `hashInt` function you see in the above examples is not part of the library. You can define it yourself like this:
+
+```zig
+fn hashInt(buffer: []const u8) u160 {
+    var hash = [_]u8{0} ** (@bitSizeOf(u160) / 8);
+    var h = std.crypto.hash.Sha1.init(.{});
+    h.update(buffer);
+    h.final(&hash);
+    return std.mem.readInt(u160, &hash, .big);
+}
+```
+
+When initializing a database, you only tell xitdb the size of the hash via the `HashInt` parameter. If you're using SHA-1, this will be 160 bits:
+
+```zig
+const file = try std.fs.cwd().createFile("main.db", .{ .read = true });
+defer file.close();
+
+const db = try xitdb.Database(.file, u160).init(.{ .file = file });
+```
+
+If you try opening an existing database with the wrong hash size, it will return an error. If you are unsure what hash size it uses, this creates a chicken-and-egg problem. You can read the header before initializing the database like this:
+
+```zig
+var reader = file.reader(&.{});
+const header = try xitdb.DatabaseHeader.read(&reader.interface);
+try std.testing.expectEqual(20, header.hash_size);
+```
+
+The hash size alone does not disambiguate hashing algorithms, though. In addition, xitdb reserves four bytes in the header that you can use to put the name of the algorithm. You must provide it in the init options:
+
+```zig
+const db = try xitdb.Database(.file, u160).init(.{ .file = file, .hash_id = .fromBytes("sha1") });
+```
+
+The hash id is only written to the database header when it is first initialized. When you open it later, that init option is ignored. You can read the hash id of an existing database like this:
+
+```zig
+var reader = file.reader(&.{});
+const header = try xitdb.DatabaseHeader.read(&reader.interface);
+try std.testing.expectEqualStrings("sha1", &header.hash_id.toBytes());
+```
+
+If you want to use SHA-256, I recommend using `sha2` as the hash id. You can then distinguish between SHA-256 and SHA-512 using the hash size, like this:
+
+```zig
+const HashAlgo = enum { sha1, sha256, sha512 };
+
+const hash_algo: HashAlgo = switch (header.hash_id.id) {
+    xitdb.HashId.fromBytes("sha1").id => .sha1,
+    xitdb.HashId.fromBytes("sha2").id => switch (header.hash_size) {
+        32 => .sha256,
+        64 => .sha512,
+        else => return error.InvalidHashSize,
+    },
+    else => return error.InvalidHashAlgo,
+};
+try std.testing.expectEqual(.sha1, hash_algo);
+```
 
 ## Thread Safety
 
