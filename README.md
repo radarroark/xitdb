@@ -377,7 +377,7 @@ defer file.close();
 const db = try xitdb.Database(.file, u160).init(.{ .file = file });
 ```
 
-If you try opening an existing database with the wrong hash size, it will return an error. If you are unsure what hash size it uses, this creates a chicken-and-egg problem. You can read the header before initializing the database like this:
+The size of the hash in bytes will be stored in the database's header. If you try opening it later with the wrong hash size, it will return an error. If you are unsure what hash size the database uses, this creates a chicken-and-egg problem. You can read the header before initializing the database like this:
 
 ```zig
 var reader = file.reader(&.{});
