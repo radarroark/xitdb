@@ -302,7 +302,9 @@ for (0..50) |_| {
 try writer.finish(); // remember to call this!
 ```
 
-...and to read it incrementally, get a reader from a cursor:
+If you need to set a format tag for the byte array, put it in the `format_tag` field of the writer before you call `finish`.
+
+To read a byte array incrementally, get a reader from a cursor:
 
 ```zig
 var long_text_cursor = (try moment.getCursor(hashInt("long-text"))).?;
