@@ -690,6 +690,8 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
     {
         const history = try DB.ArrayList(.read_write).init(db.rootCursor());
 
+        const history_index = try history.count() - 1;
+
         const Ctx = struct {
             pub fn run(_: @This(), cursor: *DB.Cursor(.read_write)) !void {
                 const moment = try DB.HashMap(.read_write).init(cursor.*);
@@ -725,7 +727,7 @@ fn testHighLevelApi(allocator: std.mem.Allocator, comptime db_kind: xitdb.Databa
         try std.testing.expectEqual(4, try big_cities.count());
 
         // revert that change
-        try history.append(.{ .slot = try history.getSlot(-2) });
+        try history.append(.{ .slot = try history.getSlot(history_index) });
     }
 
     // preventing accidental mutation with freezing
