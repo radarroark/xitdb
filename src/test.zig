@@ -150,10 +150,8 @@ test "validate tag" {
 }
 
 fn hashInt(buffer: []const u8) HashInt {
-    var hash = [_]u8{0} ** (@bitSizeOf(HashInt) / 8);
-    var h = std.crypto.hash.Sha1.init(.{});
-    h.update(buffer);
-    h.final(&hash);
+    var hash: [@bitSizeOf(HashInt) / 8]u8 = undefined;
+    std.crypto.hash.Sha1.hash(buffer, &hash, .{});
     return std.mem.readInt(HashInt, &hash, .big);
 }
 

@@ -366,10 +366,8 @@ Hashing is never done by xitdb itself. The `hashInt` function you see in the abo
 
 ```zig
 fn hashInt(buffer: []const u8) u160 {
-    var hash = [_]u8{0} ** (@bitSizeOf(u160) / 8);
-    var h = std.crypto.hash.Sha1.init(.{});
-    h.update(buffer);
-    h.final(&hash);
+    var hash: [20]u8 = undefined;
+    std.crypto.hash.Sha1.hash(buffer, &hash, .{});
     return std.mem.readInt(u160, &hash, .big);
 }
 ```
