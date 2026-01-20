@@ -1,10 +1,18 @@
-xitdb is an immutable database written in Zig.
+<p align="center">
+  xitdb is an immutable database written in Zig
+  <br/>
+  <br/>
+  <b>Choose your flavor:</b>
+  <a href="https://github.com/radarroark/xitdb">Zig</a> |
+  <a href="https://github.com/radarroark/xitdb-java">Java</a> |
+  <a href="https://github.com/codeboost/xitdb-clj">Clojure</a> |
+  <a href="https://github.com/radarroark/xitdb-ts">TypeScript</a>
+</p>
 
 * Each transaction efficiently creates a new "copy" of the database, and past copies can still be read from.
 * It supports writing to a file as well as purely in-memory use.
 * No query engine of any kind. You just write data structures (primarily an `ArrayList` and `HashMap`) that can be nested arbitrarily.
 * No dependencies besides the Zig standard library (requires version 0.15.1).
-* There is also a [Java port](https://github.com/radarroark/xitdb-java) of this library.
 
 This database was originally made for the [xit version control system](https://github.com/radarroark/xit), but I bet it has a lot of potential for other projects. The combination of being immutable and having an API similar to in-memory data structures is pretty powerful. Consider using it [instead of SQLite](https://gist.github.com/radarroark/03a0724484e1111ef4c05d72a935c42c) for your Zig projects: it's simpler, it's pure Zig, and it creates no impedance mismatch with your program the way SQL databases do.
 
